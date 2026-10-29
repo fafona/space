@@ -18,6 +18,7 @@ import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {retentionCanonicalText,retentionHash} from './online-release-retention-policy.mjs';
 import {assertBookingAtomicWorkerGate} from './booking-atomic-worker.mjs';
 import {normalizeRetirementProcess,assertExistingPm2Directory} from './online-release-retirement.mjs';
+import {recoveryChildExitEvidence} from './release-toolchain-recovery-diagnostics.mjs';
 
 export const BOOKING_WATCHDOG_TRIGGER_MS=420000;
 const APP='/www/wwwroot/merchant-space',DEPLOY=APP+'.deploy.lock',OPERATION='/var/lib/faolla-maintenance/merchant-space/operation.lock';
@@ -209,7 +210,9 @@ async function productionWatchdog(){
       assertBookingWatchdogInheritedLease(lease,{requireParentGone:true});
       const script='/var/lib/faolla-online-code/'+lease.toolRevision+'/scripts/booking-handoff-recovery.mjs';assertOnlineToolOwnedPath(script,'file');
       const r=spawnSync('/usr/bin/node',[script],{cwd:path.dirname(path.dirname(script)),env:env(),encoding:'utf8',timeout:170000,killSignal:'SIGKILL',maxBuffer:65536,stdio:['ignore','pipe','pipe',3]});
-      need(r.status===0&&!r.error&&!r.signal,'recovery_unconfirmed');return JSON.parse(read(ROOT+'/watchdog-recovery.json'));
+      assertBookingWatchdogInheritedLease(lease,{requireParentGone:true});const exit=recoveryChildExitEvidence(r,{operationId:lease.window.id,toolRevision:lease.toolRevision});
+      write(ROOT+'/watchdog-recovery-exit.json',retentionCanonicalText(exit));
+      need(r.status===0&&!r.error&&!r.signal&&exit.outputEmpty,'recovery_unconfirmed');return JSON.parse(read(ROOT+'/watchdog-recovery.json'));
     },
     finish:(outcome,recovery)=>{
       assertBookingWatchdogInheritedLease(lease);const finished={schemaVersion:1,operationId:lease.window.id,outcome,recovery,completedAt:new Date().toISOString()};

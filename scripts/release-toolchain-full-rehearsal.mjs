@@ -26,7 +26,10 @@ import {createOwnedIsolation,loadOwnedIsolation,isolatedPgArguments,stopOwnedIso
 import {inspectPinnedExecutionSource} from './release-toolchain-source.mjs';
 import {inspectToolchainNginxProfile} from './release-toolchain-profiles.mjs';
 import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
+import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
 import {bookingInstalledMetadataReadSql,bookingDefaultPrivilegesReadSql,isolatedBookingDefaultPrivilegesSql} from './release-toolchain-booking-compatibility.mjs';
+import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
+import {publishOnceVisible} from './release-toolchain-once-visible.mjs';
 export {FULL_REHEARSAL_SOURCES};
 const FILE=fileURLToPath(import.meta.url),NGINX=fs.existsSync('/www/server/nginx/sbin/nginx')?'/www/server/nginx/sbin/nginx':'/usr/sbin/nginx';
 let isolation,diagnosticRoot,cancelled=false;
@@ -146,7 +149,7 @@ async function watchdog(c){
     legacyState:()=>({paused:legacy.paused,originalIntact:!legacy.paused&&legacy.restarts===0&&alive(legacy.process)}),begin:a=>write(c.directory+'/recovery-attempt.json',a),
     disableBookingWorker:()=>need(!fs.existsSync(c.directory+'/worker-enabled.json'),'unexpected_completed_gate'),pauseLegacyOnce:()=>pauseFixture(c),
     route:phase=>reload(c,phase==='baseline'?'baseline':'rollback',true),unfence:()=>reload(c,database.active?'rollback':'baseline',false),
-    publicProof:async phase=>{const target=phase==='baseline'?BASELINE:APPLICATION;await until(async()=>{const p=await probe(c);return p.status===200&&p.value.buildId===target;});return [{status:200,buildId:target}];},
+    publicProof:phase=>proveRecoveryTargets({origins:['http://127.0.0.1:'+c.ports.ingress],target:phase==='baseline'?BASELINE:APPLICATION,operationId:c.window.id,verify:()=>{ownedCase(c.directory);assertFd(c);need(!alive(parent),'controller_alive');},deadlineAtMs:Date.now()+5000}),
     publicationMetadata:phase=>write(c.directory+'/recovered-publication.json',{phase,at:now()}),persistProcesses:()=>write(c.directory+'/recovered-processes.json',{legacy:json(c.directory+'/legacy.json'),at:now()}),
     complete:r=>write(c.directory+'/recovery.json',r),
    },{window:c.window});return receipt;
@@ -219,11 +222,11 @@ create trigger set_pages_updated_at before update on public.pages for each row e
  return {before:snapshot(database),plan,initial:initial.map(p=>p.row)};
 }
 async function freePort(){const server=net.createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;await new Promise(r=>server.close(r));return port;}
-function production(){
+function production({connectOnly=false}={}){
  const anchors=["/root/.pm2/pm2.pid","/var/lib/faolla-online-release/active.json","/www/wwwroot/merchant-space.current"];
  if(anchors.every(f=>!fs.existsSync(f)))return {formalHostPresent:false};need(anchors.every(f=>fs.existsSync(f)),"formal_host_incomplete");
  const daemon=Number(fs.readFileSync('/root/.pm2/pm2.pid','utf8').trim());need(fs.readFileSync('/proc/'+daemon+'/cmdline','utf8').replace(/\0+$/,'')==='PM2 v6.0.14: God Daemon (/root/.pm2)','formal_daemon');
- const all=JSON.parse(run('/usr/bin/node',['/usr/lib/node_modules/pm2/bin/pm2','jlist']));
+ const all=connectOnly?collectFormalBookingPm2Registry().rows:JSON.parse(run('/usr/bin/node',['/usr/lib/node_modules/pm2/bin/pm2','jlist']));
  const files=['/var/lib/faolla-online-release/active.json','/www/server/nginx/conf/nginx.conf','/www/server/panel/vhost/nginx/www.faolla.com.conf',
   ...['e6718553d7a03bef1e991fe6b6898cab_www.faolla.com.conf','no_store_entries_www.faolla.com.conf','faolla_contact_card_release.conf'].map(f=>'/www/server/panel/vhost/nginx/proxy/www.faolla.com/'+f)];
  return {daemon:binding(fact(daemon)),processes:all.map(p=>({name:p.name,pid:p.pid,status:p.pm2_env.status,restarts:p.pm2_env.restart_time,cwd:p.pm2_env.pm_cwd,environmentSha256:hash(JSON.stringify(p.pm2_env.env))})),
@@ -231,12 +234,20 @@ function production(){
   registry:bookingHostSql("begin read only;select encode(sha256(convert_to(jsonb_agg(to_jsonb(m) order by version)::text,'UTF8')),'hex') from public.faolla_schema_migrations m;rollback;"),defaultPrivileges:JSON.parse(bookingHostSql(bookingDefaultPrivilegesReadSql))};
 }
 export {production as captureToolchainProductionSnapshot};
-export async function runFullToolchainRehearsal(){
+// Explicit ACTIVE observation profile. The existing inactive runner retains
+// its original path; this new profile has no CLI fallback that could boot PM2.
+export const captureActiveToolchainProductionSnapshot=()=>production({connectOnly:true});
+async function runFullToolchainRehearsalProfile(activeProfile){
  const directory=path.dirname(path.dirname(FILE)),toolRevision=path.basename(directory);
  need(directory==='/var/lib/faolla-online-code/'+toolRevision&&/^[a-f0-9]{40}$/.test(toolRevision),'prepared_source');const verifiedSource=inspectPinnedExecutionSource({revision:toolRevision,directory});inspectToolchainNginxProfile(NGINX);
- const formal=production(),root=fs.mkdtempSync('/var/lib/faolla-booking-full-rehearsal-');diagnosticRoot=root;fs.chmodSync(root,0o700);fs.mkdirSync(root+'/cases',{mode:0o700});
+ const hostSnapshot=activeProfile?captureActiveToolchainProductionSnapshot:production;
+ const formal=hostSnapshot(),root=fs.mkdtempSync('/var/lib/faolla-booking-full-rehearsal-');diagnosticRoot=root;fs.chmodSync(root,0o700);fs.mkdirSync(root+'/cases',{mode:0o700});
  const sourceHashes=Object.fromEntries(FULL_REHEARSAL_SOURCES.map(f=>[f,hash(fs.readFileSync(new URL('./'+f,import.meta.url)))]));
- write(root+'/owner.json',{kind:'booking-full-native-isolated-owner',root,controller:fact(process.pid),sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],toolRevision,productionBefore:formal,sourceHashes});
+ // Only the new ACTIVE profile changes IPC publication. Its interruption
+ // observer polls these final names concurrently; never expose half a JSON.
+ // The original inactive producer/reader path stays unchanged.
+ const publishOwner=activeProfile?publishOnceVisible:write;
+ publishOwner(root+'/owner.json',{kind:'booking-full-native-isolated-owner',root,controller:fact(process.pid),sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],toolRevision,productionBefore:formal,sourceHashes});
  const results=[];let postgresSystemIdentifier,installedMetadataSha256,defaultPrivileges;cancelled=false;const interrupt=()=>{cancelled=true;};process.on('SIGTERM',interrupt);process.on('SIGINT',interrupt);
  try{isolation=createOwnedIsolation();defaultPrivileges=formal.formalHostPresent===false?JSON.parse(pg('postgres',bookingDefaultPrivilegesReadSql)):formal.defaultPrivileges;
  for(const name of CASES){
@@ -252,7 +263,7 @@ export async function runFullToolchainRehearsal(){
    // minute production supervisor. Failure cases trigger by actual parent death.
    window.deadlineAt=new Date(Date.parse(window.startedAt)+600000).toISOString();
    const applicationDirectory=formal.formalHostPresent===false?'/var/lib/faolla-release-toolchain-application-'+toolRevision:'/www/wwwroot/merchant-space.web-releases/'+CANDIDATE.slice(0,12)+'-online';
-   const c={name,root,directory:runtime,sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],isolationRoot:isolation.root,applicationDirectory,database,before:seeded.before,plan:seeded.plan,ports,lua,window};write(runtime+'/owner.json',c);
+   const c={name,root,directory:runtime,sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],isolationRoot:isolation.root,applicationDirectory,database,before:seeded.before,plan:seeded.plan,ports,lua,window};publishOwner(runtime+'/owner.json',c);
    for(const role of ['web-baseline','web-primary','web-rollback','worker']){const child=launch(role,runtime),f=await spawned(child);children.push(f);write(runtime+'/owned-process-'+f.pid+'.json',f);if(role==='worker')write(runtime+'/legacy.json',{process:f,paused:false,restarts:0});}
    write(runtime+'/nginx.conf',bookingNativeConfigText(c,'baseline',false));run(NGINX,['-p',runtime+'/', '-c',runtime+'/nginx.conf','-t']);
    const child=spawn(NGINX,['-p',runtime+'/', '-c',runtime+'/nginx.conf','-g','daemon off;'],{cwd:runtime,env:env(),stdio:'ignore'});
@@ -282,7 +293,7 @@ export async function runFullToolchainRehearsal(){
    await stopNginx(nginx,runtime);
    for(const f of [...children].reverse())await stop(f);need(children.every(f=>!alive(f)),'process_leak');
    need(spawnSync('flock',['--nonblock',runtime+'/deploy.lock','/usr/bin/true'],{timeout:2000}).status===0,'kernel_lock_not_released');
-   equal(production(),formal,'production_changed');const receipt={name,completed:true,elapsedMs:Date.now()-started,inheritedKernelLock:true,realNginx:true,realPostgres:true,realProcesses:true,ownedFixturesOnly:true,
+   equal(hostSnapshot(),formal,'production_changed');const receipt={name,completed:true,elapsedMs:Date.now()-started,inheritedKernelLock:true,realNginx:true,realPostgres:true,realProcesses:true,ownedFixturesOnly:true,
     actualDatabase:{name:database,...actual},rowsPreserved:true,optionsRepaired:name!=='controller-death-before-commit',gateClosed:true,target:expected,controllerExit:exit,watchdog:finished,allFixturesStopped:true,completedAt:now()};
    need(receipt.elapsedMs>0&&receipt.elapsedMs<=600000,'actual_window_exceeded');const receiptFile=root+'/cases/'+name+'.json';write(receiptFile,receipt);results.push({name,completed:true,elapsedMs:receipt.elapsedMs,inheritedKernelLock:true,realNginx:true,realPostgres:true,realProcesses:true,ownedFixturesOnly:true,receiptFile,receiptSha256:hash(read(receiptFile))});
   }finally{
@@ -296,13 +307,15 @@ export async function runFullToolchainRehearsal(){
    });
   }
  }}finally{try{if(isolation)stopOwnedIsolation(isolation);}finally{process.removeListener('SIGTERM',interrupt);process.removeListener('SIGINT',interrupt);}}
- equal(production(),formal,'production_changed');for(const [file,digest]of Object.entries(sourceHashes))need(hash(fs.readFileSync(new URL('./'+file,import.meta.url)))===digest,'source_changed');
+ equal(hostSnapshot(),formal,'production_changed');for(const [file,digest]of Object.entries(sourceHashes))need(hash(fs.readFileSync(new URL('./'+file,import.meta.url)))===digest,'source_changed');
  const report={schemaVersion:1,kind:'booking-full-native-handoff-acceptance',toolRevision,candidate:CANDIDATE,rollback:APPLICATION,productionMutated:false,originalTimerMutated:false,mailEnabled:false,
   postgresServerVersionNum:'150008',postgresSystemIdentifier,allFixturesStopped:true,cases:results,sourceHashes,activationBodySha256:BOOKING_ACTIVATION_BODY_SHA256,
   scope:'shared handoff/watchdog/recovery sequences with real isolated IO; production-specific attesters and certificate validation remain mandatory on the real host',completedAt:now()};
- const complete={...report,publicationAuthority:false,isolationRoot:isolation.root,backupRestoreVerified:true,toolInventorySha256:verifiedSource.inventorySha256,installedMetadataSha256,defaultPrivilegesSha256:hash(JSON.stringify(defaultPrivileges))};write(root+'/acceptance.json',complete);
+ const complete={...report,...(activeProfile?{observationProfile:'fixed-active-incident-connect-only'}:{}),publicationAuthority:false,isolationRoot:isolation.root,backupRestoreVerified:true,toolInventorySha256:verifiedSource.inventorySha256,installedMetadataSha256,defaultPrivilegesSha256:hash(JSON.stringify(defaultPrivileges))};write(root+'/acceptance.json',complete);
  console.log(JSON.stringify({kind:report.kind,root,cases:results.map(c=>({name:c.name,elapsedMs:c.elapsedMs})),productionMutated:false,allFixturesStopped:true}));return {root,report:complete};
 }
+export const runFullToolchainRehearsal=()=>runFullToolchainRehearsalProfile(false);
+export const runFullActiveToolchainRehearsal=()=>runFullToolchainRehearsalProfile(true);
 async function main(){
  need(process.platform==='linux'&&process.getuid?.()===0,'linux_root');
  if(process.argv.length===2)return runFullToolchainRehearsal();need(process.argv.length===4,'child_arguments');const role=process.argv[2],c=ownedCase(process.argv[3]);diagnosticRoot=c.directory;

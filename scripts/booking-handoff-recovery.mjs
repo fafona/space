@@ -18,6 +18,8 @@ import {assertOnlineRetentionPersistedProcesses} from './online-release-retentio
 import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY} from './web-presentation-release-policy.mjs';
 import {assertOnlineToolOwnedPath,runOnlineToolGit} from './prepare-online-release-tool.mjs';
 import {BOOKING_PROTECTED_SLUGS} from './booking-publication-database.mjs';
+import {RECOVERY_STEPS,recoveryFailureDiagnostic} from './release-toolchain-recovery-diagnostics.mjs';
+import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
 
 const RELEASE='/var/lib/faolla-online-release',CONTAINER='0a7358f7310a33feeb9bfad9142530ff3f44882234ecbc35763135f9c1bfd416';
 const hash=v=>createHash('sha256').update(v).digest('hex'),need=(v,c)=>{if(!v)throw Error('booking_recovery_'+c);},equal=(a,b,c)=>need(isDeepStrictEqual(a,b),c);
@@ -57,17 +59,20 @@ export async function executeBookingFailureRecovery(operations,lease){
 // The native fixture uses this IO sequence with its OWN real process/FD/DB
 // identities, never a fabricated production PID, lock token or system identifier.
 export async function executeBookingFailureRecoverySequence(operations,lease){
-  await operations.verify();await operations.parentGone();
-  const before=await operations.capture(),database=await operations.databaseBarrier(),legacy=await operations.legacyState(),phase=selectBookingRecoveryTarget(database,legacy);
-  await operations.begin({schemaVersion:1,kind:'booking-window-failure-recovery-attempt',operationId:lease.window.id,phase,before,database,legacy,startedAt:operations.now()});
-  await operations.disableBookingWorker();let legacyPause={confirmed:legacy.paused===true,attempted:false};
-  if(phase==='rollback'&&database.active===true&&!legacyPause.confirmed)legacyPause=await operations.pauseLegacyOnce(database);
-  await operations.route(phase);await operations.unfence();const publicProof=await operations.publicProof(phase);
-  await operations.publicationMetadata(phase);await operations.persistProcesses();
-  const completedAt=operations.now(),receipt={schemaVersion:1,kind:'booking-window-failure-recovery',operationId:lease.window.id,phase,
-    target:phase==='baseline'?BASELINE:APPLICATION,database,legacyPause,publicProof,gateClosed:true,normalHandoffCompleted:false,completedAt,
-    withinAuthorizedWindow:Date.parse(completedAt)<Date.parse(lease.window.deadlineAt)};
-  await operations.complete(receipt);return receipt;
+  let step='startup';const perform=async(name,...args)=>{step=name;if(operations.progress)await operations.progress(name);return operations[name](...args);};
+  try{
+    await perform('verify');await perform('parentGone');
+    const before=await perform('capture'),database=await perform('databaseBarrier'),legacy=await perform('legacyState'),phase=selectBookingRecoveryTarget(database,legacy);
+    await perform('begin',{schemaVersion:1,kind:'booking-window-failure-recovery-attempt',operationId:lease.window.id,phase,before,database,legacy,startedAt:operations.now()});
+    await perform('disableBookingWorker');let legacyPause={confirmed:legacy.paused===true,attempted:false};
+    if(phase==='rollback'&&database.active===true&&!legacyPause.confirmed)legacyPause=await perform('pauseLegacyOnce',database);
+    await perform('route',phase);await perform('unfence');const publicProof=await perform('publicProof',phase);
+    await perform('publicationMetadata',phase);await perform('persistProcesses');
+    const completedAt=operations.now(),receipt={schemaVersion:1,kind:'booking-window-failure-recovery',operationId:lease.window.id,phase,
+      target:phase==='baseline'?BASELINE:APPLICATION,database,legacyPause,publicProof,gateClosed:true,normalHandoffCompleted:false,completedAt,
+      withinAuthorizedWindow:Date.parse(completedAt)<Date.parse(lease.window.deadlineAt)};
+    await perform('complete',receipt);return receipt;
+  }catch(error){if(operations.failure)try{await operations.failure(error,step);}catch{console.error('booking_recovery_diagnostic_unconfirmed');}throw error;}
 }
 
 function productionOperations(lease){
@@ -143,6 +148,8 @@ function productionOperations(lease){
     }
   };
   return {verify,now:()=>new Date().toISOString(),parentGone:()=>verify(),
+    progress:step=>{lastRecoveryStep=step;need(RECOVERY_STEPS.includes(step),'diagnostic_step');verify();write(ROOT+'/recovery-step-'+step+'.json',retentionCanonicalText({kind:'booking-recovery-step-started',operationId:lease.window.id,toolRevision:lease.toolRevision,step,at:new Date().toISOString()}));},
+    failure:(error,step)=>{verify();write(ROOT+'/recovery-failure.json',retentionCanonicalText(recoveryFailureDiagnostic(error,{step,operationId:lease.window.id,toolRevision:lease.toolRevision,knownFiles:['booking-handoff-recovery.mjs','booking-handoff-watchdog.mjs','booking-handoff-policy.mjs','booking-handoff-legacy.mjs','booking-handoff-routing.mjs','release-toolchain-recovery-diagnostics.mjs']})));},
     capture:()=>{verify();assertBookingRoutingCurrent(plan,current());return {proxyHashes:Object.fromEntries(Object.entries(current()).map(([k,v])=>[k,hash(v)])),activeFileText:read(RELEASE+'/active.json'),processes:JSON.parse(pm(['jlist'])).map(normalizeRetirementProcess)};},
     databaseBarrier,
     legacyState:()=>{try{const legacy=collectBookingLegacyHost();return {paused:legacy.legacy.backgroundPaused==='1',originalIntact:isDeepStrictEqual(legacy.legacy,preflight.legacyBefore)&&
@@ -164,15 +171,7 @@ function productionOperations(lease){
         run('/www/server/nginx/sbin/nginx',['-t']);run('/www/server/nginx/sbin/nginx',['-s','reload']);}
       need(read(BOOKING_INGRESS_VHOST,false)===gate.beforeText,'ingress_readback');
     },
-    publicProof:async phase=>{
-      const target=phase==='baseline'?BASELINE:APPLICATION,proof=[];
-      for(const origin of ['https://faolla.com','https://launch.faolla.com']){
-        let confirmed=false;for(let i=0;i<10&&!confirmed;i++){
-          verify();try{const r=await fetch(origin+'/api/app-web-version?bookingRecovery='+lease.window.id,{cache:'no-store',redirect:'manual',signal:AbortSignal.timeout(1000)}),v=await r.json();confirmed=r.status===200&&v.ok===true&&v.buildId===target;}catch{/* read-only probe only */}
-          if(!confirmed)await new Promise(r=>setTimeout(r,100));
-        }need(confirmed,'public_not_recovered');proof.push({origin,status:200,buildId:target});
-      }return proof;
-    },
+    publicProof:phase=>proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target:phase==='baseline'?BASELINE:APPLICATION,operationId:lease.window.id,verify,deadlineAtMs:Date.now()+30000}),
     publicationMetadata:phase=>{
       verify();const before=read(RELEASE+'/active.json'),actual=JSON.parse(before),baseline=JSON.parse(preflight.activeFileText);
       const allowed=[baseline,plan.primary,plan.rollback];need(allowed.some(a=>isDeepStrictEqual(location(actual),location(a)))&&Object.keys(actual).length===4,'active_file_not_owned');
@@ -193,12 +192,14 @@ function productionOperations(lease){
   };
 }
 
+let lastRecoveryStep='startup',recoveryContext;
 async function productionRecovery(){
   need(process.platform==='linux'&&process.getuid?.()===0&&process.argv.length===2,'invocation');
   const lease=JSON.parse(read(ROOT+'/watchdog-lease.json'));assertBookingWatchdogInheritedLease(lease,{requireParentGone:true});
+  recoveryContext={operationId:lease.window.id,toolRevision:lease.toolRevision};
   const expected='/var/lib/faolla-online-code/'+lease.toolRevision+'/scripts/booking-handoff-recovery.mjs';need(fileURLToPath(import.meta.url)===expected,'source_path');
   const armed=JSON.parse(read(ROOT+'/watchdog-armed.json')),self=fact(process.pid),supervisor=fact(armed.process.pid);
   need(self.parentPid===armed.process.pid,'supervisor_parent');equal(Object.fromEntries(Object.keys(armed.process).map(k=>[k,supervisor[k]])),armed.process,'supervisor_changed');
   await executeBookingFailureRecovery(productionOperations(lease),lease);
 }
-if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){productionRecovery().catch(()=>{console.error('booking_recovery_unconfirmed');process.exitCode=1;});}
+if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){productionRecovery().catch(error=>{if(recoveryContext)console.error(JSON.stringify(recoveryFailureDiagnostic(error,{...recoveryContext,step:lastRecoveryStep,knownFiles:['booking-handoff-recovery.mjs','booking-handoff-watchdog.mjs','booking-handoff-policy.mjs','booking-handoff-legacy.mjs','booking-handoff-routing.mjs','release-toolchain-recovery-diagnostics.mjs']})));else console.error('booking_recovery_unconfirmed');process.exitCode=1;});}

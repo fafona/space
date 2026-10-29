@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {readOnlineRetentionHistory, ONLINE_RETENTION_ROOT, ONLINE_RETENTION_FILES,
@@ -27,6 +27,7 @@ const identity = st => Object.fromEntries(['dev', 'ino', 'mode', 'uid', 'nlink',
 const dirIdentity = st => Object.fromEntries(['dev', 'ino', 'mode', 'uid'].map(k => [k, st[k]]));
 const stableObservation = value => {const result = {...value}; delete result.established; return result;};
 const heldLocks = new WeakMap();
+const ownedReconciliationScopes = new WeakMap();
 function ownedPath(name, kind = 'directory', io = fs) {
   if (typeof name !== 'string' || !path.posix.isAbsolute(name) || path.posix.normalize(name) !== name || /[\\\0\r\n]/.test(name)) fail('path_invalid');
   for (let current = name; ; current = path.posix.dirname(current)) {
@@ -374,12 +375,26 @@ function productionOperations({toolRevision, kind, activeTarget, victimTarget = 
 export function createOnlineRetentionProductionOperations(options) {return productionOperations(options);}
 function assertHeldLocks(token) {
   const held = token && heldLocks.get(token);
-  if (!held || held.deployLock !== DEPLOY_LOCK || held.operation !== OPERATION_LOCK) fail('parent_locks_required');
-  assertOnlineToolOwnedPath(DEPLOY_LOCK, 'file'); privateDirectory(OPERATION_LOCK);
+  if (!held || held.activeScopeReleased || held.deployLock !== DEPLOY_LOCK || held.operation !== OPERATION_LOCK) fail('parent_locks_required');
+  assertExistingOperationScopeHeld(token);
+}
+function assertExistingOperationScopeHeld(token) {
+  const held = token && heldLocks.get(token);
+  if (!held) fail('parent_locks_required');
+  if (held.activeWindow) {
+    const at = Date.now();
+    if (at < Date.parse(held.activeWindow.startedAt) || at >= Date.parse(held.activeWindow.deadlineAt)) fail('active_incident_window_expired');
+  }
+  assertOnlineToolOwnedPath(held.deployLock, 'file');
   equal(dirIdentity(fs.fstatSync(token.deployFd)), held.deployIdentity, 'deploy_lock_changed');
-  equal(dirIdentity(fs.lstatSync(DEPLOY_LOCK)), held.deployIdentity, 'deploy_lock_changed');
-  equal(dirIdentity(fs.lstatSync(OPERATION_LOCK)), held.operationIdentity, 'operation_lock_changed');
-  if (fs.readdirSync(OPERATION_LOCK).length) fail('operation_lock_changed');
+  equal(dirIdentity(fs.lstatSync(held.deployLock)), held.deployIdentity, 'deploy_lock_changed');
+  if(held.activeScopeReleased){
+    if(exists(held.operation)||!held.activeArchive)fail('operation_lock_changed');
+    equal(dirIdentity(privateDirectory(held.activeArchive.destination)),held.activeArchive.original,'active_archive_original_changed');return;
+  }
+  privateDirectory(held.operation);
+  equal(dirIdentity(fs.lstatSync(held.operation)), held.operationIdentity, 'operation_lock_changed');
+  if (fs.readdirSync(held.operation).length) fail('operation_lock_changed');
 }
 
 // Read-only capability check for post-publication artifact housekeeping. This
@@ -407,6 +422,198 @@ export async function withOnlineRetentionLocks(work, {io = fs, spawn = spawnSync
     try {if (held) {checkPath(operation); equal(dirIdentity(io.lstatSync(operation)), captured, 'operation_lock_changed'); io.rmdirSync(operation);}}
     finally {io.closeSync(fd);}
   }
+}
+
+// New ACTIVE incident scope, not a relaxation of withOnlineRetentionLocks.
+// It retains the ORIGINAL empty operation directory on success AND failure.
+// No clear, rename, mkdir of a replacement, archive, or resume is exposed here.
+async function withExistingOperationPreparation({deployLock,operation,observe},work) {
+  assertOnlineToolOwnedPath(deployLock,'file'); privateDirectory(operation);
+  const deployIdentity=dirIdentity(fs.lstatSync(deployLock)),operationIdentity=dirIdentity(fs.lstatSync(operation));
+  if(fs.readdirSync(operation).length)fail('operation_lock_changed');
+  const fd=fs.openSync(deployLock,fs.constants.O_RDWR|fs.constants.O_NOFOLLOW);let token;
+  const started=Date.now(),window=Object.freeze({id:randomUUID(),startedAt:new Date(started).toISOString(),deadlineAt:new Date(started+600000).toISOString()});
+  try {
+    equal(dirIdentity(fs.fstatSync(fd)),deployIdentity,'deploy_lock_changed');
+    equal(dirIdentity(fs.lstatSync(deployLock)),deployIdentity,'deploy_lock_changed');
+    const result=spawnSync('flock',['--nonblock','3'],{stdio:['ignore','pipe','pipe',fd],env:runtimeEnvironment(),timeout:10000,windowsHide:true});
+    if(result.status!==0||result.error||result.signal)fail('deploy_lock_busy');
+    // The independent observer runs AFTER acquiring the kernel lock. Its
+    // result is retained as evidence, never trusted as an ownership token.
+    const incident=await observe(window);
+    equal(dirIdentity(privateDirectory(operation)),operationIdentity,'operation_lock_changed');
+    equal(dirIdentity(fs.lstatSync(deployLock)),deployIdentity,'deploy_lock_changed');
+    token=Object.freeze({deployFd:fd,operationDirectory:operation});
+    heldLocks.set(token,{deployLock,operation,deployIdentity,operationIdentity,activeWindow:window});
+    assertExistingOperationScopeHeld(token);
+    const resultValue=await work(token,{window,incident});
+    assertExistingOperationScopeHeld(token);return resultValue;
+  }finally{
+    if(token)heldLocks.delete(token);
+    // A closed FD releases OUR kernel ownership only. The old operation inode
+    // and all evidence stay in place even if observe/work/verification fails.
+    fs.closeSync(fd);
+  }
+}
+export async function withActiveBookingIncidentPreparationLocks({toolRevision},work) {
+  if(process.platform!=='linux'||process.getuid?.()!==0||typeof work!=='function')fail('active_incident_scope');
+  const {reviewedBookingExecution}=await import('./release-toolchain-authority.mjs');
+  const authority=reviewedBookingExecution(toolRevision);if(!authority)fail('active_incident_review_required');
+  const {inspectActiveBookingIncident}=await import('./release-toolchain-active-generation-incident.mjs');
+  return withExistingOperationPreparation({deployLock:DEPLOY_LOCK,operation:OPERATION_LOCK,
+    observe:window=>{if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return inspectActiveBookingIncident({window});}},
+    async(token,context)=>{assertHeldLocks(token);const result=await work(token,context);if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return result;});
+}
+
+// Closed disposable CI entry: same actual FD/flock/inode implementation, but a
+// separate owned resource identity. Its tokens MUST fail production admission.
+export async function acceptActiveIncidentPreparationLocksInCi() {
+  const anchors=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
+  if(process.platform!=='linux'||process.getuid?.()!==0||process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted'||process.env.FAOLLA_RELEASE_PRODUCTION_EQ!=='1'||anchors.some(f=>exists(f)))fail('ci_only');
+  const root=fs.mkdtempSync('/var/lib/faolla-active-lock-ci-');fs.chmodSync(root,0o700);
+  privateWrite(root+'/started.json',retentionCanonicalText({kind:'active-incident-preparation-lock-ci-started',syntheticInputsOnly:true,at:new Date().toISOString()}));
+  let stage='owned-resource-preparation';try{
+  const deployLock=root+'/deploy.lock',operation=root+'/operation.lock';privateWrite(deployLock,'owned-ci-lock\n');fs.mkdirSync(operation,{mode:0o700});syncDirectory(root);
+  const original=dirIdentity(fs.lstatSync(operation)),cases=[];
+  const resource={deployLock,operation,observe:async()=>({syntheticOnly:true,publicationAuthority:false})};
+  const kernelAvailable=()=>{const r=spawnSync('flock',['--nonblock',deployLock,'true'],{env:runtimeEnvironment(),timeout:10000,windowsHide:true});if(r.error||r.signal||![0,1].includes(r.status))fail('ci_lock_probe');return r.status===0;};
+  stage='actual-flock-and-production-token-refusal';let withdrawn;
+  await withExistingOperationPreparation(resource,async token=>{
+    withdrawn=token;
+    assertExistingOperationScopeHeld(token);if(kernelAvailable())fail('ci_lock_not_held');
+    let rejected=false;try{assertHeldLocks(token);}catch{rejected=true;}if(!rejected)fail('ci_token_production_leak');
+    let nested=false;try{await withExistingOperationPreparation(resource,()=>{nested=true;});fail('ci_parallel_accepted');}catch(e){if(e.message!=='online_retention_writer_deploy_lock_busy')throw e;}
+    if(nested)fail('ci_parallel_observed');
+  });
+  let revoked=false;try{assertExistingOperationScopeHeld(withdrawn);}catch{revoked=true;}if(!revoked)fail('ci_token_not_revoked');
+  equal(dirIdentity(fs.lstatSync(operation)),original,'ci_operation_changed');if(!kernelAvailable())fail('ci_lock_not_released');cases.push('success-retains-original-inode-and-releases-own-flock');
+  stage='unknown-work-result';const originalError=Error('owned-ci-unknown-result');let caught;
+  try{await withExistingOperationPreparation(resource,async token=>{assertExistingOperationScopeHeld(token);await Promise.resolve();throw originalError;});}catch(e){caught=e;}
+  if(caught!==originalError)fail('ci_original_error_lost');equal(dirIdentity(fs.lstatSync(operation)),original,'ci_operation_changed');if(!kernelAvailable())fail('ci_lock_not_released');cases.push('work-failure-retains-original-inode');
+  stage='observer-refusal';let workCalled=false;caught=null;
+  try{await withExistingOperationPreparation({...resource,observe:()=>{throw originalError;}},()=>{workCalled=true;});}catch(e){caught=e;}
+  if(caught!==originalError||workCalled)fail('ci_observer_bypass');equal(dirIdentity(fs.lstatSync(operation)),original,'ci_operation_changed');if(!kernelAvailable())fail('ci_lock_not_released');cases.push('observer-refusal-never-enters-work');
+  stage='observer-inode-replacement';caught=null;const replaced=root+'/original-operation-retained';
+  try{await withExistingOperationPreparation({...resource,observe:()=>{fs.renameSync(operation,replaced);fs.mkdirSync(operation,{mode:0o700});return{};}},()=>{workCalled=true;});}catch(e){caught=e;}
+  if(caught?.message!=='online_retention_writer_operation_lock_changed'||workCalled)fail('ci_replacement_accepted');equal(dirIdentity(fs.lstatSync(replaced)),original,'ci_original_inode_lost');if(!kernelAvailable())fail('ci_lock_not_released');cases.push('observer-directory-replacement-refused');
+  for(const outcome of ['normal','unknown']){
+    stage='original-inode-archive-'+outcome;const parent=root+'/archive-'+outcome;fs.mkdirSync(parent,{mode:0o700});syncDirectory(root);
+    const deploy=parent+'/deploy.lock',op=parent+'/operation.lock',vault=parent+'/vault';privateWrite(deploy,'owned-ci-lock\n');fs.mkdirSync(op,{mode:0o700});fs.mkdirSync(vault,{mode:0o700});syncDirectory(parent);
+    const old=dirIdentity(fs.lstatSync(op));let archived,cause;
+    try{await withExistingOperationPreparation({deployLock:deploy,operation:op,observe:async()=>({syntheticOnly:true})},async token=>{
+      archived=archiveOwnedExistingOperation(token,vault,'a'.repeat(64));assertExistingOperationScopeHeld(token);
+      const probe=spawnSync('flock',['--nonblock',deploy,'true'],{env:runtimeEnvironment(),timeout:10000,windowsHide:true});if(probe.status!==1||probe.error||probe.signal)fail('ci_archive_kernel_lock_lost');
+      let duplicate=false;try{archiveOwnedExistingOperation(token,vault,'a'.repeat(64));}catch{duplicate=true;}if(!duplicate)fail('ci_archive_replay_accepted');
+      if(outcome==='unknown')throw originalError;
+    });}catch(e){cause=e;}
+    if(outcome==='unknown'?cause!==originalError:cause!==undefined)fail('ci_archive_cause_changed');
+    equal(dirIdentity(fs.lstatSync(vault+'/operation.lock')),old,'ci_original_inode_lost');
+    if(isDeepStrictEqual(dirIdentity(fs.lstatSync(op)),old)||!archived||fs.readdirSync(op).length)fail('ci_replacement_scope_invalid');
+    cases.push('archive-'+outcome+'-preserves-old-inode-and-retains-owned-replacement');
+  }
+  stage='uncertain-after-original-rename';{
+    const parent=root+'/archive-mid-rename';fs.mkdirSync(parent,{mode:0o700});syncDirectory(root);
+    const deploy=parent+'/deploy.lock',op=parent+'/operation.lock',vault=parent+'/vault';privateWrite(deploy,'owned-ci-lock\n');fs.mkdirSync(op,{mode:0o700});fs.mkdirSync(vault,{mode:0o700});syncDirectory(parent);const old=dirIdentity(fs.lstatSync(op));let cause;
+    try{await withExistingOperationPreparation({deployLock:deploy,operation:op,observe:async()=>({syntheticOnly:true})},token=>archiveOwnedExistingOperation(token,vault,'a'.repeat(64),()=>{throw originalError;}));}catch(e){cause=e;}
+    if(cause!==originalError||exists(op)||exists(vault+'/operation-archived.json')||!exists(vault+'/operation-archive-attempt.json'))fail('ci_archive_unknown_false_receipt');equal(dirIdentity(fs.lstatSync(vault+'/operation.lock')),old,'ci_original_inode_lost');
+    let entered=false;try{await withExistingOperationPreparation({deployLock:deploy,operation:op,observe:async()=>({})},()=>{entered=true;});}catch{}
+    if(entered)fail('ci_archive_unknown_reentered');cases.push('mid-rename-unknown-retains-original-inode-and-refuses-reentry');
+  }
+  if(anchors.some(f=>exists(f)))fail('ci_formal_anchor_created');
+  const result={kind:'active-incident-preparation-lock-native-acceptance',root,cases,realKernelFlock:true,productionTokensRejected:true,allOriginalEvidenceRetained:true,formalHostTouched:false,publicationAuthority:false,mailEnabled:false,completedAt:new Date().toISOString()};
+  privateWrite(root+'/acceptance.json',retentionCanonicalText(result));return result;
+  }catch(error){
+    try{const {stageFailureDiagnostic}=await import('./release-toolchain-diagnostics.mjs');const toolRevision=path.basename(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+      privateWrite(root+'/failure.json',retentionCanonicalText({stage,diagnostic:stageFailureDiagnostic(error,{stage:'candidate',toolRevision,knownFiles:['online-release-retention-writer.mjs','release-toolchain-active-generation-lock-acceptance.mjs']}),syntheticInputsOnly:true,at:new Date().toISOString()}));
+    }catch{/* A diagnostic failure cannot replace the original refusal. */}
+    throw error;
+  }
+}
+
+// Genuine owned CI capability, same kernel/inode engine; formal tokens still
+// require their exact paths AND reviewed execution authority independently.
+export async function withOwnedActiveReconciliationLocks(capability,work){
+  const {ownedActiveReconciliationScope}=await import('./release-toolchain-active-generation-owned-lab.mjs');
+  const s=ownedActiveReconciliationScope(capability);
+  return withExistingOperationPreparation({deployLock:s.directory+'/deploy.lock',operation:s.directory+'/operation.lock',observe:async()=>{ownedActiveReconciliationScope(capability);return{fixtureOnly:true};}},
+    async(token,context)=>{ownedReconciliationScopes.set(token,{capability,assertScope:()=>ownedActiveReconciliationScope(capability)});try{return await work(token,context);}finally{ownedReconciliationScopes.delete(token);}});
+}
+export function ownedActiveReconciliationHeldChecker(capability,token){
+  const bound=ownedReconciliationScopes.get(token);if(!bound||bound.capability!==capability)fail('parent_locks_required');
+  const check=()=>{if(ownedReconciliationScopes.get(token)!==bound||heldLocks.get(token)?.activeScopeReleased)fail('parent_locks_required');bound.assertScope();assertExistingOperationScopeHeld(token);};check();return check;
+}
+export async function assertOwnedActiveReconciliationHeldLocks(capability,token){
+  const {ownedActiveReconciliationScope}=await import('./release-toolchain-active-generation-owned-lab.mjs');const s=ownedActiveReconciliationScope(capability),held=heldLocks.get(token);
+  if(!held||held.activeScopeReleased||held.deployLock!==s.directory+'/deploy.lock'||held.operation!==s.directory+'/operation.lock')fail('parent_locks_required');assertExistingOperationScopeHeld(token);
+}
+export async function archiveOwnedActiveReconciliationOperation(capability,token){
+  await assertOwnedActiveReconciliationHeldLocks(capability,token);
+  const {verifyOwnedActiveReconciliationClosure}=await import('./release-toolchain-active-generation-reconciliation.mjs');
+  const closure=await verifyOwnedActiveReconciliationClosure(capability,token);
+  return archiveOwnedExistingOperation(token,closure.directory,closure.sha256);
+}
+export async function releaseOwnedActiveReconciliationOperation(capability,token){
+  await assertOwnedActiveReconciliationHeldLocks(capability,token);
+  const {verifyOwnedActiveReconciliationClosure}=await import('./release-toolchain-active-generation-reconciliation.mjs');
+  const closure=await verifyOwnedActiveReconciliationClosure(capability,token);
+  return releaseArchivedReplacement(token,closure,'owned-active-reconciliation-completed','owned-active-replacement');
+}
+function releaseArchivedReplacement(token,closure,completionKind,releaseKind){
+  assertExistingOperationScopeHeld(token);const held=heldLocks.get(token);
+  const completed=JSON.parse(readOwned(closure.directory+'/reconciliation-completed.json'));
+  if(completed.kind!==completionKind||completed.closureSha256!==closure.sha256||completed.archiveSha256!==digest(readOwned(closure.directory+'/operation-archived.json'))||completed.publicationAuthority!==false||!held.activeArchive||held.activeArchive.vault!==closure.directory||held.activeArchive.closureSha256!==closure.sha256)fail('active_archive_not_authorized');
+  assertExistingOperationScopeHeld(token);equal(dirIdentity(privateDirectory(held.activeArchive.destination)),held.activeArchive.original,'active_archive_original_changed');
+  privateWrite(closure.directory+'/replacement-release-attempt.json',retentionCanonicalText({kind:releaseKind+'-release-intent',closureSha256:closure.sha256,replacement:held.operationIdentity,originalInodeRetained:true,publicationAuthority:false}));
+  assertExistingOperationScopeHeld(token);fs.rmdirSync(held.operation);syncDirectory(path.dirname(held.operation));held.activeScopeReleased=true;assertExistingOperationScopeHeld(token);
+  const receipt={kind:releaseKind+'-released',closureSha256:closure.sha256,originalInodeRetained:true,publicationAuthority:false};privateWrite(closure.directory+'/replacement-released.json',retentionCanonicalText(receipt));return receipt;
+}
+// Read-only access to OUR real archive transition, not caller-provided JSON.
+export function activeBookingArchiveWitness(token){
+  assertHeldLocks(token);const held=heldLocks.get(token);if(!held.activeArchive)return null;
+  const archive=held.activeArchive;if(archive.vault!=='/var/lib/faolla-booking-active-closures/b49808d6-1950-4cb4-b029-97086873d7a7/'+held.activeWindow.id)fail('active_archive_not_authorized');
+  equal(dirIdentity(privateDirectory(archive.destination)),archive.original,'active_archive_original_changed');
+  const value=structuredClone({...archive,window:held.activeWindow,canonicalOperation:held.operation}),freeze=v=>{if(v&&typeof v==='object'){for(const child of Object.values(v))freeze(child);Object.freeze(v);}return v;};return freeze(value);
+}
+export function assertActiveBookingIncidentHeldWindow(token,window){
+  assertHeldLocks(token);const held=heldLocks.get(token);if(!held.activeWindow||!isDeepStrictEqual(held.activeWindow,window))fail('active_incident_window_mismatch');
+}
+export function assertReleasedActiveBookingScope(token,closureSha256){
+  const held=heldLocks.get(token);if(!held?.activeScopeReleased||held.deployLock!==DEPLOY_LOCK||held.operation!==OPERATION_LOCK||held.activeArchive?.closureSha256!==closureSha256)fail('active_archive_not_authorized');assertExistingOperationScopeHeld(token);
+}
+export async function archiveActiveBookingClosureOperation({lock,toolRevision,window}){
+  assertHeldLocks(lock);const {verifyActiveBookingClosure}=await import('./release-toolchain-active-generation-closure.mjs');
+  const closure=await verifyActiveBookingClosure({lock,toolRevision,window});return archiveOwnedExistingOperation(lock,closure.directory,closure.sha256);
+}
+export async function releaseActiveBookingClosureOperation({lock,toolRevision,window}){
+  assertHeldLocks(lock);const {verifyActiveBookingClosure}=await import('./release-toolchain-active-generation-closure.mjs');
+  const closure=await verifyActiveBookingClosure({lock,toolRevision,window});return releaseArchivedReplacement(lock,closure,'active-incident-reconciliation-completed','active-incident-replacement');
+}
+
+// Physical archive primitive shared with disposable native tests. Deliberately
+// NOT exported as a production action: a future closure entry must first verify
+// its complete sealed closure and source/CI/backup qualifications. Preparation
+// alone never calls it. It cannot remove an inode or auto-release a new scope.
+function archiveOwnedExistingOperation(token,vault,closureSha256,afterOriginalArchived){
+  assertExistingOperationScopeHeld(token);const held=heldLocks.get(token);
+  if(!held.activeWindow||held.activeArchive||!/^[a-f0-9]{64}$/.test(closureSha256))fail('active_archive_not_authorized');
+  const destination=vault+'/operation.lock',vaultIdentity=dirIdentity(privateDirectory(vault));
+  if(exists(destination))fail('active_archive_destination_exists');
+  const original=held.operationIdentity;
+  privateWrite(vault+'/operation-archive-attempt.json',retentionCanonicalText({kind:'active-incident-original-operation-archive-intent',window:held.activeWindow,closureSha256,source:held.operation,destination,original,at:new Date().toISOString(),publicationAuthority:false}));
+  assertExistingOperationScopeHeld(token);equal(dirIdentity(privateDirectory(vault)),vaultIdentity,'active_archive_parent_changed');
+  // Both paths are absolute, fixed by the enclosing closed resource profile.
+  // A failed or uncertain rename is never retried or replaced with deletion.
+  fs.renameSync(held.operation,destination);syncDirectory(path.dirname(held.operation));syncDirectory(vault);
+  equal(dirIdentity(privateDirectory(destination)),original,'active_archive_original_changed');
+  // Private fault-injection seam used by the closed CI factory above. It is
+  // never a CLI argument, a production profile flag, or a resumed operation.
+  if(afterOriginalArchived)afterOriginalArchived();
+  fs.mkdirSync(held.operation,{mode:0o700});syncDirectory(path.dirname(held.operation));
+  const replacement=dirIdentity(privateDirectory(held.operation));if(isDeepStrictEqual(replacement,original))fail('active_archive_replacement_invalid');
+  held.operationIdentity=replacement;held.activeArchive={vault,vaultIdentity,destination,original,replacement,closureSha256};
+  assertExistingOperationScopeHeld(token);
+  const result={kind:'active-incident-original-operation-archived',window:held.activeWindow,closureSha256,source:held.operation,destination,original,replacement,originalInodeRetained:true,replacementScopeRetained:true,incidentClosed:false,publicationAuthority:false,at:new Date().toISOString()};
+  privateWrite(vault+'/operation-archived.json',retentionCanonicalText(result));assertExistingOperationScopeHeld(token);return result;
 }
 
 export async function runOnlineRetentionUnderHeldLocks(options) {

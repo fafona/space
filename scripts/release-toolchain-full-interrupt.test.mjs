@@ -5,3 +5,4 @@ test('full interruption signals only a directly spawned and birth/source-bound c
  assert.doesNotMatch(source,/SIGKILL|pm2.*(?:restart|kill|stop)|process\.argv\[2\]|unlinkSync|rmSync/);
  assert.match(source,/clearTimeout\(timer\)/);assert.match(source,/captureToolchainProductionSnapshot\(\),formal/);
 });
+test('interruption keeps its original strict guards and preserves safe stage diagnostics before final cleanup',()=>{const source=readFileSync(new URL('./release-toolchain-full-interrupt.mjs',import.meta.url),'utf8');for(const token of ['spawned.json','failure.json','cleanup-unconfirmed.json','stageFailureDiagnostic','diagnosticStage','syntax_error','automaticRetryAllowed:false'])assert.ok(source.includes(token),token);assert.doesNotMatch(source,/\.stderr\s*\)|error\.message\s*[,}]|error\.stack\s*[,}]/);});

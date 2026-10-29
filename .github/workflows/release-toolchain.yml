@@ -7,6 +7,9 @@ on:
       - 'scripts/test-support/release-toolchain-*'
       - 'scripts/booking-handoff-execution*'
       - 'scripts/booking-handoff-policy.mjs'
+      - 'scripts/booking-handoff-retention*'
+      - 'scripts/booking-handoff-active-retention*'
+      - 'scripts/test-support/booking-handoff-active-*'
       - '.github/workflows/release-toolchain.yml'
   push:
     branches: [main, master]
@@ -23,12 +26,12 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 20.20.1
           cache: npm
       - name: Install Development Test Dependencies
         run: npm ci
       - name: Unit And Existing Handoff Regression Tests
-        run: node --test scripts/release-toolchain-*.test.mjs scripts/booking-ci-continuation-tool.test.mjs scripts/booking-ready-*.test.mjs scripts/booking-handoff-activation.test.mjs scripts/booking-handoff-rule-repair.test.mjs scripts/booking-publication-database.test.mjs scripts/booking-handoff-execution.test.mjs scripts/booking-handoff-host.test.mjs scripts/booking-handoff-native-acceptance.test.mjs
+        run: node --test scripts/release-toolchain-*.test.mjs scripts/booking-ci-continuation-tool.test.mjs scripts/booking-ready-*.test.mjs scripts/booking-handoff-activation.test.mjs scripts/booking-handoff-rule-repair.test.mjs scripts/booking-publication-database.test.mjs scripts/booking-handoff-execution.test.mjs scripts/booking-handoff-host.test.mjs scripts/booking-handoff-native-acceptance.test.mjs scripts/booking-handoff-retention.test.mjs scripts/booking-handoff-active-retention.test.mjs scripts/booking-atomic-worker.test.mjs
       - name: Install Disposable Runner Nginx
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y nginx
       - name: Build Complete Tool Bundle From Exact Commit
@@ -70,16 +73,86 @@ jobs:
           sudo chown -R root:root "$application"
           sudo /usr/bin/node "$source/scripts/release-toolchain-full-rehearsal.mjs"
           sudo /usr/bin/node "$source/scripts/release-toolchain-full-interrupt.mjs"
+      - name: Full Active-Profile Isolated Handoff And Interruption
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-full-active-rehearsal.mjs"
+          # Fresh independent owners expose rare readiness/read/exit races.
+          # Stop at the first failure and keep its full diagnostic evidence.
+          for repetition in 1 2 3 4 5 6 7 8; do
+            sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-full-active-rehearsal.mjs" --interrupt
+          done
+      - name: Real PM2 And Next Production Transition Equivalence
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          npm_cli="$(readlink -f "$(command -v npm)")"
+          sudo env GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted \
+            FAOLLA_RELEASE_PRODUCTION_EQ=1 FAOLLA_EQ_NPM_CLI="$npm_cli" \
+            /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-pm2-real-acceptance.mjs"
+      - name: Already Active Routing And Real Controller Death Recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          # Independent fresh resources after each successful pass. The FIRST
+          # failure stops; no failed attempt is retried, resumed or discarded.
+          for repetition in 1 2 3 4 5 6 7 8; do
+            sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-active-generation-routing-native-entry.mjs"
+          done
+          sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-active-generation-routing-native-entry.mjs" --interrupt
+      - name: Active Incident Existing Operation Kernel Lock Acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          sudo env GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted \
+            FAOLLA_RELEASE_PRODUCTION_EQ=1 \
+            /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-active-generation-lock-acceptance.mjs"
       - name: Collect Root-Owned Synthetic Reports
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
-          roots=(/var/lib/faolla-booking-full-rehearsal-* /var/lib/faolla-release-toolchain-isolation-* /var/lib/faolla-release-toolchain-interruption-*)
+          roots=(/var/lib/faolla-booking-full-rehearsal-* /var/lib/faolla-release-toolchain-isolation-* /var/lib/faolla-release-toolchain-interruption-* /var/lib/faolla-active-routing-native-* /var/lib/faolla-active-routing-interruption-* /tmp/faolla-cwd-native-*)
           if ((${#roots[@]})); then
             sudo find "${roots[@]}" -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
             sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
+          fi
+          # Expand only the public /var/lib entry names as runner. Traversal of
+          # private 0700 roots happens under sudo, not in a non-root shell glob.
+          eq_roots=(/var/lib/faolla-eq-*)
+          if ((${#eq_roots[@]})); then
+            sudo find "${eq_roots[@]}" -maxdepth 2 -type f -path '/var/lib/faolla-eq-*/reports/*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-equivalence-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-equivalence-evidence.tar"
+          fi
+          lock_roots=(/var/lib/faolla-active-lock-ci-*)
+          if ((${#lock_roots[@]})); then
+            sudo find "${lock_roots[@]}" -maxdepth 1 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-active-lock-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-active-lock-evidence.tar"
+          fi
+          vault_roots=(/var/lib/faolla-active-vault-ci-*)
+          if ((${#vault_roots[@]})); then
+            sudo find "${vault_roots[@]}" -maxdepth 1 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-active-vault-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-active-vault-evidence.tar"
+          fi
+          metadata_roots=(/var/lib/faolla-active-metadata-ci-*)
+          if ((${#metadata_roots[@]})); then
+            sudo find "${metadata_roots[@]}" -maxdepth 1 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-active-metadata-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-active-metadata-evidence.tar"
+          fi
+          reconciliation_roots=(/var/lib/faolla-active-reconciliation-ci-*)
+          if ((${#reconciliation_roots[@]})); then
+            sudo find "${reconciliation_roots[@]}" -maxdepth 2 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-active-reconciliation-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-active-reconciliation-evidence.tar"
+            # Only the explicitly private protocol-model journal. Do NOT
+            # widen this to raw PM2 dumps or environment-bearing vault files.
+            sudo find "${reconciliation_roots[@]}" -maxdepth 3 -type f -path '*/protocol-journal/*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-publication-protocol-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-publication-protocol-evidence.tar"
           fi
       - name: Preserve Synthetic Reports
         if: always()
@@ -89,4 +162,10 @@ jobs:
           path: |
             /tmp/faolla-release-toolchain-lab-*/**/*.json
             ${{ runner.temp }}/release-toolchain-native-evidence.tar
+            ${{ runner.temp }}/release-toolchain-equivalence-evidence.tar
+            ${{ runner.temp }}/release-toolchain-active-lock-evidence.tar
+            ${{ runner.temp }}/release-toolchain-active-vault-evidence.tar
+            ${{ runner.temp }}/release-toolchain-active-metadata-evidence.tar
+            ${{ runner.temp }}/release-toolchain-active-reconciliation-evidence.tar
+            ${{ runner.temp }}/release-toolchain-publication-protocol-evidence.tar
           if-no-files-found: warn
