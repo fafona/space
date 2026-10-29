@@ -18,6 +18,7 @@ import {bookingHostRead,bookingHostSql,bookingHostWriteOnce} from './booking-han
 import {bookingHandoffActivationSnapshotSql} from './booking-handoff-activation.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 import {assertActiveBookingWorkerConfigurationTransition,waitForActiveBookingWorkerSettlement,activeBookingWorkerObservation} from './release-toolchain-active-generation-worker-settlement.mjs';
+import {activeBookingPublicationGateProfile} from './release-toolchain-active-generation-publication-scope.mjs';
 const ROOT='/var/lib/faolla-booking-handoff/'+P.candidate,NAME='merchant-space-booking-atomic-'+P.candidate.slice(0,12),BASE='/var/lib/faolla-booking-active-publications/'+P.candidate;
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'observation_mismatch'),read=file=>JSON.parse(bookingHostRead(file)),seal=(file,value)=>bookingHostWriteOnce(file,canonicalJson(value)+'\n');
 const raw=pid=>{const rows={};for(const entry of fs.readFileSync('/proc/'+pid+'/environ','utf8').split('\0').filter(Boolean)){const index=entry.indexOf('=');need(index>0&&!Object.hasOwn(rows,entry.slice(0,index)),'evidence_invalid');rows[entry.slice(0,index)]=entry.slice(index+1);}return rows;};
@@ -50,9 +51,11 @@ export async function prepareActiveBookingGatedWorker({lock,toolRevision,window,
 }
 // Explicit read-only post-transition profile. It does not rerun a mutation or
 // make the original closed-incident profile accept a changed worker by default.
-export function observeActiveBookingPreparedWorker({lock,toolRevision,window,directory}){
+export function observeActiveBookingPreparedWorker(options){return observePreparedWorker(options,null);}
+export function observeActiveBookingCertifiedWorker(options){const gate=activeBookingPublicationGateProfile(options.scope,options);need(gate?.kind==='active-booking-certified-worker-gate-profile','invalid_contract');return observePreparedWorker(options,gate);}
+function observePreparedWorker({lock,toolRevision,window,directory},gate){
  assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);const authority=reviewedBookingExecution(toolRevision);need(authority?.prepared.activeIncidentClosed?.toolRevision===toolRevision,'source_changed');
- need(directory===BASE+'/'+window.id,'invalid_path');ownedReleasePath(directory,{directory:true,privateMode:true});need(!fs.existsSync(ROOT+'/worker-enabled.json')&&!fs.existsSync(directory+'/worker-unconfirmed.json'),'attempt_unknown');
+ need(directory===BASE+'/'+window.id,'invalid_path');ownedReleasePath(directory,{directory:true,privateMode:true});need(!fs.existsSync(directory+'/worker-unconfirmed.json'),'attempt_unknown');if(gate)same(bookingHostRead(ROOT+'/worker-enabled.json'),gate.gateText);else need(!fs.existsSync(ROOT+'/worker-enabled.json'),'attempt_unknown');
  const attempt=read(directory+'/worker-attempt.json'),receipt=read(directory+'/worker-completed.json'),publication=read(directory+'/publication-attempt.json');
  need(attempt.kind==='active-booking-gated-worker-attempt'&&attempt.toolRevision===toolRevision&&attempt.inventorySha256===authority.tool.inventorySha256&&attempt.closedDirectory===authority.prepared.activeIncidentClosed.closedDirectory&&attempt.closedIncidentSha256===authority.prepared.activeIncidentClosed.closedSha256,'evidence_invalid');same(attempt.window,window);same(publication.window,window);need(publication.kind==='active-booking-publication-attempt'&&publication.toolRevision===toolRevision&&publication.closedIncidentSha256===attempt.closedIncidentSha256,'evidence_invalid');
  const before=attempt.before;need(before.process.pid===P.privateWorkerPid&&before.process.pmId===27,'evidence_invalid');

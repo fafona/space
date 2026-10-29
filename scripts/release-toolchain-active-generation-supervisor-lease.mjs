@@ -5,6 +5,7 @@ import * as fs from 'node:fs';import path from 'node:path';import {fileURLToPath
 import {ACTIVE_BOOKING_INCIDENT as P,assertActiveBookingWindow} from './release-toolchain-active-generation-contract.mjs';
 import {captureProcessFact} from './check-production-runtime-supervision.mjs';import {inspectPinnedExecutionSource,ownedReleasePath,collectRemoteReleaseReview} from './release-toolchain-source.mjs';
 import {bookingHostRead} from './booking-handoff-host-io.mjs';import {canonicalJson,sha256,requireToolchain as need,exactKeys} from './release-toolchain-contracts.mjs';
+import {expectedProcessState} from './release-toolchain-process-birth.mjs';
 const ROOT='/var/lib/faolla-booking-active-publications/'+P.candidate,DEPLOY='/www/wwwroot/merchant-space.deploy.lock',OPERATION='/var/lib/faolla-maintenance/merchant-space/operation.lock',caps=new WeakMap();
 const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),toolRevision=path.basename(source),same=(a,b)=>need(isDeepStrictEqual(a,b),'owned_resource_changed'),hash=/^[a-f0-9]{64}$/;
 const read=file=>{const text=bookingHostRead(file),value=JSON.parse(text);same(text,canonicalJson(value)+'\n');return value;};
@@ -29,7 +30,7 @@ export function assertActiveBookingSupervisorLease(lease){
  const parent=lease.parent;exactKeys(parent,['pid','parentPid','startTicks','processIdentity','uid','cwd','cwdIdentity','executable','executableIdentity','commandLine','commandLineDigest']);need(Number.isSafeInteger(parent?.pid)&&parent.pid>1&&parent.uid===0&&/^[1-9][0-9]*$/.test(parent.startTicks??'')&&parent.executable==='/usr/bin/node'&&parent.cwd==='/var/lib/faolla-online-code/'+lease.toolRevision,'evidence_invalid');
  same(parent.commandLine,['/usr/bin/node',parent.cwd+'/scripts/release-toolchain-active-generation-publish-entry.mjs','publish']);same(parent.commandLineDigest,sha256(parent.commandLine.join('\0')+'\0'));return true;
 }
-function parentState(expected){try{const raw=fs.readFileSync('/proc/'+expected.pid+'/stat','utf8'),fields=raw.slice(raw.lastIndexOf(')')+2).trim().split(/\s+/);if(fields[19]!==expected.startTicks)return'reused';if(fields[0]==='Z')return'absent';return isDeepStrictEqual(processIdentity(captureProcessFact(expected.pid)),processIdentity(expected))?'owned':'reused';}catch(error){if(['ENOENT','ESRCH'].includes(error.code))return'absent';throw error;}}
+const parentState=expectedProcessState;
 function verify(value,{requireParentGone=false}={}){
  const {lease,directory}=value;assertActiveBookingSupervisorLease(lease);need(Date.now()>=Date.parse(lease.window.startedAt)&&Date.now()<=Date.parse(lease.window.deadlineAt)+60000,'evidence_stale');
  const currentSelf=captureProcessFact(process.pid);same(currentSelf,{...value.self,parentPid:currentSelf.parentPid});same(sha256(bookingHostRead(directory+'/supervisor-lease.json')),value.leaseSha256);

@@ -54,6 +54,11 @@ export async function verifyActiveBookingPublicationPersistenceAfterMetadata(opt
  const {observeActiveBookingPublicationAfterMetadata,assertActivePublicationObservationProgress}=await import('./release-toolchain-active-generation-publication-observation.mjs');
  return verifyObservedCurrentProcesses({metadata:s.metadata,held:s.held,observe:async()=>(await observeActiveBookingPublicationAfterMetadata(options)).observation,compare:assertActivePublicationObservationProgress,collect:collectFormalBookingPm2Registry,home:'/root/.pm2',expectedPeer:s.expectedPeer});
 }
+export async function persistActiveBookingRecoveryCurrentProcesses(capability){
+ const {assertActiveBookingSupervisorInheritedLease}=await import('./release-toolchain-active-generation-supervisor-lease.mjs'),{activeBookingRecoveryPersistenceContext,observeActiveBookingRecoveryPostMetadata,assertActiveBookingRecoveryObservationProgress}=await import('./release-toolchain-active-generation-recovery-host.mjs');
+ assertActiveBookingSupervisorInheritedLease(capability,{requireParentGone:true});const s=activeBookingRecoveryPersistenceContext(capability),held=()=>{assertActiveBookingSupervisorInheritedLease(capability,{requireParentGone:true});activeBookingRecoveryPersistenceContext(capability);};
+ return persistObservedCurrentProcesses({directory:s.directory,metadata:s.metadata,held,observe:()=>observeActiveBookingRecoveryPostMetadata(capability),compare:assertActiveBookingRecoveryObservationProgress,collect:collectFormalBookingPm2Registry,home:'/root/.pm2',expectedPeer:s.expectedPeer});
+}
 // Shared real connect-only IO path. Only closed profile factories call it;
 // neither paths nor the private fault seam are CLI or serialized authority.
 async function persistObservedCurrentProcesses({directory,metadata,held,observe,compare,collect,home,expectedPeer,afterSave}){
