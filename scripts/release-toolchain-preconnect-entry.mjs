@@ -1,6 +1,6 @@
 // No path, target, PID, skip, rewrite, force, replay or publication command.
 import path from'node:path';import{fileURLToPath}from'node:url';
-import{withReviewedBookingExecution}from'./release-toolchain-authority.mjs';
+import{withReviewedRetainedBookingExecution as withReviewedBookingExecution}from'./release-toolchain-authority.mjs';
 import{withPreConnectAbortPreparationLocks}from'./online-release-retention-writer.mjs';
 import{BOOKING_PREPARATION_REVISION}from'./release-toolchain-booking-profile.mjs';
 import{ACTIVE_BOOKING_INCIDENT as P}from'./release-toolchain-active-generation-contract.mjs';

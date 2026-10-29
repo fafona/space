@@ -1,6 +1,6 @@
 // No alternate target, resource, path, timing, skip or inactive mode.
 import path from 'node:path';import {fileURLToPath} from 'node:url';
-import {withReviewedBookingExecution} from './release-toolchain-authority.mjs';import {withOnlineRetentionLocks} from './online-release-retention-writer.mjs';
+import {withReviewedRetainedBookingExecution as withReviewedBookingExecution} from './release-toolchain-authority.mjs';import {withOnlineRetentionLocks} from './online-release-retention-writer.mjs';
 import {BOOKING_PREPARATION_REVISION} from './release-toolchain-booking-profile.mjs';import {verifyClosedActiveBookingPreparation} from './release-toolchain-active-generation-profile.mjs';
 import {publishClosedActiveBookingUnderHeldLocks,auditReleasedActiveBookingPublication} from './release-toolchain-active-generation-publication.mjs';import {ACTIVE_BOOKING_INCIDENT as P} from './release-toolchain-active-generation-contract.mjs';
 import {canonicalJson,publicFailure,requireToolchain as need} from './release-toolchain-contracts.mjs';

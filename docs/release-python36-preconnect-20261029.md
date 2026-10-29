@@ -57,3 +57,24 @@ configuration, database activation and the completed legacy restart are not
 changed or replayed. Complete PR/main CI, actual-runtime formal qualification,
 independent close, all normal publication checks, public-origin probes and a
 real scheduled worker cycle remain necessary before reporting the release online.
+
+## Separately deferred attendance fix in the tool checkout
+
+Full CI reproduced the previously deferred late-preread write after cancellation.
+A per-operation stopped latch closes that boundary when the timer fires, aborts,
+or the operation settles. A deterministic regression freezes the deadline clock
+below its boundary and fires cancellation: the original code makes two RPC calls,
+the fixed code makes only the original read. Existing successful write, recovery,
+authorization and cleanup assertions remain intact.
+
+The user's earlier separation decision still applies: this attendance change is
+NOT in either retained application build and is NOT claimed published by this
+booking release. Rebuilding/relabeling those builds would unnecessarily expand
+the current release. The fixed retained-source adapter therefore records distinct
+application-build and tool-checkout identities. It pins the full original/fixed
+Git blobs of this one runtime file, rejects every other application change using
+the original unchanged-source guard, and separately proves dependencies and SQL
+unchanged. Only the new preconnect and subsequent retained-booking publication
+entries use this separate boundary. Original general and historical guards are
+not widened. Installed source bytes, full CI and the full native inventory still
+bind the complete tool checkout, including this explicit pending application fix.
