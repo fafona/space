@@ -29,6 +29,7 @@ import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
 import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
 import {bookingInstalledMetadataReadSql,bookingDefaultPrivilegesReadSql,isolatedBookingDefaultPrivilegesSql} from './release-toolchain-booking-compatibility.mjs';
 import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
+import {publishOnceVisible} from './release-toolchain-once-visible.mjs';
 export {FULL_REHEARSAL_SOURCES};
 const FILE=fileURLToPath(import.meta.url),NGINX=fs.existsSync('/www/server/nginx/sbin/nginx')?'/www/server/nginx/sbin/nginx':'/usr/sbin/nginx';
 let isolation,diagnosticRoot,cancelled=false;
@@ -242,7 +243,11 @@ async function runFullToolchainRehearsalProfile(activeProfile){
  const hostSnapshot=activeProfile?captureActiveToolchainProductionSnapshot:production;
  const formal=hostSnapshot(),root=fs.mkdtempSync('/var/lib/faolla-booking-full-rehearsal-');diagnosticRoot=root;fs.chmodSync(root,0o700);fs.mkdirSync(root+'/cases',{mode:0o700});
  const sourceHashes=Object.fromEntries(FULL_REHEARSAL_SOURCES.map(f=>[f,hash(fs.readFileSync(new URL('./'+f,import.meta.url)))]));
- write(root+'/owner.json',{kind:'booking-full-native-isolated-owner',root,controller:fact(process.pid),sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],toolRevision,productionBefore:formal,sourceHashes});
+ // Only the new ACTIVE profile changes IPC publication. Its interruption
+ // observer polls these final names concurrently; never expose half a JSON.
+ // The original inactive producer/reader path stays unchanged.
+ const publishOwner=activeProfile?publishOnceVisible:write;
+ publishOwner(root+'/owner.json',{kind:'booking-full-native-isolated-owner',root,controller:fact(process.pid),sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],toolRevision,productionBefore:formal,sourceHashes});
  const results=[];let postgresSystemIdentifier,installedMetadataSha256,defaultPrivileges;cancelled=false;const interrupt=()=>{cancelled=true;};process.on('SIGTERM',interrupt);process.on('SIGINT',interrupt);
  try{isolation=createOwnedIsolation();defaultPrivileges=formal.formalHostPresent===false?JSON.parse(pg('postgres',bookingDefaultPrivilegesReadSql)):formal.defaultPrivileges;
  for(const name of CASES){
@@ -258,7 +263,7 @@ async function runFullToolchainRehearsalProfile(activeProfile){
    // minute production supervisor. Failure cases trigger by actual parent death.
    window.deadlineAt=new Date(Date.parse(window.startedAt)+600000).toISOString();
    const applicationDirectory=formal.formalHostPresent===false?'/var/lib/faolla-release-toolchain-application-'+toolRevision:'/www/wwwroot/merchant-space.web-releases/'+CANDIDATE.slice(0,12)+'-online';
-   const c={name,root,directory:runtime,sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],isolationRoot:isolation.root,applicationDirectory,database,before:seeded.before,plan:seeded.plan,ports,lua,window};write(runtime+'/owner.json',c);
+   const c={name,root,directory:runtime,sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],isolationRoot:isolation.root,applicationDirectory,database,before:seeded.before,plan:seeded.plan,ports,lua,window};publishOwner(runtime+'/owner.json',c);
    for(const role of ['web-baseline','web-primary','web-rollback','worker']){const child=launch(role,runtime),f=await spawned(child);children.push(f);write(runtime+'/owned-process-'+f.pid+'.json',f);if(role==='worker')write(runtime+'/legacy.json',{process:f,paused:false,restarts:0});}
    write(runtime+'/nginx.conf',bookingNativeConfigText(c,'baseline',false));run(NGINX,['-p',runtime+'/', '-c',runtime+'/nginx.conf','-t']);
    const child=spawn(NGINX,['-p',runtime+'/', '-c',runtime+'/nginx.conf','-g','daemon off;'],{cwd:runtime,env:env(),stdio:'ignore'});
