@@ -142,6 +142,16 @@ jobs:
             sudo find "${pre_control_roots[@]}" -maxdepth 1 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-pre-control-evidence.tar"
             sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-pre-control-evidence.tar"
           fi
+          python_runtime_roots=(/var/lib/faolla-python-runtime-ci-*)
+          if ((${#python_runtime_roots[@]})); then
+            sudo find "${python_runtime_roots[@]}" -maxdepth 1 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-python-runtime-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-python-runtime-evidence.tar"
+          fi
+          preconnect_roots=(/var/lib/faolla-preconnect-ci-*)
+          if ((${#preconnect_roots[@]})); then
+            sudo find "${preconnect_roots[@]}" -maxdepth 1 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-preconnect-evidence.tar"
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-preconnect-evidence.tar"
+          fi
           vault_roots=(/var/lib/faolla-active-vault-ci-*)
           if ((${#vault_roots[@]})); then
             sudo find "${vault_roots[@]}" -maxdepth 1 -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-active-vault-evidence.tar"
@@ -176,6 +186,8 @@ jobs:
             ${{ runner.temp }}/release-toolchain-equivalence-evidence.tar
             ${{ runner.temp }}/release-toolchain-active-lock-evidence.tar
             ${{ runner.temp }}/release-toolchain-pre-control-evidence.tar
+            ${{ runner.temp }}/release-toolchain-python-runtime-evidence.tar
+            ${{ runner.temp }}/release-toolchain-preconnect-evidence.tar
             ${{ runner.temp }}/release-toolchain-active-vault-evidence.tar
             ${{ runner.temp }}/release-toolchain-active-metadata-evidence.tar
             ${{ runner.temp }}/release-toolchain-active-reconciliation-evidence.tar

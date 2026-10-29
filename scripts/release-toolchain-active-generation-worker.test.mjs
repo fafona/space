@@ -6,7 +6,7 @@ test('serialized worker readiness, source and held-lock objects cannot initiate 
 test('post-transition observation has separate held admission and cannot accept a supplied ready/worker exception',()=>{assert.throws(()=>observeActiveBookingPreparedWorker({lock:{deployFd:3},toolRevision:'a'.repeat(40),window:{id:'10000000-0000-4000-8000-000000000001'},directory:'/tmp/worker',ready:{verified:true}}));});
 test('new fixed worker framing preserves witness ordering and rejects replay without contacting a daemon in unit tests',()=>{
  const result=spawnSync(process.platform==='win32'?'python.exe':'python3',['-I','-S','-B',fileURLToPath(new URL('./release-toolchain-active-generation-pm2-worker.test.py',import.meta.url))],{encoding:'utf8',timeout:10000,maxBuffer:262144,windowsHide:true,env:{PATH:process.env.PATH??'',SystemRoot:process.env.SystemRoot??'',TEMP:process.env.TEMP??'',TMP:process.env.TMP??''}});
- assert.equal(result.error,undefined);assert.equal(result.signal,null);assert.equal(result.status,0,result.stdout+'\n'+result.stderr);assert.match(result.stderr,/Ran 9 tests/);assert.match(result.stderr,/\bOK\b/);
+ assert.equal(result.error,undefined);assert.equal(result.signal,null);assert.equal(result.status,0,result.stdout+'\n'+result.stderr);assert.match(result.stderr,/Ran 11 tests/);assert.match(result.stderr,/\bOK\b/);
 });
 test('formal worker entry keeps its old helper unchanged and can only transition the fixed closed-gate source under inherited lock and actual controller',()=>{
  const helper=readFileSync(new URL('./release-toolchain-active-generation-pm2-worker.py',import.meta.url),'utf8'),js=readFileSync(new URL('./release-toolchain-active-generation-worker.mjs',import.meta.url),'utf8');

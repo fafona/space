@@ -21,15 +21,15 @@ export function createDelegatedGroupsService(service: AttendanceSelfRpc | null, 
   const timeout = deps.timeoutMs ?? DELEGATED_GROUPS_TIMEOUT_MS;
   if (!Number.isFinite(timeout) || timeout < 1 || timeout > DELEGATED_GROUPS_TIMEOUT_MS) throw new MerchantAttendanceError("attendance_invalid_request");
   async function bounded<T>(signal: AbortSignal | undefined, run: (guard: () => void) => Promise<T>): Promise<T> {
-    const started = performance.now(); let timer: ReturnType<typeof setTimeout> | undefined, onAbort: (() => void) | undefined;
-    const guard = () => { if (signal?.aborted || performance.now() - started >= timeout) throw new MerchantAttendanceError("attendance_unavailable"); };
+    const started = performance.now(); let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, onAbort: (() => void) | undefined;
+    const guard = () => { if (stopped || signal?.aborted || performance.now() - started >= timeout) throw new MerchantAttendanceError("attendance_unavailable"); };
     try {
       guard(); const cancellation = new Promise<never>((_, reject) => {
-        const cancel = () => reject(new MerchantAttendanceError("attendance_unavailable"));
+        const cancel = () => { stopped = true; reject(new MerchantAttendanceError("attendance_unavailable")); };
         timer = setTimeout(cancel, timeout); onAbort = cancel; signal?.addEventListener("abort", cancel, { once: true });
       });
       return await Promise.race([run(guard), cancellation]);
-    } finally { if (timer !== undefined) clearTimeout(timer); if (onAbort) signal?.removeEventListener("abort", onAbort); }
+    } finally { stopped = true; if (timer !== undefined) clearTimeout(timer); if (onAbort) signal?.removeEventListener("abort", onAbort); }
   }
   async function rpc(q: DelegatedGroupsQuery, actor: string, c: GroupsCommand | null, allow: boolean, expected: GroupsCommand | null, guard: () => void) {
     guard(); if (!service) throw new MerchantAttendanceError("attendance_unavailable");
