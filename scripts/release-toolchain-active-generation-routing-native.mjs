@@ -28,6 +28,13 @@ const env=()=>({PATH:'/usr/sbin:/usr/bin:/sbin:/bin',HOME:'/root',LANG:'C.UTF-8'
 const identity=f=>Object.fromEntries(['pid','uid','startTicks','executable','cwd','commandLineDigest'].map(key=>[key,f[key]]));
 function birth(expected){try{const raw=fs.readFileSync('/proc/'+expected.pid+'/stat','utf8'),fields=raw.slice(raw.lastIndexOf(')')+2).trim().split(/\s+/);need(fields[19]===expected.startTicks,'owned_resource_changed');return fields[0]!=='Z';}catch(error){if(['ENOENT','ESRCH'].includes(error.code))return false;throw error;}}
 export function ownedNativeExitObservationError(error,sameBirthStillAlive){return sameBirthStillAlive===false&&(['ENOENT','ESRCH'].includes(error?.code)||['invalid_proc_stat','proc_file_size_invalid','proc_records_invalid','process_identity_drift'].includes(error?.message));}
+// Full identity authorizes the one signal. Once it was sent, waiting observes
+// only the exact birth's disappearance; /proc/exe may vanish before stat is Z.
+// If the pre-signal observation itself catches exit, wait WITHOUT signalling.
+export async function stopOwnedNativeNodeSequence(operations){
+ let current;try{current=operations.observe();}catch(error){if(ownedNativeExitObservationError(error,false)){await operations.waitGone();return;}throw error;}
+ if(!current)return;operations.authorize(current);try{operations.signalOnce();}catch(error){if(error.code!=='ESRCH')throw error;}await operations.waitGone();
+}
 function live(expected){try{if(!birth(expected))return null;const current=captureProcessFact(expected.pid);same(identity(current),identity(expected));return current;}catch(error){if(ownedNativeExitObservationError(error,birth(expected)))return null;throw error;}}
 function nginxFact(pid){const raw=fs.readFileSync('/proc/'+pid+'/stat','utf8'),fields=raw.slice(raw.lastIndexOf(')')+2).trim().split(/\s+/);need(fs.lstatSync('/proc/'+pid).uid===0&&/^[1-9][0-9]*$/.test(fields[19]??''),'owned_resource_changed');return{pid,startTicks:fields[19],state:fields[0],uid:0,executable:fields[0]==='Z'?null:fs.realpathSync('/proc/'+pid+'/exe'),cwd:fields[0]==='Z'?null:fs.realpathSync('/proc/'+pid+'/cwd')};}
 function run(bin,args,options={}){const result=spawnSync(bin,args,{env:env(),encoding:'utf8',timeout:10000,maxBuffer:4*1024**2,...options});need(result.status===0&&!result.error&&!result.signal,'operation_unconfirmed');return result.stdout;}
@@ -38,7 +45,7 @@ function assertFd(c){caseScope(c.directory);const actual=fs.fstatSync(3);assertA
 let cancelled=false;
 async function until(predicate,{cleanup=false,timeoutMs=15000}={}){need(Number.isSafeInteger(timeoutMs)&&timeoutMs>0&&timeoutMs<=90000,'invalid_contract');const end=performance.now()+timeoutMs;for(let index=0;index<3600&&performance.now()<end;index++){if(!cleanup)need(!cancelled,'operation_unconfirmed');if(await predicate())return;await wait(25);}need(false,'operation_unconfirmed');}
 function factsSame(a,b){return a.pid===b.pid&&a.startTicks===b.startTicks&&a.executable===b.executable&&a.cwd===b.cwd;}
-async function stop(c,expected){caseScope(c.directory);const current=live(expected);if(!current)return;need(expected.cwd===c.directory&&expected.executable==='/usr/bin/node','owned_resource_changed');process.kill(expected.pid,'SIGTERM');await until(()=>!live(expected),{cleanup:true});}
+async function stop(c,expected){caseScope(c.directory);return stopOwnedNativeNodeSequence({observe:()=>live(expected),authorize:()=>need(expected.cwd===c.directory&&expected.executable==='/usr/bin/node','owned_resource_changed'),signalOnce:()=>{need(birth(expected),'owned_resource_changed');process.kill(expected.pid,'SIGTERM');},waitGone:()=>until(()=>!birth(expected),{cleanup:true})});}
 function physical(c,value){return value.replaceAll('127.0.0.1:3104;','127.0.0.1:'+c.ports.primary+';').replaceAll('127.0.0.1:3110;','127.0.0.1:'+c.ports.rollback+';');}
 function logical(c,value){return value.replaceAll('127.0.0.1:'+c.ports.primary+';','127.0.0.1:3104;').replaceAll('127.0.0.1:'+c.ports.rollback+';','127.0.0.1:3110;');}
 function current(c){return Object.fromEntries(WEB_RELEASE_FILES.map(file=>[file,logical(c,bookingHostRead(c.directory+'/'+file))]));}
