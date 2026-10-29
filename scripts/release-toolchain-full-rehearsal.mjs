@@ -31,6 +31,7 @@ import {bookingInstalledMetadataReadSql,bookingDefaultPrivilegesReadSql,isolated
 import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
 import {publishOnceVisible} from './release-toolchain-once-visible.mjs';
 import {watchOwnedRehearsalChildClose,waitOwnedRehearsalChildrenClosed,ownedRehearsalChildCloseSnapshot,assertOwnedRehearsalChildCloseProof} from './release-toolchain-owned-child-close.mjs';
+import {stageFailureDiagnostic} from './release-toolchain-diagnostics.mjs';
 export {FULL_REHEARSAL_SOURCES};
 const FILE=fileURLToPath(import.meta.url),NGINX=fs.existsSync('/www/server/nginx/sbin/nginx')?'/www/server/nginx/sbin/nginx':'/usr/sbin/nginx';
 let isolation,diagnosticRoot,cancelled=false;
@@ -238,6 +239,10 @@ export {production as captureToolchainProductionSnapshot};
 // Explicit ACTIVE observation profile. The existing inactive runner retains
 // its original path; this new profile has no CLI fallback that could boot PM2.
 export const captureActiveToolchainProductionSnapshot=()=>production({connectOnly:true});
+export function activeNativeFailureDiagnostic(error,{phase,toolRevision}){
+ need(/^(?:isolation-create|default-privileges-read|case-(?:seed|runtime|verify|cleanup):(?:normal|controller-death-before-commit|controller-death-after-commit))$/.test(phase),'diagnostic_phase');
+ return {kind:'owned-active-native-original-failure',phase,errorType:error instanceof SyntaxError?'syntax_error':error instanceof TypeError?'type_error':'other',diagnostic:stageFailureDiagnostic(error,{stage:'rehearsal',toolRevision,knownFiles:['release-toolchain-full-rehearsal.mjs','release-toolchain-full-active-rehearsal.mjs','release-toolchain-isolation.mjs','release-toolchain-doctor.mjs','release-toolchain-owned-child-close.mjs','booking-handoff-rule-repair.mjs','booking-handoff-activation.mjs']}),observationOnly:true,publicationAuthority:false,at:now()};
+}
 async function runFullToolchainRehearsalProfile(activeProfile){
  const directory=path.dirname(path.dirname(FILE)),toolRevision=path.basename(directory);
  need(directory==='/var/lib/faolla-online-code/'+toolRevision&&/^[a-f0-9]{40}$/.test(toolRevision),'prepared_source');const verifiedSource=inspectPinnedExecutionSource({revision:toolRevision,directory});inspectToolchainNginxProfile(NGINX);
@@ -249,17 +254,19 @@ async function runFullToolchainRehearsalProfile(activeProfile){
  // The original inactive producer/reader path stays unchanged.
  const publishOwner=activeProfile?publishOnceVisible:write;
  publishOwner(root+'/owner.json',{kind:'booking-full-native-isolated-owner',root,controller:fact(process.pid),sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],toolRevision,productionBefore:formal,sourceHashes});
- const results=[];let postgresSystemIdentifier,installedMetadataSha256,defaultPrivileges;cancelled=false;const interrupt=()=>{cancelled=true;};process.on('SIGTERM',interrupt);process.on('SIGINT',interrupt);
- try{isolation=createOwnedIsolation();defaultPrivileges=formal.formalHostPresent===false?JSON.parse(pg('postgres',bookingDefaultPrivilegesReadSql)):formal.defaultPrivileges;
+ const results=[];let postgresSystemIdentifier,installedMetadataSha256,defaultPrivileges,phase='isolation-create';cancelled=false;const interrupt=()=>{cancelled=true;};process.on('SIGTERM',interrupt);process.on('SIGINT',interrupt);
+ const recordFailure=(file,error)=>{if(activeProfile)try{write(root+'/'+file,activeNativeFailureDiagnostic(error,{phase,toolRevision}));}catch{}};
+ try{isolation=createOwnedIsolation();phase='default-privileges-read';defaultPrivileges=formal.formalHostPresent===false?JSON.parse(pg('postgres',bookingDefaultPrivilegesReadSql)):formal.defaultPrivileges;
  for(const name of CASES){
   const runtime=root+'/runtime-'+name;fs.mkdirSync(runtime,{mode:0o700});let children=[],nginx,controllerProcess;const started=Date.now(),directChildren=[];
   const track=(child,role)=>{if(activeProfile)directChildren.push(watchOwnedRehearsalChildClose(child,role));return child;};
   const reaped=async()=>{if(!activeProfile||!directChildren.length)return null;try{return await waitOwnedRehearsalChildrenClosed(directChildren);}catch(error){if(!fs.existsSync(runtime+'/child-close-unconfirmed.json'))write(runtime+'/child-close-unconfirmed.json',{kind:'owned-active-rehearsal-child-close-unconfirmed',children:ownedRehearsalChildCloseSnapshot(directChildren),observationOnly:true,publicationAuthority:false,at:now()});throw error;}};
   try{
+   phase='case-seed:'+name;
    const database='faolla_booking_activation_'+randomBytes(8).toString('hex'),seeded=await seed(database,defaultPrivileges);postgresSystemIdentifier=seeded.before.systemIdentifier;
    const installed=pg(database,bookingInstalledMetadataReadSql);need(/^[a-f0-9]{64}$/.test(installed),'installed_metadata');if(installedMetadataSha256)equal(installed,installedMetadataSha256,'installed_metadata_changed');else installedMetadataSha256=installed;
    need(seeded.before.serverVersionNum==='150008'&&postgresSystemIdentifier!=='7612049595342295079','actual_pg15');write(runtime+'/original-rows.json',seeded.initial);rehearseIsolatedBackup(isolation,database,runtime);
-   const ports={};for(const key of ['baseline','primary','rollback','ingress'])ports[key]=await freePort();need(new Set(Object.values(ports)).size===4,'ports');
+   phase='case-runtime:'+name;const ports={};for(const key of ['baseline','primary','rollback','ingress'])ports[key]=await freePort();need(new Set(Object.values(ports)).size===4,'ports');
    const profile=inspectToolchainNginxProfile(NGINX),lua=profile.httpDirectives?[profile.httpDirectives]:[];
    const window={id:randomUUID(),startedAt:now(),deadlineAt:new Date(Date.now()+600000).toISOString()};
    // Exact ten-minute duration, with no fixture timing override of the seven-
@@ -284,7 +291,7 @@ async function runFullToolchainRehearsalProfile(activeProfile){
    if(name!=='normal'){need(!alive(controllerProcess),'controller_not_dead');need(spawnSync('flock',['--nonblock',runtime+'/deploy.lock','/usr/bin/true'],{timeout:2000}).status===1,'lock_not_inherited_after_death');}
    await until(()=>fs.existsSync(runtime+'/watchdog-finished.json'),170000);await until(()=>!alive(supervisor));const finished=json(runtime+'/watchdog-finished.json');
    need(finished.outcome===(name==='normal'?'committed':'recovered-failure'),'watchdog_outcome');
-   const actual=snapshot(database),after=rows(database),oldRule=seeded.initial.find(p=>p.id===seeded.plan.rowId),newRule=after.find(p=>p.id===oldRule.id);
+   phase='case-verify:'+name;const actual=snapshot(database),after=rows(database),oldRule=seeded.initial.find(p=>p.id===seeded.plan.rowId),newRule=after.find(p=>p.id===oldRule.id);
    if(name==='controller-death-before-commit'){need(actual.active===false,'uncommitted_authority');equal(after,seeded.initial,'uncommitted_rows_not_rolled_back');need(finished.recovery.target===BASELINE,'inactive_recovery_target');}
    else{need(actual.active===true,'committed_authority');equal(newRule.blocks,seeded.plan.next,'repaired_options');equal({...newRule,blocks:oldRule.blocks,updated_at:oldRule.updated_at},oldRule,'only_approved_audit_and_blocks');
     equal(after.filter(p=>p.id!==oldRule.id),seeded.initial.filter(p=>p.id!==oldRule.id),'other_rows_preserved');need(json(runtime+'/legacy.json').restarts===1,'single_fixture_restart');
@@ -301,7 +308,8 @@ async function runFullToolchainRehearsalProfile(activeProfile){
     actualDatabase:{name:database,...actual},rowsPreserved:true,optionsRepaired:name!=='controller-death-before-commit',gateClosed:true,target:expected,controllerExit:exit,watchdog:finished,allFixturesStopped:true,completedAt:now()};
    if(activeProfile)receipt.directChildCloseSha256=hash(read(runtime+'/direct-child-close.json'));
    need(receipt.elapsedMs>0&&receipt.elapsedMs<=600000,'actual_window_exceeded');const receiptFile=root+'/cases/'+name+'.json';write(receiptFile,receipt);results.push({name,completed:true,elapsedMs:receipt.elapsedMs,inheritedKernelLock:true,realNginx:true,realPostgres:true,realProcesses:true,ownedFixturesOnly:true,receiptFile,receiptSha256:hash(read(receiptFile))});
-  }finally{
+  }catch(error){recordFailure('active-case-failure-'+name+'.json',error);throw error;}finally{
+   phase='case-cleanup:'+name;
    // Stop the two possible controllers first, so cleanup cannot race another
    // fixture routing write or restart. Never enumerate-and-kill other apps.
    await cleanupBookingNativeFixtures({
@@ -312,7 +320,7 @@ async function runFullToolchainRehearsalProfile(activeProfile){
    });
    if(activeProfile)await reaped();
   }
- }}finally{try{if(isolation)stopOwnedIsolation(isolation);}finally{process.removeListener('SIGTERM',interrupt);process.removeListener('SIGINT',interrupt);}}
+ }}catch(error){recordFailure('active-profile-failure.json',error);throw error;}finally{try{if(isolation)stopOwnedIsolation(isolation);}catch(error){recordFailure('active-profile-cleanup-failure.json',error);throw error;}finally{process.removeListener('SIGTERM',interrupt);process.removeListener('SIGINT',interrupt);}}
  equal(hostSnapshot(),formal,'production_changed');for(const [file,digest]of Object.entries(sourceHashes))need(hash(fs.readFileSync(new URL('./'+file,import.meta.url)))===digest,'source_changed');
  const report={schemaVersion:1,kind:'booking-full-native-handoff-acceptance',toolRevision,candidate:CANDIDATE,rollback:APPLICATION,productionMutated:false,originalTimerMutated:false,mailEnabled:false,
   postgresServerVersionNum:'150008',postgresSystemIdentifier,allFixturesStopped:true,cases:results,sourceHashes,activationBodySha256:BOOKING_ACTIVATION_BODY_SHA256,
