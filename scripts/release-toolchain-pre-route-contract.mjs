@@ -16,6 +16,7 @@ export function assertClosedSourceObservationProgress(before,after){
  need(isDeepStrictEqual(strip(before),strip(after))&&Date.parse(after.observedAt)>=Date.parse(before.observedAt),'observation_mismatch');return true;
 }
 export function assertQualificationForClosedSource(qualification,closed){
+ if(closed.preConnectQualificationSha256)need(qualification.sha256===closed.preConnectQualificationSha256,'evidence_invalid');
  if(closed.preControlQualificationSha256)need(qualification.sha256===closed.preControlQualificationSha256,'evidence_invalid');
  if(!closed.evidenceToolRevision){need(qualification.sha256===closed.qualificationSha256,'evidence_invalid');return true;}
  need(closed.evidenceToolRevision===PRE_ROUTE.toolRevision&&closed.evidenceInventorySha256===PRE_ROUTE.inventorySha256&&closed.closedSha256===PRE_ROUTE.closedSha256&&closed.qualificationSha256===PRE_ROUTE.qualificationSha256&&qualification.proof.toolRevision===closed.toolRevision&&qualification.proof.inventorySha256===closed.inventorySha256&&qualification.proof.toolRevision!==PRE_ROUTE.toolRevision,'evidence_invalid');return true;

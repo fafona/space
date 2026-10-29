@@ -63,6 +63,16 @@ def _read(filename):
         os.close(fd)
 
 
+def _strict_instant(text):
+    # Trusted EL8 Python is 3.6. Keep its executable boundary, not a 3.7+ API.
+    if not isinstance(text, str) or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", text):
+        raise ValueError("active_worker_time")
+    try:
+        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc).timestamp()
+    except (ValueError, OverflowError):
+        raise ValueError("active_worker_time") from None
+
+
 def _formal_witness(value):
     operation, revision = value["operationId"], value["revision"]
     if not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", operation or "") or operation == "b49808d6-1950-4cb4-b029-97086873d7a7" or not re.fullmatch(r"[a-f0-9]{40}", revision or "") or revision == _OLD or _SOURCE != "/var/lib/faolla-online-code/" + revision + "/scripts":
@@ -76,10 +86,7 @@ def _formal_witness(value):
     window = attempt["window"]
     if set(window) != {"id", "startedAt", "deadlineAt"} or not re.fullmatch(r"[a-f0-9]{64}", attempt["closedIncidentSha256"]):
         raise ValueError("active_worker_binding")
-    def instant(text):
-        if not isinstance(text, str) or not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", text):
-            raise ValueError("active_worker_time")
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    instant = _strict_instant
     start, deadline = instant(window["startedAt"]), instant(window["deadlineAt"])
     if deadline - start != 600 or not start <= time.time() < deadline or start <= datetime(2026, 10, 28, 18, 59, 45, 425000, tzinfo=timezone.utc).timestamp():
         raise ValueError("active_worker_window")
