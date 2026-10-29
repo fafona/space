@@ -3,7 +3,7 @@
 // Does not fabricate production PIDs, change production helper allowlists,
 // contact a formal daemon, or claim the rest of the publication chain passed.
 import * as fs from'node:fs';import path from'node:path';import net from'node:net';
-import{spawnSync}from'node:child_process';import{fileURLToPath}from'node:url';import{randomBytes,randomUUID,createHash}from'node:crypto';import assert from'node:assert/strict';
+import{spawnSync}from'node:child_process';import{fileURLToPath}from'node:url';import{randomUUID,createHash}from'node:crypto';import assert from'node:assert/strict';
 import{BOOKING_HANDOFF_PM2_PROVENANCE as FRAMEWORK,assertBookingHandoffWindow}from'./booking-handoff-policy.mjs';
 import{normalizeRetirementProcess,parseRetirementSockets}from'./online-release-retirement.mjs';import{bookingLegacyRpcExpected}from'./booking-handoff-legacy.mjs';
 import{capturePm2TerminationAnchor,inspectPm2SigintTermination,inspectPinnedPm2RecordSequence,assertManagedPauseEnvironmentTransition,stablePm2RegistryRow,requirePm2RegistryObservation,assertCompletePm2DumpSet}from'./release-toolchain-pm2-transition.mjs';
@@ -12,6 +12,7 @@ import{captureProcessFact}from'./check-production-runtime-supervision.mjs';
 import{inspectPm2Registry,capturePm2DumpTarget,persistPm2Dump,verifyPm2Dump}from'./production-maintenance-pm2-adapter.mjs';
 import{collectOwnedCiPm2Registry}from'./release-toolchain-pm2-observation.mjs';
 import{bookingReadyWorkerConfiguration,assertBookingReadyWorkerRawTransition}from'./booking-ready-worker.mjs';
+import{assertActiveBookingWorkerConfigurationTransition,waitForActiveBookingWorkerSettlement,activeBookingWorkerObservation}from'./release-toolchain-active-generation-worker-settlement.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex'),need=(v,c)=>{if(!v)throw Error('equivalence_'+c);},sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),ANCHORS=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
 need(process.platform==='linux'&&process.getuid?.()===0&&process.version==='v20.20.1'&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'&&process.env.FAOLLA_RELEASE_PRODUCTION_EQ==='1'&&process.argv.length===2&&!ANCHORS.some(f=>fs.existsSync(f)),'ci_only');
@@ -169,10 +170,11 @@ try{
  const workerExpected={name:workerBefore.name,pid:workerBefore.pid,pm_id:workerBefore.pm_id,pm2_env:Object.fromEntries(workerFields.map(key=>[key,workerBefore.pm2_env[key]??(['args','node_args'].includes(key)?[]:key==='shutdown_with_message'?false:null)]))};
  const workerRequest={action:'active-owned-worker',root,socket:home+'/rpc.sock',daemon:daemonPeer,process:python({action:'identity',pid:workerBefore.pid}),expected:workerExpected};
  need(python(workerRequest).acknowledged===true,'owned_worker_ack');let workerAfter;
- for(let index=0;index<100;index++){workerAfter=registry().find(row=>row.name==='owned-gated-worker');if(workerAfter?.pid>0&&workerAfter.pid!==workerBefore.pid&&workerAfter.pm2_env.status==='online')break;await sleep(100);}
+ await waitForActiveBookingWorkerSettlement({before:activeBookingWorkerObservation(workerBefore,workerBeforeRaw,workerOriginal),script:release+'/scripts/owned-worker-new.cjs',observe:()=>{
+  workerAfter=registry().find(row=>row.name==='owned-gated-worker');if(!(workerAfter?.pid>0))return null;return activeBookingWorkerObservation(workerAfter,raw(workerAfter.pid),fact(workerAfter.pid));}});
  need(workerAfter?.pid>0&&workerAfter.pid!==workerBefore.pid&&workerAfter.pm2_env.pm_exec_path===release+'/scripts/owned-worker-new.cjs'&&workerAfter.pm2_env.restart_time===workerBefore.pm2_env.restart_time+1&&!alive(workerOriginal),'owned_worker_actual_transition');
  const workerAfterConfig=bookingReadyWorkerConfiguration(workerAfter.pm2_env);assertBookingReadyWorkerRawTransition(workerBeforeRaw,raw(workerAfter.pid),workerBeforeConfig,workerAfterConfig);
- const workerExpectedConfig={...workerBeforeConfig};for(const key of ['created_at','pm_uptime','restart_time','pm_exec_path','exit_code','node_version','version','prev_restart_delay','unstable_restarts'])if(Object.hasOwn(workerAfterConfig,key))workerExpectedConfig[key]=workerAfterConfig[key];assert.deepEqual(workerAfterConfig,workerExpectedConfig);
+ assertActiveBookingWorkerConfigurationTransition(workerBeforeConfig,workerAfterConfig);
  const workerStable=registry().map(stablePm2RegistryRow);python(workerRequest,{reject:true,rejectLastLine:'RuntimeError: active_worker_unverified'});assert.deepEqual(registry().map(stablePm2RegistryRow),workerStable);
  for(const proof of protectedWorkers){const current=registry().find(row=>row.name===proof.row.name);assert.deepEqual(stablePm2RegistryRow(current),proof.row);assert.deepEqual(fact(current.pid),proof.identity);assert.deepEqual(raw(current.pid),proof.raw);}
  need(!fs.existsSync(root+'/worker-enabled.json'),'owned_worker_gate');seal('active-worker-source-verified.json',{kind:'owned-active-gated-worker-source-transition-acceptance',actualPm2Id:2,formalPm2IdNotAliased:true,actualPidChanged:true,sourceOnlyTransition:true,configuredEnvironmentUnchanged:true,otherTwoProcessesUnchanged:true,staleReplayRefused:true,gateNotOpened:true,sharedUnchangedProductionPeerFraming:true,formalHostTouched:false,publicationAuthority:false});passed=true;
