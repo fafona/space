@@ -89,6 +89,12 @@ jobs:
           sudo env GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted \
             FAOLLA_RELEASE_PRODUCTION_EQ=1 FAOLLA_EQ_NPM_CLI="$npm_cli" \
             /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-pm2-real-acceptance.mjs"
+      - name: Already Active Routing And Real Controller Death Recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision="$(git rev-parse HEAD)"
+          sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-active-generation-routing-native-entry.mjs"
       - name: Active Incident Existing Operation Kernel Lock Acceptance
         shell: bash
         run: |
@@ -103,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          roots=(/var/lib/faolla-booking-full-rehearsal-* /var/lib/faolla-release-toolchain-isolation-* /var/lib/faolla-release-toolchain-interruption-*)
+          roots=(/var/lib/faolla-booking-full-rehearsal-* /var/lib/faolla-release-toolchain-isolation-* /var/lib/faolla-release-toolchain-interruption-* /var/lib/faolla-active-routing-native-*)
           if ((${#roots[@]})); then
             sudo find "${roots[@]}" -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
             sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
