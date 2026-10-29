@@ -8,6 +8,7 @@ export {collectFreshBookingAdmission,requireBookingAdmission,withFreshBookingAdm
 import {ownedReleasePath} from './release-toolchain-source.mjs';
 import {FULL_REHEARSAL_SOURCES} from './release-toolchain-native-inventory.mjs';
 import {validateIsolationContainer} from './release-toolchain-isolation.mjs';
+import {assertOwnedRehearsalChildCloseProof} from './release-toolchain-owned-child-close.mjs';
 import {verifyFullInterruptionReport} from './release-toolchain-full-interrupt.mjs';
 import {verifyProductionDatabaseBackup} from './verify-production-database-backup.mjs';
 import {createReviewedBookingBackup} from './release-toolchain-backup-producer.mjs';
@@ -44,6 +45,7 @@ export function verifyQualificationFiles(root,{toolRevision,inventorySha256}){
   need(actual.allFixturesStopped===true&&actual.gateClosed===true&&actual.rowsPreserved===true&&actual.actualDatabase?.systemIdentifier===report.postgresSystemIdentifier,'evidence_invalid');
   const runtime=root+'/runtime-'+c.name,backup=read(runtime+'/backup-restore.json');need(backup.restoredRowsEqual===true&&backup.corruptArchiveRefused===true&&backup.productionDatabaseTouched===false&&
    sha256(bookingHostRead(runtime+'/backup.dump',{binary:true}))===backup.archiveSha256&&sha256(bookingHostRead(runtime+'/backup-corrupt.dump',{binary:true}))!==backup.archiveSha256,'evidence_invalid');
+  if(report.observationProfile==='fixed-active-incident-connect-only'){need(!fs.existsSync(runtime+'/child-close-unconfirmed.json')&&sha256(bookingHostRead(runtime+'/direct-child-close.json'))===actual.directChildCloseSha256,'evidence_invalid');assertOwnedRehearsalChildCloseProof(read(runtime+'/direct-child-close.json'));}
  }
  need(/^\/var\/lib\/faolla-release-toolchain-isolation-[A-Za-z0-9]+$/.test(report.isolationRoot??''),'invalid_path');const dbOwner=read(report.isolationRoot+'/owner.json'),stopped=read(report.isolationRoot+'/stopped.json');
  need(stopped.stopped===true&&stopped.filesPreserved===true&&stopped.containerId===dbOwner.containerId,'cleanup_unconfirmed');

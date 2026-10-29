@@ -10,7 +10,7 @@ export const FULL_REHEARSAL_SOURCES=Object.freeze([...BOOKING_HANDOFF_NATIVE_SOU
  'production-maintenance-pm2-adapter.mjs','production-maintenance-pm2-control.py','production-maintenance-pm2-connection.py','production-maintenance-pm2-dump.py','release-toolchain-active-generation-metadata.mjs',
  'check-production-runtime-supervision.mjs','production-maintenance-trusted-python.mjs','production-maintenance-daemon-continuity.mjs','release-toolchain-pm2-observation.mjs','release-toolchain-active-generation-persistence.mjs',
  'release-toolchain-active-generation-owned-lab.mjs','release-toolchain-active-generation-reconciliation.mjs','release-toolchain-active-generation-reconciliation-case.mjs',
- 'release-toolchain-full-active-rehearsal.mjs','release-toolchain-owned-exit-diagnostics.mjs','release-toolchain-active-generation-qualification.mjs',
+ 'release-toolchain-full-active-rehearsal.mjs','release-toolchain-owned-exit-diagnostics.mjs','release-toolchain-owned-child-close.mjs','release-toolchain-active-generation-qualification.mjs',
  'release-toolchain-active-generation-closure.mjs','release-toolchain-active-generation-close-entry.mjs',
  'release-toolchain-active-generation-closed-incident.mjs','release-toolchain-active-generation-readiness-contract.mjs','release-toolchain-active-generation-readiness.mjs','booking-handoff-active-retention.mjs',
  'release-toolchain-active-generation-worker.mjs','release-toolchain-active-generation-worker-settlement.mjs','release-toolchain-active-generation-pm2-worker.py',

@@ -30,6 +30,7 @@ import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
 import {bookingInstalledMetadataReadSql,bookingDefaultPrivilegesReadSql,isolatedBookingDefaultPrivilegesSql} from './release-toolchain-booking-compatibility.mjs';
 import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
 import {publishOnceVisible} from './release-toolchain-once-visible.mjs';
+import {watchOwnedRehearsalChildClose,waitOwnedRehearsalChildrenClosed,ownedRehearsalChildCloseSnapshot} from './release-toolchain-owned-child-close.mjs';
 export {FULL_REHEARSAL_SOURCES};
 const FILE=fileURLToPath(import.meta.url),NGINX=fs.existsSync('/www/server/nginx/sbin/nginx')?'/www/server/nginx/sbin/nginx':'/usr/sbin/nginx';
 let isolation,diagnosticRoot,cancelled=false;
@@ -251,7 +252,9 @@ async function runFullToolchainRehearsalProfile(activeProfile){
  const results=[];let postgresSystemIdentifier,installedMetadataSha256,defaultPrivileges;cancelled=false;const interrupt=()=>{cancelled=true;};process.on('SIGTERM',interrupt);process.on('SIGINT',interrupt);
  try{isolation=createOwnedIsolation();defaultPrivileges=formal.formalHostPresent===false?JSON.parse(pg('postgres',bookingDefaultPrivilegesReadSql)):formal.defaultPrivileges;
  for(const name of CASES){
-  const runtime=root+'/runtime-'+name;fs.mkdirSync(runtime,{mode:0o700});let children=[],nginx,controllerProcess;const started=Date.now();
+  const runtime=root+'/runtime-'+name;fs.mkdirSync(runtime,{mode:0o700});let children=[],nginx,controllerProcess;const started=Date.now(),directChildren=[];
+  const track=(child,role)=>{if(activeProfile)directChildren.push(watchOwnedRehearsalChildClose(child,role));return child;};
+  const reaped=async()=>{if(!activeProfile||!directChildren.length)return null;try{return await waitOwnedRehearsalChildrenClosed(directChildren);}catch(error){if(!fs.existsSync(runtime+'/child-close-unconfirmed.json'))write(runtime+'/child-close-unconfirmed.json',{kind:'owned-active-rehearsal-child-close-unconfirmed',children:ownedRehearsalChildCloseSnapshot(directChildren),observationOnly:true,publicationAuthority:false,at:now()});throw error;}};
   try{
    const database='faolla_booking_activation_'+randomBytes(8).toString('hex'),seeded=await seed(database,defaultPrivileges);postgresSystemIdentifier=seeded.before.systemIdentifier;
    const installed=pg(database,bookingInstalledMetadataReadSql);need(/^[a-f0-9]{64}$/.test(installed),'installed_metadata');if(installedMetadataSha256)equal(installed,installedMetadataSha256,'installed_metadata_changed');else installedMetadataSha256=installed;
@@ -264,15 +267,15 @@ async function runFullToolchainRehearsalProfile(activeProfile){
    window.deadlineAt=new Date(Date.parse(window.startedAt)+600000).toISOString();
    const applicationDirectory=formal.formalHostPresent===false?'/var/lib/faolla-release-toolchain-application-'+toolRevision:'/www/wwwroot/merchant-space.web-releases/'+CANDIDATE.slice(0,12)+'-online';
    const c={name,root,directory:runtime,sourceSha256:sourceHashes['release-toolchain-full-rehearsal.mjs'],isolationRoot:isolation.root,applicationDirectory,database,before:seeded.before,plan:seeded.plan,ports,lua,window};publishOwner(runtime+'/owner.json',c);
-   for(const role of ['web-baseline','web-primary','web-rollback','worker']){const child=launch(role,runtime),f=await spawned(child);children.push(f);write(runtime+'/owned-process-'+f.pid+'.json',f);if(role==='worker')write(runtime+'/legacy.json',{process:f,paused:false,restarts:0});}
+   for(const role of ['web-baseline','web-primary','web-rollback','worker']){const child=track(launch(role,runtime),role),f=await spawned(child);children.push(f);write(runtime+'/owned-process-'+f.pid+'.json',f);if(role==='worker')write(runtime+'/legacy.json',{process:f,paused:false,restarts:0});}
    write(runtime+'/nginx.conf',bookingNativeConfigText(c,'baseline',false));run(NGINX,['-p',runtime+'/', '-c',runtime+'/nginx.conf','-t']);
-   const child=spawn(NGINX,['-p',runtime+'/', '-c',runtime+'/nginx.conf','-g','daemon off;'],{cwd:runtime,env:env(),stdio:'ignore'});
+   const child=track(spawn(NGINX,['-p',runtime+'/', '-c',runtime+'/nginx.conf','-g','daemon off;'],{cwd:runtime,env:env(),stdio:'ignore'}),'nginx');
    await startBookingNativeNginx({directory:runtime,spawned:()=>spawned(child),register:f=>{nginx=f;},actual:fact,until,
     pidText:()=>{try{return fs.readFileSync(runtime+'/nginx.pid','utf8');}catch(e){if(e.code==='ENOENT')return '';throw e;}}});
    await until(async()=>{try{return (await probe(c)).value.buildId===BASELINE;}catch{return false;}});
    nginx=nginxOwnedNow(nginx,runtime);need(nginx,'fixture_nginx_master');write(runtime+'/nginx-process.json',nginx);children.push(nginx);
    const fd=fs.openSync(runtime+'/deploy.lock',fs.constants.O_RDWR|fs.constants.O_CREAT|fs.constants.O_EXCL,0o600);run('flock',['--nonblock','3'],{stdio:['ignore','pipe','pipe',fd]});
-   let controller;try{controller=launch('controller',runtime,{fd});controllerProcess=await spawned(controller);children.push(controllerProcess);}finally{fs.closeSync(fd);}
+   let controller;try{controller=track(launch('controller',runtime,{fd}),'controller');controllerProcess=await spawned(controller);children.push(controllerProcess);}finally{fs.closeSync(fd);}
    const ended=new Promise(resolve=>controller.once('exit',(code,signal)=>resolve({code,signal})));
    await until(()=>fs.existsSync(runtime+'/watchdog-armed.json'));const supervisor=json(runtime+'/watchdog.json');children.push(supervisor);
    need(fs.readlinkSync('/proc/'+supervisor.pid+'/fd/3')===runtime+'/deploy.lock','actual_inherited_fd');
@@ -292,9 +295,11 @@ async function runFullToolchainRehearsalProfile(activeProfile){
    const finalLegacy=json(runtime+'/legacy.json');if(!children.some(f=>f.pid===finalLegacy.process.pid))children.push(finalLegacy.process);
    await stopNginx(nginx,runtime);
    for(const f of [...children].reverse())await stop(f);need(children.every(f=>!alive(f)),'process_leak');
+   if(activeProfile)write(runtime+'/direct-child-close.json',{kind:'owned-active-rehearsal-direct-children-closed',children:await reaped(),publicationAuthority:false,at:now()});
    need(spawnSync('flock',['--nonblock',runtime+'/deploy.lock','/usr/bin/true'],{timeout:2000}).status===0,'kernel_lock_not_released');
    equal(hostSnapshot(),formal,'production_changed');const receipt={name,completed:true,elapsedMs:Date.now()-started,inheritedKernelLock:true,realNginx:true,realPostgres:true,realProcesses:true,ownedFixturesOnly:true,
     actualDatabase:{name:database,...actual},rowsPreserved:true,optionsRepaired:name!=='controller-death-before-commit',gateClosed:true,target:expected,controllerExit:exit,watchdog:finished,allFixturesStopped:true,completedAt:now()};
+   if(activeProfile)receipt.directChildCloseSha256=hash(read(runtime+'/direct-child-close.json'));
    need(receipt.elapsedMs>0&&receipt.elapsedMs<=600000,'actual_window_exceeded');const receiptFile=root+'/cases/'+name+'.json';write(receiptFile,receipt);results.push({name,completed:true,elapsedMs:receipt.elapsedMs,inheritedKernelLock:true,realNginx:true,realPostgres:true,realProcesses:true,ownedFixturesOnly:true,receiptFile,receiptSha256:hash(read(receiptFile))});
   }finally{
    // Stop the two possible controllers first, so cleanup cannot race another
@@ -305,6 +310,7 @@ async function runFullToolchainRehearsalProfile(activeProfile){
     legacy:async()=>{try{await stop(json(runtime+'/legacy.json').process);}catch(e){if(e.code!=='ENOENT')throw e;}},
     children:async()=>{const failures=[];for(const f of [...children].reverse())try{await stop(f);}catch(e){failures.push(e);}if(failures.length)throw new AggregateError(failures);},
    });
+   await reaped();
   }
  }}finally{try{if(isolation)stopOwnedIsolation(isolation);}finally{process.removeListener('SIGTERM',interrupt);process.removeListener('SIGINT',interrupt);}}
  equal(hostSnapshot(),formal,'production_changed');for(const [file,digest]of Object.entries(sourceHashes))need(hash(fs.readFileSync(new URL('./'+file,import.meta.url)))===digest,'source_changed');

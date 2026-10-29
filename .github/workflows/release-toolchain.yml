@@ -74,9 +74,6 @@ jobs:
           sudo /usr/bin/node "$source/scripts/release-toolchain-full-rehearsal.mjs"
           sudo /usr/bin/node "$source/scripts/release-toolchain-full-interrupt.mjs"
       - name: Full Active-Profile Isolated Handoff And Interruption
-        # Independent diagnostic branch only: retain evidence sooner on a
-        # post-report exit hang. This is a failure, never release acceptance.
-        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
