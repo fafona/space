@@ -95,6 +95,7 @@ jobs:
           set -euo pipefail
           revision="$(git rev-parse HEAD)"
           sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-active-generation-routing-native-entry.mjs"
+          sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-active-generation-routing-native-entry.mjs" --interrupt
       - name: Active Incident Existing Operation Kernel Lock Acceptance
         shell: bash
         run: |
@@ -109,7 +110,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          roots=(/var/lib/faolla-booking-full-rehearsal-* /var/lib/faolla-release-toolchain-isolation-* /var/lib/faolla-release-toolchain-interruption-* /var/lib/faolla-active-routing-native-*)
+          roots=(/var/lib/faolla-booking-full-rehearsal-* /var/lib/faolla-release-toolchain-isolation-* /var/lib/faolla-release-toolchain-interruption-* /var/lib/faolla-active-routing-native-* /var/lib/faolla-active-routing-interruption-*)
           if ((${#roots[@]})); then
             sudo find "${roots[@]}" -type f -name '*.json' -print0 | sudo tar --null -T - -cf "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
             sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/release-toolchain-native-evidence.tar"
