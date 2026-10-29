@@ -26,6 +26,6 @@ test('the real observer verifies current complete processes, dumps, backup, qual
 });
 test('the original post-closure reader stays strict; the explicit prepared-worker reader must physically verify its receipt, peer and current cohort',()=>{
  const text=readFileSync(new URL('./release-toolchain-active-generation-closed-incident.mjs',import.meta.url),'utf8');
- assert.ok(text.includes('return inspect(toolRevision,lock);'));for(const token of ['observeActiveBookingPreparedWorker({lock,toolRevision,window,directory})','preparedWorker.priorCohort','preparedWorker.priorRegistry','capturePm2DumpTarget(daemon,boot)','saved.receipt.target','verifyOwnedActiveRoutingAcceptance'])assert.ok(text.includes(token),token);
+ assert.ok(text.includes('return inspectSelectedProfile(toolRevision,lock);'));assert.ok(text.includes('return inspect(toolRevision,lock,worker);'));for(const token of ['observeActiveBookingPreparedWorker({lock,toolRevision,window,directory})','preparedWorker.priorCohort','preparedWorker.priorRegistry','capturePm2DumpTarget(daemon,boot)','saved.receipt.target','verifyOwnedActiveRoutingAcceptance'])assert.ok(text.includes(token),token);
  const worker=readFileSync(new URL('./release-toolchain-active-generation-worker.mjs',import.meta.url),'utf8');for(const token of ['physical.filteredRegistry','assertActiveBookingWorkerConfigurationTransition','receiptSha256:sha256','same(priorCohort,before.legacy)','assertBookingReadyWorkerRawTransition','worker-unconfirmed.json'])assert.ok(worker.includes(token),token);
 });

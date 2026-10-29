@@ -80,6 +80,22 @@ export function verifyActiveBookingIncidentPreservation({lock,toolRevision,windo
  assertOnlineRetentionHeldLocks(lock);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');return{directory,preserved,observation,preservedSha256:sha256(bookingHostRead(directory+'/preserved.json'))};
 }
 
+// Separately admitted observational continuation. This copies the original
+// incident evidence, not a rewritten version of the prior partial receipts.
+export async function preservePostSaveIncidentEvidence(options){
+ const {postSaveClosureResources}=await import('./release-toolchain-post-save-closure.mjs'),s=postSaveClosureResources(options);s.assertHeld();
+ const parent='/var/lib/faolla-booking-active-closures/'+P.operationId;privateDir(parent);
+ const engine=vault({source:ACTIVE_INCIDENT_ROOT,destination:s.directory,pins:ACTIVE_INCIDENT_FILES,binding:s.binding,assertHeld:s.assertHeld});engine.begin();engine.copy();const preserved=engine.seal();seal(s.directory+'/current-observation.json',s.observation);s.assertHeld();return{directory:s.directory,preservedSha256:sha256(bookingHostRead(s.directory+'/preserved.json')),files:preserved.files.length};
+}
+export async function verifyPostSaveIncidentPreservation(options){
+ const {postSaveClosureResources}=await import('./release-toolchain-post-save-closure.mjs'),s=postSaveClosureResources(options);s.assertHeld();
+ const read=name=>{const text=bookingHostRead(s.directory+'/'+name),value=JSON.parse(text);same(text,canonicalJson(value)+'\n');return value;},intent=read('intent.json'),preserved=read('preserved.json'),observation=read('current-observation.json');
+ same(intent.binding,s.binding);same(preserved.binding,s.binding);same(observation,s.observation);same(intent.source,ACTIVE_INCIDENT_ROOT);same(preserved.source,ACTIVE_INCIDENT_ROOT);same(preserved.destination,s.directory);same(preserved.intentSha256,sha256(bookingHostRead(s.directory+'/intent.json')));same(intent.sourceIdentity,privateDir(ACTIVE_INCIDENT_ROOT));same(preserved.sourceIdentity,intent.sourceIdentity);same(preserved.destinationIdentity,privateDir(s.directory));
+ need(intent.kind==='active-booking-incident-evidence-preservation-intent'&&preserved.kind==='active-booking-incident-evidence-preserved'&&preserved.originalFilesRetained===true&&preserved.incidentClosed===false&&preserved.publicationAuthority===false&&observation.metadataCorrected===true,'evidence_invalid');
+ same(preserved.files,ACTIVE_INCIDENT_FILES.map(([name,bytes,sha256])=>({name,bytes,sha256})));same(intent.files,ACTIVE_INCIDENT_FILES.map(([name,bytes,sha256])=>({name,bytes,sha256,identity:fact(ownedReleasePath(ACTIVE_INCIDENT_ROOT+'/'+name,{privateMode:true}))})));
+ for(const pin of ACTIVE_INCIDENT_FILES){const original=readPin(ACTIVE_INCIDENT_ROOT+'/'+pin[0],pin);readPin(s.directory+'/'+pin[0],pin);same(observation.files[pin[0]],{...original.identity,sha256:pin[2]});}s.assertHeld();return{directory:s.directory,preservedSha256:sha256(bookingHostRead(s.directory+'/preserved.json'))};
+}
+
 // Same real vault engine, with a non-serializable owned-lab resource profile.
 export async function preserveOwnedActiveReconciliationEvidence(capability,lock,window){
  const {ownedActiveReconciliationScope,observeOwnedActiveReconciliation}=await import('./release-toolchain-active-generation-owned-lab.mjs');

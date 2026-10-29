@@ -20,17 +20,22 @@ const same=(a,b)=>need(isDeepStrictEqual(a,b),'observation_mismatch'),seal=(file
 const read=file=>{const text=bookingHostRead(file),value=JSON.parse(text);same(text,canonicalJson(value)+'\n');return value;};
 function ensure(parent,name){ownedReleasePath(parent,{directory:true});const file=parent+'/'+name;if(!fs.existsSync(file)){fs.mkdirSync(file,{mode:0o700});bookingHostSync(parent);}ownedReleasePath(file,{directory:true,privateMode:true});return file;}
 const invocation=toolRevision=>need(path.dirname(path.dirname(fileURLToPath(import.meta.url)))==='/var/lib/faolla-online-code/'+toolRevision,'source_changed');
-export async function qualifyActiveBookingIncident({lock,toolRevision,window}){
+export const qualifyActiveBookingIncident=options=>qualify(options,window=>inspectActiveBookingIncident({window}));
+export async function qualifyPostSaveBookingIncident(options){
+ assertOnlineRetentionHeldLocks(options.lock);const authority=reviewedBookingExecution(options.toolRevision);need(authority?.prepared.postSavePartial,'source_changed');
+ const {observePostSaveIncident}=await import('./release-toolchain-post-save-evidence.mjs');return qualify(options,async window=>(await observePostSaveIncident({window})).current);
+}
+async function qualify({lock,toolRevision,window},observe){
  assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);invocation(toolRevision);const authority=reviewedBookingExecution(toolRevision);need(authority,'source_changed');
  assertActiveBookingIncidentHeldWindow(lock,window);
  const directory=ensure(ensure(ensure('/var/lib','faolla-booking-active-qualifications'),P.operationId),toolRevision),attempt=directory+'/attempt_'+Date.now()+'_'+randomUUID();fs.mkdirSync(attempt,{mode:0o700});bookingHostSync(directory);
  const held=()=>{assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');};
  let stage='before';try{
-  held();const before=await inspectActiveBookingIncident({window});seal(attempt+'/started.json',{kind:'active-incident-qualification-started',toolRevision,inventorySha256:authority.tool.inventorySha256,oldOperationId:P.operationId,window,application:authority.prepared.application,before,at:new Date().toISOString(),publicationAuthority:false});
+  held();const before=await observe(window);seal(attempt+'/started.json',{kind:'active-incident-qualification-started',toolRevision,inventorySha256:authority.tool.inventorySha256,oldOperationId:P.operationId,window,application:authority.prepared.application,before,at:new Date().toISOString(),publicationAuthority:false});
   stage='full-active-native';const result=await runFullActiveToolchainRehearsal();held();const native=verifyQualificationFiles(result.root,{toolRevision,inventorySha256:authority.tool.inventorySha256});need(native.report.observationProfile==='fixed-active-incident-connect-only','evidence_invalid');
   stage='real-active-interruption';const interruption=await rehearseFullActiveToolchainInterruption();held();need(interruption.report.observationProfile==='fixed-active-incident-connect-only','evidence_invalid');
   stage='already-active-routing-and-controller-death';const activeRouting=await acceptOwnedActiveRouting();held();const routing=verifyOwnedActiveRoutingAcceptance(activeRouting.root,{toolRevision,inventorySha256:authority.tool.inventorySha256});
-  const compatibility=observeBookingCompatibility(native);same(observeBookingReadyApplication(),authority.prepared.application);const after=await inspectActiveBookingIncident({window});assertActiveBookingObservedHostProgress(before,after);held();
+  const compatibility=observeBookingCompatibility(native);same(observeBookingReadyApplication(),authority.prepared.application);const after=await observe(window);assertActiveBookingObservedHostProgress(before,after);held();
   await refreshReviewedBookingExecution(toolRevision);held();
   const proof={kind:'active-incident-formal-qualification-completed',toolRevision,inventorySha256:authority.tool.inventorySha256,oldOperationId:P.operationId,generation:P.generation,window,application:authority.prepared.application,nativeRoot:native.root,nativeSha256:native.sha256,interruptionRoot:interruption.root,interruptionSha256:interruption.sha256,activeRoutingNativeRoot:routing.root,activeRoutingNativeSha256:routing.sha256,compatibility,beforeObservationSha256:sha256(canonicalJson(before)),afterObservationSha256:sha256(canonicalJson(after)),productionMutated:false,mailEnabled:false,publicationAuthority:false,completedAt:new Date().toISOString()};
   seal(attempt+'/after-observation.json',after);seal(attempt+'/verified.json',proof);held();return{kind:proof.kind,attempt,sha256:sha256(bookingHostRead(attempt+'/verified.json')),nativeRoot:native.root,productionMutated:false,publicationAuthority:false};

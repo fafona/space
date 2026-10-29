@@ -24,6 +24,8 @@ import {bookingHostRead,bookingHostSql,bookingHostRun} from './booking-handoff-h
 import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
 import {verifyOwnedActiveRoutingAcceptance} from './release-toolchain-active-generation-routing-native.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
+import {assertSameLongLivedDaemon} from './release-toolchain-daemon-identity.mjs';
+import {POST_SAVE_PRIOR as POST_SAVE} from './release-toolchain-post-save-pins.mjs';
 const ROOT='/var/lib/faolla-booking-active-closures/'+P.operationId,OP='/var/lib/faolla-maintenance/merchant-space/operation.lock',RELEASE='/var/lib/faolla-online-release';
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'evidence_invalid'),digest=file=>sha256(bookingHostRead(file,{binary:true}));
 const read=file=>{const text=bookingHostRead(file),value=JSON.parse(text);same(text,canonicalJson(value)+'\n');return value;};
@@ -89,20 +91,24 @@ async function inspect(toolRevision,heldLock,preparedWorker){
  check();const cohort=collectActiveBookingLegacyHost(),physical=collectFormalBookingPm2Registry();assertCompletePm2DumpSet(physical.rows,physical.filteredRegistry);need(physical.rows.length===25,'owned_resource_changed');
  const originalCohort=preparedWorker?preparedWorker.priorCohort:cohort;if(preparedWorker){same(cohort,preparedWorker.after.legacy);same(physical.filteredRegistry,preparedWorker.physical.filteredRegistry);same(preparedWorker.closedSha256,sha256(canonicalJson(closed)+'\n'));}
  same(sha256(canonicalJson(originalCohort.processes)),context.before.processesSha256);same(sha256(canonicalJson(originalCohort.identityProofs)),context.before.identitiesSha256);same(sha256(canonicalJson(originalCohort.raw)),context.before.legacyEnvironmentSha256);
- const {commandLine,...daemon}=captureProcessFact(physical.daemon.pid),boot=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();same(daemon,attempt.daemon);same(boot,attempt.bootId);same(commandLine,['PM2 v6.0.14: God Daemon (/root/.pm2)']);
+ const {commandLine,...daemon}=captureProcessFact(physical.daemon.pid),boot=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();assertSameLongLivedDaemon(daemon,attempt.daemon);same(boot,attempt.bootId);same(commandLine,['PM2 v6.0.14: God Daemon (/root/.pm2)']);
  if(preparedWorker){same(pm2RegistryDigest(preparedWorker.priorRegistry),saved.registrySha256);same(await capturePm2DumpTarget(daemon,boot),saved.receipt.target);}
  else{same(pm2RegistryDigest(physical.filteredRegistry),saved.registrySha256);need(await verifyPm2Dump(daemon,boot,physical.filteredRegistry,saved.receipt)===true,'operation_unconfirmed');}
  const database=JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql));assertActiveBookingDatabaseProgress(closed.database,database,{systemIdentifier:'7612049595342295079',databaseOid:'5'});same(readOnlineRetentionHistory().headSha256,context.before.retentionHeadSha256);
  const publicProof=await proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target:P.compatibleRollback,operationId:randomUUID(),verify:check,deadlineAtMs:Date.now()+30000});same(collectActiveBookingLegacyHost(),cohort);check();
  return{kind:'closed-active-incident-current-observation',oldOperationId:P.operationId,generation:P.generation,toolRevision,inventorySha256:source.inventorySha256,directory,closedSha256:sha256(canonicalJson(closed)+'\n'),closureSha256:closed.closureSha256,closedAt:closed.completedAt,qualificationSha256:context.qualificationSha256,qualification,compatibility:context.compatibility,database,actualRoute:P.compatibleRollback,publicProof,originalOperationInodeRetained:true,publicationAuthority:false,observedAt:new Date().toISOString()};
 }
-export const inspectClosedActiveBookingIncidentForPreparation=toolRevision=>inspect(toolRevision,null);
-export const inspectClosedActiveBookingIncidentUnderHeldLocks=async({toolRevision,lock})=>{assertOnlineRetentionHeldLocks(lock);return inspect(toolRevision,lock);};
+async function inspectSelectedProfile(toolRevision,lock,worker){
+ if(fs.existsSync(ROOT)){const entries=fs.readdirSync(ROOT);if(entries.length===2&&entries.includes(POST_SAVE.windowId)){const {inspectClosedPostSaveIncident}=await import('./release-toolchain-post-save-closed.mjs');return inspectClosedPostSaveIncident(toolRevision,lock,worker);}}
+ return inspect(toolRevision,lock,worker);
+}
+export const inspectClosedActiveBookingIncidentForPreparation=toolRevision=>inspectSelectedProfile(toolRevision,null);
+export const inspectClosedActiveBookingIncidentUnderHeldLocks=async({toolRevision,lock})=>{assertOnlineRetentionHeldLocks(lock);return inspectSelectedProfile(toolRevision,lock);};
 // A distinct profile after the one approved gated-worker source transition.
 // Actual sealed private receipts + current peer/process/raw environment are
 // checked first; callers cannot provide a JSON exception or original cohort.
 export async function inspectClosedActiveBookingIncidentWithPreparedWorker({lock,toolRevision,window,directory}){
  const {observeActiveBookingPreparedWorker}=await import('./release-toolchain-active-generation-worker.mjs');
- const before=observeActiveBookingPreparedWorker({lock,toolRevision,window,directory}),result=await inspect(toolRevision,lock,before),after=observeActiveBookingPreparedWorker({lock,toolRevision,window,directory});
+ const before=observeActiveBookingPreparedWorker({lock,toolRevision,window,directory}),result=await inspectSelectedProfile(toolRevision,lock,before),after=observeActiveBookingPreparedWorker({lock,toolRevision,window,directory});
  same(after.receiptSha256,before.receiptSha256);same(after.after,before.after);same(after.priorRegistry,before.priorRegistry);return{...result,preparedWorker:{receiptSha256:after.receiptSha256,process:after.after.process,gateOpen:false,publicationAuthority:false}};
 }
