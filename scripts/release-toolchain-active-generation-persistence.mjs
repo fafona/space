@@ -47,6 +47,13 @@ export async function verifyActiveBookingPublicationPersistenceBeforeMetadata(op
  const {observeActiveBookingPublicationBeforeMetadata,assertActivePublicationObservationProgress}=await import('./release-toolchain-active-generation-publication-observation.mjs');
  return verifyObservedCurrentProcesses({metadata:s.metadata,held:s.held,observe:async()=>(await observeActiveBookingPublicationBeforeMetadata(options)).observation,compare:assertActivePublicationObservationProgress,collect:collectFormalBookingPm2Registry,home:'/root/.pm2',expectedPeer:s.expectedPeer});
 }
+// Independently verify the SAME saved process set after the two exact metadata
+// CAS operations. No second save and no adoption of serialized receipts.
+export async function verifyActiveBookingPublicationPersistenceAfterMetadata(options){
+ const {scope,lock,toolRevision,window}=options,s=publicationPersistenceScopes.get(scope);need(s&&s.lock===lock&&s.toolRevision===toolRevision,'invalid_contract');same(s.window,window);s.held();
+ const {observeActiveBookingPublicationAfterMetadata,assertActivePublicationObservationProgress}=await import('./release-toolchain-active-generation-publication-observation.mjs');
+ return verifyObservedCurrentProcesses({metadata:s.metadata,held:s.held,observe:async()=>(await observeActiveBookingPublicationAfterMetadata(options)).observation,compare:assertActivePublicationObservationProgress,collect:collectFormalBookingPm2Registry,home:'/root/.pm2',expectedPeer:s.expectedPeer});
+}
 // Shared real connect-only IO path. Only closed profile factories call it;
 // neither paths nor the private fault seam are CLI or serialized authority.
 async function persistObservedCurrentProcesses({directory,metadata,held,observe,compare,collect,home,expectedPeer,afterSave}){

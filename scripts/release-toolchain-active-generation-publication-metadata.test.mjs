@@ -1,9 +1,16 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {activeHandoffFixture,activeHandoffObservation} from './test-support/booking-handoff-active-fixture.mjs';
-import {activeBookingPublicationMetadata} from './release-toolchain-active-generation-publication-metadata.mjs';
+import {activeBookingPublicationMetadata,assembleActiveBookingPublicationHandoff} from './release-toolchain-active-generation-publication-metadata.mjs';
 import {ACTIVE_BOOKING_INCIDENT as P} from './release-toolchain-active-generation-contract.mjs';
 import {buildOnlineRetentionReceipt} from './online-release-retention.mjs';import {assertOnlineRetentionHistory,retentionHash} from './online-release-retention-policy.mjs';import {sha256} from './release-toolchain-contracts.mjs';
+import {rollingHash} from './online-release-rolling-policy.mjs';
 const input=f=>({history:f.history,handoff:f.handoff,cohort:{active:f.active,rollback:f.rollback,processes:f.after}});
+test('actual handoff assembly consumes a plain validated backup and keeps exact five-field runtime anchors',()=>{
+ const f=activeHandoffFixture(),compatibility={fixture:'structural-only'},readiness=structuredClone(f.handoff.rollbackReadiness);readiness.compatibilitySha256=rollingHash(compatibility);
+ const evidence={toolRevision:f.handoff.evidence.toolRevision,window:f.handoff.evidence.window,backup:{archiveSha256:f.handoff.evidence.backupSha256},qualification:{sha256:f.handoff.evidence.nativeAcceptanceSha256},compatibility,readiness:{readiness},closed:{closureSha256:f.handoff.evidence.closureSha256,closedSha256:f.handoff.evidence.closedIncidentSha256},databaseBefore:f.handoff.databaseBefore},cohort={active:f.active,rollback:f.rollback,processes:f.after,runtimeByName:f.handoff.runtimeByName},hashes=Object.fromEntries(['preflightSha256','ingressGateSha256','activeDrainSha256','recoveryPlanSha256','persistenceSha256','workerPreparationSha256'].map(key=>[key,f.handoff.evidence[key]]));
+ const handoff=assembleActiveBookingPublicationHandoff({evidence,history:f.history,cohort,databaseAfter:f.handoff.databaseAfter,originalStageText:f.handoff.originalStageText,historical:f.handoff.historical,hashes,completedAt:f.handoff.evidence.completedAt});assert.equal(handoff.evidence.backupSha256,evidence.backup.archiveSha256);assert.equal(handoff.evidence.rollbackReadinessSha256,rollingHash(readiness));assert.equal(activeBookingPublicationMetadata({history:f.history,handoff,cohort}).state.baseline,P.compatibleRollback);
+ assert.throws(()=>assembleActiveBookingPublicationHandoff({evidence:{...evidence,backup:{backup:evidence.backup}},history:f.history,cohort,databaseAfter:f.handoff.databaseAfter,originalStageText:f.handoff.originalStageText,historical:f.handoff.historical,hashes,completedAt:f.handoff.evidence.completedAt}));
+});
 test('new metadata has compatible A as baseline but preserves the original B stage, old readiness and historical receipts',()=>{
  const f=activeHandoffFixture(),before=JSON.stringify(f),result=activeBookingPublicationMetadata(input(f));assert.equal(JSON.stringify(f),before);assert.equal(result.state.status,'active');assert.equal(result.state.baseline,P.compatibleRollback);assert.equal(JSON.parse(f.handoff.originalStageText).baseline,P.legacyBaseline);assert.equal(result.state.activatedAt,f.handoff.evidence.completedAt);assert.equal(result.state.bookingHandoffSha256,retentionHash(f.handoff));assert.equal(result.state.bookingOriginalStageSha256,sha256(f.handoff.originalStageText));assert.equal(JSON.parse(result.activeText).target,P.candidate);
 });
