@@ -3,7 +3,7 @@
 // No CLI entry exists. The eventual closure controller must satisfy admission
 // and qualification before constructing this internal operation.
 import * as fs from 'node:fs';import {isDeepStrictEqual} from 'node:util';
-import {ACTIVE_BOOKING_INCIDENT as P,assertActiveBookingWindow} from './release-toolchain-active-generation-contract.mjs';
+import {assertActiveBookingWindow} from './release-toolchain-active-generation-contract.mjs';
 import {inspectActiveBookingIncidentAfterMetadata} from './release-toolchain-active-generation-incident.mjs';
 import {verifyActiveBookingMetadataCorrection,assertActiveCorrectedObservationProgress} from './release-toolchain-active-generation-metadata.mjs';
 import {reviewedBookingExecution} from './release-toolchain-authority.mjs';
@@ -14,6 +14,7 @@ import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observati
 import {assertCompletePm2DumpSet} from './release-toolchain-pm2-transition.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'observation_mismatch'),seal=(file,value)=>bookingHostWriteOnce(file,canonicalJson(value)+'\n');
+const publicationPersistenceScopes=new WeakMap();
 const read=file=>{const text=bookingHostRead(file),value=JSON.parse(text);same(text,canonicalJson(value)+'\n');return value;};
 export const ACTIVE_PERSISTENCE_STEPS=Object.freeze(['inspect','freeze','claim','saveOnce','verifySaved','postconditions','complete']);
 export async function executeActiveProcessPersistence(operations){
@@ -28,6 +29,23 @@ export async function persistActiveBookingCurrentProcesses({lock,toolRevision,wi
  const held=()=>{assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');verifyActiveBookingMetadataCorrection({lock,toolRevision,window});};
  const expectedPeer=JSON.parse(bookingHostRead(directory+'/legacy-restart-attempt.json')).before.daemonPeer;
  return persistObservedCurrentProcesses({directory,metadata,held,observe:()=>inspectActiveBookingIncidentAfterMetadata({window}),compare:assertActiveCorrectedObservationProgress,collect:collectFormalBookingPm2Registry,home:'/root/.pm2',expectedPeer});
+}
+// Separate normal-publication factory; the original closure factory remains
+// restricted to its original incident scope and never adopts this profile.
+export async function persistActiveBookingPublicationCurrentProcesses(options){
+ const {activeBookingPublicationEvidence,assertActiveBookingPublicationLockBinding}=await import('./release-toolchain-active-generation-publication-scope.mjs'),{observeActiveBookingPublicationBeforeMetadata,assertActivePublicationObservationProgress}=await import('./release-toolchain-active-generation-publication-observation.mjs');
+ const {scope,lock,toolRevision,window}=options,admission=assertActiveBookingPublicationLockBinding(scope,{lock,toolRevision,window}),evidence=activeBookingPublicationEvidence(scope),initial=await observeActiveBookingPublicationBeforeMetadata(options),directory=admission.directory;
+ need(!publicationPersistenceScopes.has(scope),'attempt_replay_forbidden');
+ const checkpoint={kind:'active-booking-post-route-runtime-checkpoint',toolRevision,inventorySha256:evidence.inventorySha256,window,observation:initial.observation,closedIncidentSha256:evidence.closed.closedSha256,publicationAuthority:false};seal(directory+'/publication-runtime-checkpoint.json',checkpoint);
+ const metadata={directory,binding:{kind:'active-booking-publication-process-persistence',toolRevision,window,closedIncidentSha256:evidence.closed.closedSha256,publicationAuthority:false},receiptSha256:sha256(bookingHostRead(directory+'/publication-runtime-checkpoint.json')),after:initial.observation};
+ const held=()=>{assertActiveBookingPublicationLockBinding(scope,{lock,toolRevision,window});same(read(directory+'/publication-runtime-checkpoint.json'),checkpoint);};
+ publicationPersistenceScopes.set(scope,{lock,toolRevision,window,metadata,held,expectedPeer:initial.daemonPeer});
+ return persistObservedCurrentProcesses({directory,metadata,held,observe:async()=>(await observeActiveBookingPublicationBeforeMetadata(options)).observation,compare:assertActivePublicationObservationProgress,collect:collectFormalBookingPm2Registry,home:'/root/.pm2',expectedPeer:initial.daemonPeer});
+}
+export async function verifyActiveBookingPublicationPersistenceBeforeMetadata(options){
+ const {scope,lock,toolRevision,window}=options,s=publicationPersistenceScopes.get(scope);need(s&&s.lock===lock&&s.toolRevision===toolRevision,'invalid_contract');same(s.window,window);s.held();
+ const {observeActiveBookingPublicationBeforeMetadata,assertActivePublicationObservationProgress}=await import('./release-toolchain-active-generation-publication-observation.mjs');
+ return verifyObservedCurrentProcesses({metadata:s.metadata,held:s.held,observe:async()=>(await observeActiveBookingPublicationBeforeMetadata(options)).observation,compare:assertActivePublicationObservationProgress,collect:collectFormalBookingPm2Registry,home:'/root/.pm2',expectedPeer:s.expectedPeer});
 }
 // Shared real connect-only IO path. Only closed profile factories call it;
 // neither paths nor the private fault seam are CLI or serialized authority.

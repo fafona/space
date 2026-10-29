@@ -70,7 +70,10 @@ export function assertHistoricalPausedBookingHost(value,recordProof,newWindow,{n
  return{kind:'currently-observed-historical-booking-pause',oldOperationId:ACTIVE_BOOKING_INCIDENT.operationId,observedAt:value.observedAt,legacyPid:value.legacyAfter.pid,paused:true,newRestartPerformed:false,publicationAuthority:false};
 }
 export const ACTIVE_RECONCILIATION_STEPS=Object.freeze(['inspect','sourceAndCi','freshBackup','freshCompatibility','begin','preserveFailureEvidence','reconcileMetadata','persistProcesses','verifyPostconditions','sealClosure','archiveOldOperation','complete']);
-export const ACTIVE_PUBLICATION_STEPS=Object.freeze(['inspect','sourceAndCi','freshBackup','freshCompatibility','freshRollbackReadiness','prepareGatedWorker','admit','armSupervisor','gateAndDrain','routePrimary','unfence','publicProof','publicationMetadata','persistProcesses','certificate','enableBookingWorker','finishSupervisor','finalAudit']);
+// The new handoff hash includes the actual persistence receipt: persist the
+// unchanged live process set BEFORE constructing final publication metadata.
+// Otherwise metadata -> handoff -> persistence -> metadata is circular.
+export const ACTIVE_PUBLICATION_STEPS=Object.freeze(['inspect','sourceAndCi','freshBackup','freshCompatibility','freshRollbackReadiness','prepareGatedWorker','admit','armSupervisor','gateAndDrain','routePrimary','unfence','publicProof','persistProcesses','publicationMetadata','certificate','enableBookingWorker','finishSupervisor','finalAudit']);
 export const ACTIVE_RECOVERY_STEPS=Object.freeze(['inspect','parentGone','databaseBarrier','disableBookingWorker','routeCompatibleRollback','unfence','publicProof','publicationMetadata','persistProcesses','complete']);
 async function sequence(steps,operations){
  let last,stage='startup';try{for(const name of steps){stage=name;await operations.assertHeld();if(operations.progress)await operations.progress(name);last=await operations[name]();await operations.assertHeld();}return last;

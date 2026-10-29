@@ -79,7 +79,11 @@ jobs:
           set -euo pipefail
           revision="$(git rev-parse HEAD)"
           sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-full-active-rehearsal.mjs"
-          sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-full-active-rehearsal.mjs" --interrupt
+          # Fresh independent owners expose rare readiness/read/exit races.
+          # Stop at the first failure and keep its full diagnostic evidence.
+          for repetition in 1 2 3 4 5 6 7 8; do
+            sudo /usr/bin/node "/var/lib/faolla-online-code/$revision/scripts/release-toolchain-full-active-rehearsal.mjs" --interrupt
+          done
       - name: Real PM2 And Next Production Transition Equivalence
         shell: bash
         run: |
