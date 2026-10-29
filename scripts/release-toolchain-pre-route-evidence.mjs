@@ -31,10 +31,11 @@ export function verifyPinnedPreRouteHistory(){
 }
 export async function inspectPinnedPreRouteClosedIncident(toolRevision,heldLock,preparedWorker){
  need(toolRevision!==H.toolRevision&&path.dirname(path.dirname(fileURLToPath(import.meta.url)))==='/var/lib/faolla-online-code/'+toolRevision,'source_changed');verifyPinnedPreRouteHistory();
+ let preControl=null;if(toolRevision!=='92f8595eba8d99bf251e5d84ba2d4f91ac5715b3'){const{inspectPreControlClosedProfile}=await import('./release-toolchain-pre-control-closure.mjs');preControl=await inspectPreControlClosedProfile(toolRevision,heldLock,preparedWorker);}
  // Import historical validators from the independently byte-verified OLD
  // closure. Its native resource closure is not reinterpreted by new code.
  const{inspectPostSaveWithPinnedSource}=await import('./release-toolchain-post-save-closed.mjs');
- const result=await inspectPostSaveWithPinnedSource(toolRevision,heldLock,preparedWorker);verifyPinnedPreRouteHistory();return result;
+ const result=await inspectPostSaveWithPinnedSource(toolRevision,heldLock,preparedWorker);verifyPinnedPreRouteHistory();return preControl?{...result,preControlQualificationSha256:preControl.qualificationSha256,preControlAbortReceiptSha256:preControl.sha256}:result;
 }
 export async function preservePreRouteRefusal({lock,toolRevision}){
  assertOnlineRetentionHeldLocks(lock);need(reviewedBookingExecution(toolRevision)?.prepared.activeIncidentClosed?.evidenceToolRevision===H.toolRevision,'source_changed');
