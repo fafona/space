@@ -18,7 +18,7 @@ function cohort(rows){need(Array.isArray(rows)&&rows.length>0&&rows.length<=128,
 // mutation. Failed responses are never counted. A changing cohort must itself
 // be completely observed gated before returning; deadline cannot be renewed.
 export async function proveActiveBookingGatedWorkerCohort(operations,window){
- const first=operations.nowMs();assertActiveBookingWindow(window,{nowMs:first});const deadline=Math.min(first+15000,Date.parse(window.deadlineAt)),seen=new Map(),expected=operations.expectedWorkerCount??null;need(expected===null||Number.isSafeInteger(expected)&&expected>0&&expected<=128,'invalid_contract');let last=first;
+ const first=operations.nowMs();assertActiveBookingWindow(window,{nowMs:first});const deadline=Math.min(first+45000,Date.parse(window.deadlineAt)),seen=new Map(),expected=operations.expectedWorkerCount??null;need(expected===null||Number.isSafeInteger(expected)&&expected>0&&expected<=128,'invalid_contract');let last=first;
  for(let index=0;index<256;index++){
   const at=operations.nowMs();need(Number.isSafeInteger(at)&&at>=last,'ingress_clock_invalid');last=at;need(at<deadline,'gate_not_confirmed');await operations.verify();const before=cohort(await operations.workers()),response=await operations.probe();
   if(response?.status===503&&response.value?.ok===false&&response.value.error==='booking_temporarily_paused'&&response.value.operation===window.id){const row=before.find(row=>row.pid===response.value.workerPid);if(row)seen.set(row.pid,row.startTicks);}
