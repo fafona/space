@@ -58,6 +58,11 @@ readiness, supervisor, routing, rollback, persistence and certificate checks.
 - Serialized JSON and disposable CI tokens cannot acquire formal authority.
 - Source-only bootstrap retains the current operation, installs complete
   detached Git bytes, and cannot alter application inputs or repository refs.
+- The fixed helper hash uses the explicit non-private source reader after
+  independent source inventory and ownership checks. Actual owned CI file-mode
+  cases ensure 0644 source works, writable source fails, and the default 0600
+  private-evidence reader is not relaxed. This was caught in a read-only formal
+  preflight before any source installation or production operation.
 - Actual disposable kernel-lock/archive/release composition verifies normal,
   incorrect-completion and unknown-after-archive cases. It retains both old
   inodes and every original file, rejects production tokens, and never invokes
