@@ -32,7 +32,7 @@ async function withExecution({applicationRevision,preparationRevision,verifyPrep
  const directory=path.dirname(path.dirname(fileURLToPath(import.meta.url))),revision=path.basename(directory);
  const review=await collectRemoteReleaseReview(revision),source=inspectPinnedExecutionSource({revision,directory});
  const applicationRows=parseSourceTree(sourceGit('/www/wwwroot/merchant-space',['ls-tree','-r','-z',applicationRevision]));
- const retainedApplicationBinding=retained?assertRetainedBookingSource(applicationRevision,applicationRows,source.rows):null;
+ const retainedApplicationBinding=retained?assertRetainedBookingSource(applicationRevision,applicationRows,source.rows,revision):null;
  const application=retainedApplicationBinding?.application??assertUnchangedApplicationSource(applicationRevision,applicationRows,source.rows),prepared=await verifyPreparation(preparationRevision,revision);
  const rows=new Map(applicationRows.map(v=>[v.file,v.oid])),changed=source.rows.filter(v=>rows.get(v.file)!==v.oid);
  const toolClosureSha256=sha256(canonicalJson(changed)),witnesses=new Map();
