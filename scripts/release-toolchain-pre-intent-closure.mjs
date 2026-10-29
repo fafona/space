@@ -61,4 +61,3 @@ export async function inspectPreIntentClosedProfile(toolRevision,heldLock,prepar
  if(heldLock){const profile=preIntentAbortLockProfile(heldLock);if(profile){need(profile.toolRevision===toolRevision&&profile.pinsSha256===preIntentPinsSha256(),'source_changed');const active=activePreIntentAbortResources(heldLock);if(!active)need(!fs.existsSync(H.root),'attempt_unknown');await observePreIntentUnchanged({...active,preparedWorker});return null;}}
  return verifyClosedPreIntentAbort(toolRevision,preparedWorker);
 }
-

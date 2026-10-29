@@ -36,4 +36,3 @@ export async function installReviewedPreIntentTool(){
  }catch(error){if(audit)try{seal('failed.json',{kind:'pre-intent-source-only-install-failed',stage,errorSha256:digest(String(error?.message??'unknown')),detailsRedacted:true,applicationPublished:false,at:new Date().toISOString()});}catch{}throw error;}finally{fs.closeSync(fd);}
 }
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url)installReviewedPreIntentTool().then(value=>console.log(JSON.stringify(value)),error=>{console.error(JSON.stringify({kind:'pre-intent-source-only-install-refused',code:/^[a-z_]{1,160}$/.test(error?.message??'')?error.message:'operation_unconfirmed',errorSha256:digest(String(error?.message??'unknown')),detailsRedacted:true,applicationPublished:false}));process.exitCode=1;});
-
