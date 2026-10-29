@@ -11,6 +11,14 @@ const read=file=>{const text=bookingHostRead(file),value=JSON.parse(text);same(t
 const lockIdentity=value=>Object.fromEntries(['dev','ino','uid','mode','nlink'].map(key=>[key,value[key]]));
 const processIdentity=value=>Object.fromEntries(['pid','uid','startTicks','executable','cwd','commandLineDigest'].map(key=>[key,value[key]]));
 const sourceIdentity=value=>Object.fromEntries(['dev','ino','uid','mode','nlink','size','mtimeMs','ctimeMs'].map(key=>[key,value[key]]));
+// Shared READ-ONLY physical primitive, also used by the owned native runner.
+// A true result does not mint either a formal or a normal held-lock capability.
+export function assertActualActiveSupervisorKernelIdentity({deploy,operation}){
+ need(process.platform==='linux'&&process.getuid?.()===0,'unsupported_runtime');
+ for(const [value,key,mode,links]of [[deploy,'file',0o100600,1],[operation,'directory',0o40700,2]]){exactKeys(value,[key,'identity']);exactKeys(value.identity,['dev','ino','uid','mode','nlink']);need(Object.values(value.identity).every(Number.isSafeInteger)&&value.identity.dev>=0&&value.identity.ino>0&&value.identity.uid===0&&value.identity.mode===mode&&value.identity.nlink===links,'evidence_invalid');}
+ same(lockIdentity(fs.fstatSync(3)),deploy.identity);same(lockIdentity(ownedReleasePath(deploy.file,{privateMode:true})),deploy.identity);same(fs.readlinkSync('/proc/self/fd/3'),deploy.file);need(/lock:.*FLOCK\s+ADVISORY\s+WRITE/.test(fs.readFileSync('/proc/self/fdinfo/3','utf8')),'owned_resource_changed');
+ same(lockIdentity(ownedReleasePath(operation.directory,{directory:true,privateMode:true})),operation.identity);same(fs.readdirSync(operation.directory),[]);return true;
+}
 export function assertActiveBookingSupervisorLease(lease){
  exactKeys(lease,['schemaVersion','kind','candidate','compatibleRollback','generation','toolRevision','toolInventorySha256','directory','window','parent','deploy','operation','publicationAttemptSha256','routingPlanSha256','ingressPlanSha256','workerPreparationSha256','closedIncidentSha256','publicationAuthority']);
  need(lease.schemaVersion===2&&lease.kind==='booking-already-active-independent-supervisor'&&lease.candidate===P.candidate&&lease.compatibleRollback===P.compatibleRollback&&lease.generation===P.generation&&/^[a-f0-9]{40}$/.test(lease.toolRevision??'')&&lease.toolRevision!==P.toolRevision&&lease.publicationAuthority===false,'evidence_invalid');
@@ -26,8 +34,7 @@ function verify(value,{requireParentGone=false}={}){
  const {lease,directory}=value;assertActiveBookingSupervisorLease(lease);need(Date.now()>=Date.parse(lease.window.startedAt)&&Date.now()<=Date.parse(lease.window.deadlineAt)+60000,'evidence_stale');
  const currentSelf=captureProcessFact(process.pid);same(currentSelf,{...value.self,parentPid:currentSelf.parentPid});same(sha256(bookingHostRead(directory+'/supervisor-lease.json')),value.leaseSha256);
  for(const [file,identity]of value.sourceWitnesses)same(sourceIdentity(fs.lstatSync(file)),identity);
- same(lockIdentity(fs.fstatSync(3)),lease.deploy.identity);same(lockIdentity(ownedReleasePath(DEPLOY,{privateMode:true})),lease.deploy.identity);same(fs.readlinkSync('/proc/self/fd/3'),DEPLOY);need(/lock:.*FLOCK\s+ADVISORY\s+WRITE/.test(fs.readFileSync('/proc/self/fdinfo/3','utf8')),'owned_resource_changed');
- same(lockIdentity(ownedReleasePath(OPERATION,{directory:true,privateMode:true})),lease.operation.identity);same(fs.readdirSync(OPERATION),[]);
+ assertActualActiveSupervisorKernelIdentity({deploy:lease.deploy,operation:lease.operation});
  for(const [name,key]of [['publication-attempt.json','publicationAttemptSha256'],['routing-plan.json','routingPlanSha256'],['ingress-plan.json','ingressPlanSha256'],['worker-completed.json','workerPreparationSha256']])same(sha256(bookingHostRead(directory+'/'+name)),lease[key]);
  const attempt=read(directory+'/publication-attempt.json'),worker=read(directory+'/worker-completed.json');need(attempt.kind==='active-booking-publication-attempt'&&attempt.toolRevision===toolRevision&&attempt.inventorySha256===lease.toolInventorySha256&&attempt.closedIncidentSha256===lease.closedIncidentSha256&&worker.kind==='active-booking-gated-worker-source-replaced'&&worker.toolRevision===toolRevision&&worker.inventorySha256===lease.toolInventorySha256&&worker.closedIncidentSha256===lease.closedIncidentSha256&&worker.gateNeverOpened===true&&worker.webProcessesChanged===false&&worker.businessDataWrittenByTool===false&&worker.mailEnabled===false&&worker.publicationAuthority===false,'evidence_invalid');same(attempt.controller,lease.parent);same(attempt.window,lease.window);same(worker.window,lease.window);
  const state=parentState(lease.parent);need(state!=='reused'&&(!requireParentGone||state==='absent'),'owned_resource_changed');return state;
