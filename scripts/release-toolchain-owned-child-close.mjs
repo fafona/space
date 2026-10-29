@@ -22,6 +22,6 @@ export function assertOwnedRehearsalChildCloseProof(proof){
  need(proof?.kind==='owned-active-rehearsal-direct-children-closed'&&proof.publicationAuthority===false&&Array.isArray(proof.children)&&proof.children.length===roles.size);
  need(new Set(proof.children.map(value=>value.role)).size===roles.size&&new Set(proof.children.map(value=>value.pid)).size===roles.size);
  for(const value of proof.children)need(roles.has(value.role)&&Number.isSafeInteger(value.pid)&&value.pid>0&&value.closed===true&&value.spawnError===false&&
-  ((Number.isInteger(value.code)&&value.code>=0&&value.signal===null)||(value.code===null&&/^SIG[A-Z0-9]+$/.test(value.signal??''))));
+  ((value.code===0&&value.signal===null)||(value.code===null&&['SIGTERM','SIGKILL'].includes(value.signal))));
  const at=Date.parse(proof.at);need(Number.isFinite(at)&&new Date(at).toISOString()===proof.at);return true;
 }

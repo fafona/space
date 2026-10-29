@@ -30,7 +30,7 @@ import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
 import {bookingInstalledMetadataReadSql,bookingDefaultPrivilegesReadSql,isolatedBookingDefaultPrivilegesSql} from './release-toolchain-booking-compatibility.mjs';
 import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
 import {publishOnceVisible} from './release-toolchain-once-visible.mjs';
-import {watchOwnedRehearsalChildClose,waitOwnedRehearsalChildrenClosed,ownedRehearsalChildCloseSnapshot} from './release-toolchain-owned-child-close.mjs';
+import {watchOwnedRehearsalChildClose,waitOwnedRehearsalChildrenClosed,ownedRehearsalChildCloseSnapshot,assertOwnedRehearsalChildCloseProof} from './release-toolchain-owned-child-close.mjs';
 export {FULL_REHEARSAL_SOURCES};
 const FILE=fileURLToPath(import.meta.url),NGINX=fs.existsSync('/www/server/nginx/sbin/nginx')?'/www/server/nginx/sbin/nginx':'/usr/sbin/nginx';
 let isolation,diagnosticRoot,cancelled=false;
@@ -295,7 +295,7 @@ async function runFullToolchainRehearsalProfile(activeProfile){
    const finalLegacy=json(runtime+'/legacy.json');if(!children.some(f=>f.pid===finalLegacy.process.pid))children.push(finalLegacy.process);
    await stopNginx(nginx,runtime);
    for(const f of [...children].reverse())await stop(f);need(children.every(f=>!alive(f)),'process_leak');
-   if(activeProfile)write(runtime+'/direct-child-close.json',{kind:'owned-active-rehearsal-direct-children-closed',children:await reaped(),publicationAuthority:false,at:now()});
+   if(activeProfile){const proof={kind:'owned-active-rehearsal-direct-children-closed',children:await reaped(),publicationAuthority:false,at:now()};assertOwnedRehearsalChildCloseProof(proof);write(runtime+'/direct-child-close.json',proof);}
    need(spawnSync('flock',['--nonblock',runtime+'/deploy.lock','/usr/bin/true'],{timeout:2000}).status===0,'kernel_lock_not_released');
    equal(hostSnapshot(),formal,'production_changed');const receipt={name,completed:true,elapsedMs:Date.now()-started,inheritedKernelLock:true,realNginx:true,realPostgres:true,realProcesses:true,ownedFixturesOnly:true,
     actualDatabase:{name:database,...actual},rowsPreserved:true,optionsRepaired:name!=='controller-death-before-commit',gateClosed:true,target:expected,controllerExit:exit,watchdog:finished,allFixturesStopped:true,completedAt:now()};
@@ -310,7 +310,7 @@ async function runFullToolchainRehearsalProfile(activeProfile){
     legacy:async()=>{try{await stop(json(runtime+'/legacy.json').process);}catch(e){if(e.code!=='ENOENT')throw e;}},
     children:async()=>{const failures=[];for(const f of [...children].reverse())try{await stop(f);}catch(e){failures.push(e);}if(failures.length)throw new AggregateError(failures);},
    });
-   await reaped();
+   if(activeProfile)await reaped();
   }
  }}finally{try{if(isolation)stopOwnedIsolation(isolation);}finally{process.removeListener('SIGTERM',interrupt);process.removeListener('SIGINT',interrupt);}}
  equal(hostSnapshot(),formal,'production_changed');for(const [file,digest]of Object.entries(sourceHashes))need(hash(fs.readFileSync(new URL('./'+file,import.meta.url)))===digest,'source_changed');
