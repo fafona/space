@@ -40,11 +40,24 @@ async function qualify({lock,toolRevision,window},observe,closedProfile=false){
   stage='full-active-native';const result=await runFullActiveToolchainRehearsal();held();const native=verifyQualificationFiles(result.root,{toolRevision,inventorySha256:authority.tool.inventorySha256});need(native.report.observationProfile==='fixed-active-incident-connect-only','evidence_invalid');
   stage='real-active-interruption';const interruption=await rehearseFullActiveToolchainInterruption();held();need(interruption.report.observationProfile==='fixed-active-incident-connect-only','evidence_invalid');
   stage='already-active-routing-and-controller-death';const activeRouting=await acceptOwnedActiveRouting();held();const routing=verifyOwnedActiveRoutingAcceptance(activeRouting.root,{toolRevision,inventorySha256:authority.tool.inventorySha256});
-  const compatibility=observeBookingCompatibility(native);same(observeBookingReadyApplication(),authority.prepared.application);const after=await observe(window);if(closedProfile)assertClosedSourceObservationProgress(before,after);else assertActiveBookingObservedHostProgress(before,after);held();
+  stage='compatibility';const compatibility=observeBookingCompatibility(native);stage='application-readback';same(observeBookingReadyApplication(),authority.prepared.application);stage='after-observation';const after=await observe(window);stage='observation-continuity';if(closedProfile)assertClosedSourceObservationProgress(before,after);else assertActiveBookingObservedHostProgress(before,after);held();
+  stage='final-source-and-ci';
   await refreshReviewedBookingExecution(toolRevision);held();
   const proof={kind:'active-incident-formal-qualification-completed',toolRevision,inventorySha256:authority.tool.inventorySha256,oldOperationId:P.operationId,generation:P.generation,window,application:authority.prepared.application,sourceBindingSha256,pythonRuntimeSha256:pythonProof.sha256,nativeRoot:native.root,nativeSha256:native.sha256,interruptionRoot:interruption.root,interruptionSha256:interruption.sha256,activeRoutingNativeRoot:routing.root,activeRoutingNativeSha256:routing.sha256,compatibility,beforeObservationSha256:sha256(canonicalJson(before)),afterObservationSha256:sha256(canonicalJson(after)),productionMutated:false,mailEnabled:false,publicationAuthority:false,completedAt:new Date().toISOString()};
   seal(attempt+'/after-observation.json',after);seal(attempt+'/verified.json',proof);held();return{kind:proof.kind,attempt,sha256:sha256(bookingHostRead(attempt+'/verified.json')),nativeRoot:native.root,productionMutated:false,publicationAuthority:false};
- }catch(error){try{held();seal(attempt+'/failed.json',{kind:'active-incident-qualification-unconfirmed',stage,diagnostic:stageFailureDiagnostic(error,{stage:'rehearsal',toolRevision,knownFiles:['release-toolchain-active-generation-qualification.mjs','release-toolchain-full-rehearsal.mjs','release-toolchain-full-interrupt.mjs']}),publicationAuthority:false,at:new Date().toISOString()});}catch{}throw error;}
+ }catch(error){try{held();seal(attempt+'/failed.json',{kind:'active-incident-qualification-unconfirmed',stage,diagnostic:stageFailureDiagnostic(error,{stage:'rehearsal',toolRevision,knownFiles:[
+  'release-toolchain-active-generation-qualification.mjs',
+  'release-toolchain-full-rehearsal.mjs',
+  'release-toolchain-full-interrupt.mjs',
+  'production-maintenance-pm2-adapter.mjs',
+  'release-toolchain-pm2-readonly-diagnostic.mjs',
+  'release-toolchain-post-save-evidence.mjs',
+  'release-toolchain-post-save-closed.mjs',
+  'release-toolchain-pre-intent-profile.mjs',
+  'release-toolchain-pre-intent-evidence.mjs',
+  'release-toolchain-preconnect-closure.mjs',
+  'release-toolchain-pre-control-closure.mjs'
+ ]}),publicationAuthority:false,at:new Date().toISOString()});}catch{}throw error;}
 }
 export function verifyLatestActiveBookingQualification({lock,toolRevision}){
  assertOnlineRetentionHeldLocks(lock);invocation(toolRevision);const authority=reviewedBookingExecution(toolRevision);need(authority,'source_changed');const directory=ROOT+'/'+toolRevision;ownedReleasePath(directory,{directory:true,privateMode:true});

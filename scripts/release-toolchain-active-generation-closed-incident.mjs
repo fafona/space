@@ -11,7 +11,8 @@ import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.
 import {collectActiveBookingLegacyHost,collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
 import {assertCompletePm2DumpSet} from './release-toolchain-pm2-transition.mjs';
 import {captureProcessFact} from './check-production-runtime-supervision.mjs';
-import {verifyPm2Dump,pm2RegistryDigest,capturePm2DumpTarget} from './production-maintenance-pm2-adapter.mjs';
+import {pm2RegistryDigest} from './production-maintenance-pm2-adapter.mjs';
+import {verifyReleasePm2Dump as verifyPm2Dump,captureReleasePm2DumpTarget as capturePm2DumpTarget} from './release-toolchain-pm2-readonly-diagnostic.mjs';
 import {verifyQualificationFiles,observeBookingCompatibility} from './release-toolchain-booking-admission.mjs';
 import {verifyFullInterruptionReport} from './release-toolchain-full-interrupt.mjs';
 import {validateAttendanceBackupEvidence} from './attendance-production-database-migrations.mjs';
