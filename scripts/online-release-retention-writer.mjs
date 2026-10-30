@@ -541,6 +541,57 @@ export function originRecoveryArchiveWitness(token){
  const a=held.activeArchive;if(a.vault!==marker.root+'/'+held.activeWindow.id||a.original.ino!==marker.originalInode)fail('active_archive_not_authorized');equal(dirIdentity(privateDirectory(a.destination)),a.original,'active_archive_original_changed');return Object.freeze(structuredClone({...a,window:held.activeWindow,released:held.activeScopeReleased===true}));
 }
 
+// Independent recovery of ONE post-metadata interruption. It retains the old
+// OP inode even on success. No archive/release/publication capability is issued.
+export async function withInterruptedPublicationRecoveryLocks({toolRevision},work){
+ if(process.platform!=='linux'||process.getuid?.()!==0||typeof work!=='function')fail('interrupted_recovery_scope');
+ const {reviewedBookingExecution}=await import('./release-toolchain-authority.mjs'),{interruptedRecoveryBindingSha256}=await import('./release-toolchain-interrupted-recovery-contract.mjs'),{observeInterruptedPhysical}=await import('./release-toolchain-interrupted-recovery-evidence.mjs'),authority=reviewedBookingExecution(toolRevision);
+ if(authority?.prepared.interruptedRecovery?.bindingSha256!==interruptedRecoveryBindingSha256())fail('active_incident_review_required');
+ return withExistingOperationPreparation({deployLock:DEPLOY_LOCK,operation:OPERATION_LOCK,observe:()=>observeInterruptedPhysical()},async(token,context)=>{
+  const held=heldLocks.get(token);held.interruptedRecovery=Object.freeze({toolRevision,bindingSha256:interruptedRecoveryBindingSha256()});assertInterruptedPublicationRecoveryHeld(token,context.window);const result=await work(token,context);if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return result;
+ });
+}
+export function assertInterruptedPublicationRecoveryHeld(token,window){assertHeldLocks(token);const held=heldLocks.get(token);if(!held.interruptedRecovery||!isDeepStrictEqual(held.activeWindow,window))fail('interrupted_recovery_scope_required');return held.interruptedRecovery;}
+
+// Owned native acceptance of the SAME flock/OP/CAS/sequencer primitives. This
+// factory allocates every path itself; it accepts no host path, FD or command.
+// On the formal host its enclosing qualifier independently compares runtime,
+// data and metadata before/after. Fixtures and unknowns are never deleted.
+export async function acceptInterruptedPublicationRecoveryKernel(){
+ if(process.platform!=='linux'||process.getuid?.()!==0)fail('native_linux_root_required');
+ const {executeInterruptedRecovery}=await import('./release-toolchain-interrupted-recovery-contract.mjs'),{bookingHostReplace,bookingHostWriteOnce,bookingHostRead}=await import('./booking-handoff-host-io.mjs');
+ const root=fs.mkdtempSync('/var/lib/faolla-interrupted-recovery-native-');fs.chmodSync(root,0o700);const rootIdentity=dirIdentity(privateDirectory(root));
+ const cases=[];
+ for(const outcome of ['normal','wrong-metadata','unknown-after-route','unknown-after-metadata','operation-drift']){
+  equal(dirIdentity(privateDirectory(root)),rootIdentity,'ci_fixture_redirected');const directory=root+'/'+outcome;fs.mkdirSync(directory,{mode:0o700});const deploy=directory+'/deploy.lock',op=directory+'/operation.lock';privateWrite(deploy,'native-owned-deploy\n');fs.mkdirSync(op,{mode:0o700});const original=dirIdentity(fs.lstatSync(op));
+  for(const file of ['route-a.conf','route-b.conf','active.json'])privateWrite(directory+'/'+file,'native-primary\n');
+  privateWrite(directory+'/partial-journal.json','native-pending-never-completed\n');const pending=identity(fs.lstatSync(directory+'/partial-journal.json'));let cause,done=false;
+  try{await withExistingOperationPreparation({deployLock:deploy,operation:op,observe:()=>({nativeOnly:true})},async token=>{
+   assertExistingOperationScopeHeld(token);
+   const busy=spawnSync('flock',['--nonblock',deploy,'true'],{env:runtimeEnvironment(),encoding:'utf8',timeout:10000});if(busy.status!==1||busy.error||busy.signal)fail('ci_real_lock_not_held');
+   let leaked=false;try{assertHeldLocks(token);leaked=true;}catch{}if(leaked)fail('ci_token_production_leak');
+   const checked=()=>{assertExistingOperationScopeHeld(token);equal(dirIdentity(fs.lstatSync(op)),original,'ci_original_operation_changed');};
+   await executeInterruptedRecovery({assertHeld:checked,
+    inspect:()=>bookingHostWriteOnce(directory+'/intent.json','native-exclusive-intent\n'),
+    preserve:()=>{if(outcome==='operation-drift'){fs.renameSync(op,directory+'/displaced-operation.lock');fs.mkdirSync(op,{mode:0o700});}},
+    routeRollback:()=>{for(const file of ['route-a.conf','route-b.conf'])bookingHostReplace(directory+'/'+file,'native-primary\n','native-rollback\n','native-recovery');if(outcome==='unknown-after-route')throw Error('native_recovery_unknown_after_route');},
+    publicProof:()=>{},metadata:()=>{bookingHostReplace(directory+'/active.json',outcome==='wrong-metadata'?'foreign\n':'native-primary\n','native-rollback\n','native-recovery');if(outcome==='unknown-after-metadata')throw Error('native_recovery_unknown_after_metadata');},
+    verify:()=>{for(const file of ['route-a.conf','route-b.conf','active.json'])equal(bookingHostRead(directory+'/'+file),'native-rollback\n','ci_readback_invalid');},
+    complete:()=>{bookingHostWriteOnce(directory+'/completed.json','native-recovery-only-completed\n');done=true;},
+    failure:(error,stage)=>bookingHostWriteOnce(directory+'/unconfirmed.json',retentionCanonicalText({stage,errorSha256:digest(String(error.message)),automaticRetryAllowed:false,publicationAuthority:false}))
+   });
+  });}catch(error){cause=error;}
+  if(outcome==='normal'){if(cause||!done||!exists(directory+'/completed.json'))fail('ci_recovery_unconfirmed');}
+  else if(!cause||done||exists(directory+'/completed.json')||!exists(directory+'/unconfirmed.json'))fail('ci_unknown_not_retained');
+  equal(identity(fs.lstatSync(directory+'/partial-journal.json')),pending,'ci_partial_history_changed');equal(bookingHostRead(directory+'/partial-journal.json'),'native-pending-never-completed\n','ci_partial_history_changed');
+  equal(dirIdentity(fs.lstatSync(outcome==='operation-drift'?directory+'/displaced-operation.lock':op)),original,'ci_original_operation_lost');
+  // An exclusive intent prevents a second execution from replaying writes.
+  let replay=false;try{bookingHostWriteOnce(directory+'/intent.json','replay\n');}catch{replay=true;}if(!replay)fail('ci_replay_accepted');
+  cases.push({outcome,completed:done,originalOperationPreserved:true,partialJournalPreserved:true,unknownEvidenceRetained:outcome!=='normal',productionAuthority:false});
+ }
+ const proof={kind:'interrupted-recovery-owned-kernel-cas-accepted',cases,actualFlock:true,actualCas:true,productionTokenRejected:true,formalHostTouched:false,allFixturesRetained:true,publicationAuthority:false};privateWrite(root+'/verified.json',retentionCanonicalText(proof));return{root,sha256:digest(readOwned(root+'/verified.json')),proof};
+}
+
 // Closed disposable CI entry: same actual FD/flock/inode implementation, but a
 // separate owned resource identity. Its tokens MUST fail production admission.
 export async function acceptActiveIncidentPreparationLocksInCi() {
