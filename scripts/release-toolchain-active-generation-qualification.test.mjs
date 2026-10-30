@@ -19,3 +19,13 @@ test('choosing the active host observation cannot shadow the actual database sna
  const text=readFileSync(new URL('./release-toolchain-full-rehearsal.mjs',import.meta.url),'utf8'),body=text.slice(text.indexOf('async function runFullToolchainRehearsalProfile'),text.indexOf('export const runFullToolchainRehearsal='));
  assert.ok(body.includes('const hostSnapshot=activeProfile?captureActiveToolchainProductionSnapshot:production'));assert.ok(body.includes('const actual=snapshot(database)'));assert.ok(body.includes('equal(hostSnapshot(),formal'));assert.doesNotMatch(body,/\b(?:const|let|var)\s+snapshot\b/);
 });
+
+test('qualification advances its refusal stage after routing without omitting any final check',()=>{
+ const text=readFileSync(new URL('./release-toolchain-active-generation-qualification.mjs',import.meta.url),'utf8');
+ let prior=text.indexOf("stage='already-active-routing-and-controller-death'");
+ for(const stage of ['compatibility','application-readback','after-observation','observation-continuity','final-source-and-ci']){
+  const at=text.indexOf("stage='"+stage+"'",prior+1);assert.ok(at>prior,stage);prior=at;
+ }
+ assert.ok(text.indexOf('await refreshReviewedBookingExecution(toolRevision);held();',prior)>prior);
+ assert.ok(text.includes("'production-maintenance-pm2-adapter.mjs'"));
+});
