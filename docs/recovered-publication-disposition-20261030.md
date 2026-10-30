@@ -65,3 +65,21 @@ reports are preserved for independent artifact inspection.
 This document does not certify deployment. Completion requires the actual
 canonical path, final certificate, both public domains and a naturally scheduled
 worker cycle to be independently verified; mail remains off.
+
+## CLI module boundary
+
+The first standalone qualification with tool `646cefbc` exited with Node code
+13 before writing its initial observation. The observer dynamically imported
+the same CLI whose top-level await was waiting for that observation: a real ESM
+cycle, not a database, routing or process-control failure. The empty qualification
+attempt and its source/install records remain intact; it is not retried or
+declared qualified. Independent production observation confirmed the original
+25-process cohort, dump, database, old route and interrupted evidence unchanged.
+
+The unchanged two-path existence predicate now lives in a read-only leaf module.
+The CLI re-exports the same function for existing callers; observation imports
+the leaf, never an executing CLI. A real-child regression reproduces the old
+exit 13 and checks that the actual observation import completes for absent,
+recovered and closed fixture states. The new reviewed revision gets its own
+qualification namespace. No old attempt, guard, deadline or production record
+is rewritten to continue.
