@@ -4,7 +4,7 @@ import * as fs from 'node:fs';import path from 'node:path';import net from 'node
 import {spawn,spawnSync} from 'node:child_process';import {createServer,request as httpRequest} from 'node:http';
 import {request as httpsRequest} from 'node:https';import {connect as h2Connect,constants as h2} from 'node:http2';
 import {randomUUID} from 'node:crypto';import {fileURLToPath,pathToFileURL} from 'node:url';
-import {readBoundedOriginGateResponse,activeBookingOriginProbeOptions} from './release-toolchain-origin-gate-probe.mjs';
+import {readBoundedOriginGateResponse,activeBookingOriginProbeOptions,collectFixedOriginProbeResponses} from './release-toolchain-origin-gate-probe.mjs';
 import {proveActiveBookingGatedWorkerCohort,activeBookingIngressSnippet} from './release-toolchain-active-generation-ingress.mjs';
 import {toolchainNginxProfile} from './release-toolchain-profiles.mjs';
 import {ownedReleasePath} from './release-toolchain-source.mjs';
@@ -49,14 +49,15 @@ export async function acceptOwnedOriginGateTransport(){
   // owned multiplexing proxy. Its independent elapsed clock reaches the
   // existing bound quickly; the formal verifier's limits are not altered.
   let clock=Date.now(),rejected=false;try{await proveActiveBookingGatedWorkerCohort({verify,expectedWorkerCount:8,workers:()=>workers(master),nowMs:()=>clock,probe:()=>readBoundedOriginGateResponse(httpRequest,{host:'127.0.0.1',port:proxyPort,path:'/api/bookings',agent:false}),wait:async()=>{clock+=5000;}},window);}catch(e){need(e.message==='release_toolchain_gate_not_confirmed','operation_unconfirmed');rejected=true;}need(rejected,'gate_not_confirmed');
-  seal(root,'pooled-observations.json',{observations:pooled,distinctOriginWorkers:1,existingCohortVerifierRejected:true});stage='fresh-https-origin';let index=0;
-  const proof=await proveActiveBookingGatedWorkerCohort({verify,expectedWorkerCount:8,workers:()=>workers(master),nowMs:()=>Date.now(),probe:async()=>{const response=await readBoundedOriginGateResponse(httpsRequest,{...options,path:'/api/bookings?fresh='+index++});freshResponses.push({index:index-1,status:response.status,operation:response.value?.operation??null,workerPid:response.value?.workerPid??null,error:response.value?.error??null});return response;},wait:sleep},window);need(proof.workers.length===8&&cohort.every(w=>proof.workers.some(p=>p.pid===w.pid&&p.startTicks===w.startTicks)),'gate_not_confirmed');seal(root,'fresh-cohort.json',proof);success=true;
+  seal(root,'pooled-observations.json',{observations:pooled,distinctOriginWorkers:1,existingCohortVerifierRejected:true});stage='fresh-https-origin';let index=0,batch;
+  const proof=await proveActiveBookingGatedWorkerCohort({verify,expectedWorkerCount:8,workers:()=>workers(master),nowMs:()=>Date.now(),probe:async()=>{if(!batch){need(canonicalJson(workers(master))===canonicalJson(cohort),'gate_not_confirmed');batch=await collectFixedOriginProbeResponses((probeIndex,signal)=>readBoundedOriginGateResponse(httpsRequest,{...options,path:'/api/bookings?fresh='+probeIndex,signal}),cohort,window,(probeIndex,response)=>freshResponses.push({index:probeIndex,status:response?.status??null,operation:response?.value?.operation??null,workerPid:response?.value?.workerPid??null,error:response?.value?.error??null}));}need(canonicalJson(workers(master))===canonicalJson(cohort),'gate_not_confirmed');return batch.responses[index++];},wait:sleep},window);need(proof.workers.length===8&&cohort.every(w=>proof.workers.some(p=>p.pid===w.pid&&p.startTicks===w.startTicks)),'gate_not_confirmed');seal(root,'fresh-cohort.json',proof);success=true;
  }catch(error){seal(root,'failed.json',{kind:'owned-origin-gate-transport-failed',toolRevision:revision,stage,errorSha256:sha256(String(error?.message)),publicationAuthority:false});throw error;}
  finally{
-  seal(root,'fresh-observations.json',{responses:freshResponses,distinctWorkers:new Set(freshResponses.map(v=>v.workerPid)).size,allResponsesRetained:true});
   session?.destroy();if(proxy){proxy.closeAllConnections();await new Promise(resolve=>proxy.close(resolve));}
   if(master&&live(master)){need(fs.realpathSync('/proc/'+master.pid+'/exe')===fs.realpathSync(NGINX)&&fs.realpathSync('/proc/'+master.pid+'/cwd')===root,'owned_resource_changed');process.kill(master.pid,'SIGTERM');await until(()=>!live(master));}
   for(const name of fs.readdirSync('/proc').filter(v=>/^[1-9][0-9]*$/.test(v)))try{need(fs.realpathSync('/proc/'+name+'/cwd')!==root,'cleanup_unconfirmed');}catch(e){if(!['ENOENT','ESRCH'].includes(e.code))throw e;}
+  // Diagnostic IO cannot prevent termination of an already owned fixture.
+  seal(root,'fresh-observations.json',{responses:freshResponses.sort((a,b)=>a.index-b.index),distinctWorkers:new Set(freshResponses.filter(v=>v.workerPid!==null).map(v=>v.workerPid)).size,allResponsesRetained:true});
   seal(root,'cleanup.json',{allOwnedProcessesStopped:true,formalHostTouched:false,publicationAuthority:false});
   process.off('SIGTERM',cancel);process.off('SIGINT',cancel);
  }
