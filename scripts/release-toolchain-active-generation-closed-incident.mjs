@@ -101,6 +101,8 @@ async function inspect(toolRevision,heldLock,preparedWorker){
  return{kind:'closed-active-incident-current-observation',oldOperationId:P.operationId,generation:P.generation,toolRevision,inventorySha256:source.inventorySha256,directory,closedSha256:sha256(canonicalJson(closed)+'\n'),closureSha256:closed.closureSha256,closedAt:closed.completedAt,qualificationSha256:context.qualificationSha256,qualification,compatibility:context.compatibility,database,actualRoute:P.compatibleRollback,publicProof,originalOperationInodeRetained:true,publicationAuthority:false,observedAt:new Date().toISOString()};
 }
 async function inspectSelectedProfile(toolRevision,lock,worker){
+ const{hasRecoveredPublicationDisposition}=await import('./release-toolchain-recovered-publication-entry.mjs');
+ if(hasRecoveredPublicationDisposition()){const{inspectRecoveredPublicationContinuation}=await import('./release-toolchain-recovered-publication-host.mjs');return inspectRecoveredPublicationContinuation(toolRevision,lock,worker);}
  const{ORIGIN_RECOVERY}=await import('./release-toolchain-origin-recovery-contract.mjs');
  if(toolRevision!==ORIGIN_RECOVERY.priorTool&&(fs.existsSync(ORIGIN_RECOVERY.publication)||fs.existsSync(ORIGIN_RECOVERY.root))){const{inspectOriginRecoveryContinuation}=await import('./release-toolchain-origin-recovery-closure.mjs');return inspectOriginRecoveryContinuation(toolRevision,lock,worker);}
  const{PROC_WITNESS_PRIOR}=await import('./release-toolchain-proc-witness-contract.mjs');
