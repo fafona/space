@@ -101,6 +101,7 @@ async function inspect(toolRevision,heldLock,preparedWorker){
  return{kind:'closed-active-incident-current-observation',oldOperationId:P.operationId,generation:P.generation,toolRevision,inventorySha256:source.inventorySha256,directory,closedSha256:sha256(canonicalJson(closed)+'\n'),closureSha256:closed.closureSha256,closedAt:closed.completedAt,qualificationSha256:context.qualificationSha256,qualification,compatibility:context.compatibility,database,actualRoute:P.compatibleRollback,publicProof,originalOperationInodeRetained:true,publicationAuthority:false,observedAt:new Date().toISOString()};
 }
 async function inspectSelectedProfile(toolRevision,lock,worker){
+ const{hasSettledPreIngressDisposition}=await import('./release-toolchain-settled-pre-ingress-selector.mjs');if(hasSettledPreIngressDisposition()){const{inspectSettledPreIngressContinuation}=await import('./release-toolchain-settled-pre-ingress-host.mjs');return inspectSettledPreIngressContinuation(toolRevision,lock,worker);}
  const{hasRecoveredPublicationDisposition}=await import('./release-toolchain-recovered-publication-selector.mjs');
  if(hasRecoveredPublicationDisposition()){const{inspectRecoveredPublicationContinuation}=await import('./release-toolchain-recovered-publication-host.mjs');return inspectRecoveredPublicationContinuation(toolRevision,lock,worker);}
  const{ORIGIN_RECOVERY}=await import('./release-toolchain-origin-recovery-contract.mjs');
