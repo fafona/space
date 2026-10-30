@@ -9,7 +9,7 @@ export const TOOLCHAIN_CODES=Object.freeze(['invalid_contract','invalid_fingerpr
  'invalid_bundle','bundle_missing_file','bundle_extra_file','bundle_bytes_changed','bundle_resource_missing','bundle_import_unsupported',
  'source_changed','scope_changed','database_identity_mismatch','backup_source_mismatch','backup_database_mismatch','evidence_stale','evidence_invalid',
  'build_memory_insufficient','isolation_memory_insufficient','disk_insufficient','build_binding_mismatch','unsupported_runtime','journal_invalid','journal_busy','attempt_unknown',
- 'attempt_replay_forbidden','observation_mismatch','operation_unconfirmed','ingress_not_drained','ingress_clock_invalid','gate_not_confirmed','owned_resource_changed','cleanup_unconfirmed']);
+ 'attempt_replay_forbidden','observation_mismatch','network_policy_changed','operation_unconfirmed','ingress_not_drained','ingress_clock_invalid','gate_not_confirmed','owned_resource_changed','cleanup_unconfirmed']);
 export class ToolchainError extends Error{
  constructor(code){if(!TOOLCHAIN_CODES.includes(code))code='operation_unconfirmed';super('release_toolchain_'+code);this.name='ToolchainError';this.code=code;}
 }

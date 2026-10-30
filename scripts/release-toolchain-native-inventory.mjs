@@ -2,6 +2,8 @@ import {BOOKING_HANDOFF_NATIVE_SOURCES} from './booking-handoff-policy.mjs';
 // An explicit runtime-resource closure, supplemented by the whole committed
 // source inventory in the native report. No caller can shrink the closure.
 export const FULL_REHEARSAL_SOURCES=Object.freeze([...BOOKING_HANDOFF_NATIVE_SOURCES,
+ 'release-toolchain-restored-network-policy.mjs','release-toolchain-restored-network-admission.mjs','production-maintenance-nft.mjs',
+ 'release-toolchain-settled-pre-ingress-contract.mjs','release-toolchain-settled-pre-ingress-evidence.mjs','release-toolchain-settled-pre-ingress-host.mjs','release-toolchain-settled-pre-ingress-entry.mjs','release-toolchain-settled-pre-ingress-selector.mjs','release-toolchain-settled-pre-ingress-install.mjs','release-toolchain-settled-pre-ingress-native.mjs','release-toolchain-settled-pre-ingress-pm2-worker.py','release-toolchain-settled-pre-ingress-pm2-worker.test.py',
  'release-toolchain-process-reparent-capture.mjs','release-toolchain-file-continuity.mjs','release-toolchain-application-attestation.mjs',
  'release-toolchain-recovered-publication-contract.mjs','release-toolchain-recovered-publication-evidence.mjs','release-toolchain-recovered-publication-host.mjs','release-toolchain-recovered-publication-entry.mjs','release-toolchain-recovered-publication-selector.mjs','release-toolchain-recovered-publication-pm2-worker.py','release-toolchain-recovered-publication-pm2-worker.test.py','release-toolchain-recovered-publication-install.mjs','release-toolchain-recovered-publication-native.mjs',
  'release-toolchain-full-rehearsal.mjs','release-toolchain-isolation.mjs','release-toolchain-authority.mjs',

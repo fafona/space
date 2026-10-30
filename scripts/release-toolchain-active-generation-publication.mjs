@@ -8,7 +8,7 @@ import {reviewedBookingExecution,refreshReviewedBookingExecution} from './releas
 import {observeBookingReadyApplication} from './booking-ready-backup.mjs';import {observeBookingCompatibility} from './release-toolchain-booking-admission.mjs';import {ownedReleasePath} from './release-toolchain-source.mjs';
 import {openActiveBookingPublicationScope,inspectActiveBookingPublicationScope,prepareActiveBookingPublicationWorker,enableActiveBookingPublicationWorker,activeBookingPublicationGateProfile,preserveOwnActiveBookingPreIntentRefusal} from './release-toolchain-active-generation-publication-scope.mjs';
 import {armActiveBookingPublicationSupervisor,finishActiveBookingPublicationSupervisor} from './release-toolchain-active-generation-supervisor.mjs';
-import {installAndDrainActiveBookingPublicationIngress,closeActiveBookingPublicationIngress} from './release-toolchain-active-generation-ingress-host.mjs';import {applyActiveBookingPublicationPrimaryRouting} from './release-toolchain-active-generation-routing-host.mjs';
+import {installAndDrainActiveBookingPublicationIngress,closeActiveBookingPublicationIngress,observeActiveBookingPublicationNetworkPreflight} from './release-toolchain-active-generation-ingress-host.mjs';import {applyActiveBookingPublicationPrimaryRouting} from './release-toolchain-active-generation-routing-host.mjs';
 import {observeActiveBookingPublicationBeforeMetadata,observeActiveBookingPublicationAfterMetadata} from './release-toolchain-active-generation-publication-observation.mjs';
 import {persistActiveBookingPublicationCurrentProcesses,verifyActiveBookingPublicationPersistenceAfterMetadata} from './release-toolchain-active-generation-persistence.mjs';import {publishActiveBookingPublicationMetadata,verifyActiveBookingPublicationMetadata} from './release-toolchain-active-generation-publication-metadata-host.mjs';
 import {commitActiveBookingPublicationCertificate,verifyActiveBookingPublicationCertificate} from './release-toolchain-active-generation-certificate.mjs';import {collectActiveBookingLegacyHost} from './release-toolchain-pm2-observation.mjs';
@@ -16,13 +16,14 @@ import {readOnlineRetentionHistory} from './online-release-retention.mjs';import
 import {bookingHostRead,bookingHostWriteOnce,bookingHostSync,bookingHostSql} from './booking-handoff-host-io.mjs';import {bookingHandoffActivationSnapshotSql} from './booking-handoff-activation.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';import {stageFailureDiagnostic} from './release-toolchain-diagnostics.mjs';
 import {withRetainedApplicationAttestation} from './release-toolchain-application-attestation.mjs';
+import {withPublicationNetworkAdmission} from './release-toolchain-restored-network-admission.mjs';
 const RELEASE='/var/lib/faolla-online-release',same=(a,b)=>need(isDeepStrictEqual(a,b),'observation_mismatch'),read=file=>JSON.parse(bookingHostRead(file)),seal=(file,value)=>bookingHostWriteOnce(file,canonicalJson(value)+'\n');
 export async function publishClosedActiveBookingUnderHeldLocks({lock,toolRevision}){
  assertOnlineRetentionHeldLocks(lock);need(reviewedBookingExecution(toolRevision)?.prepared.activeIncidentClosed?.toolRevision===toolRevision,'source_changed');
  // Full retained-source/dependency/build verification happens BEFORE the
  // mutable window. All original observations remain, but their immutable
  // inputs use the same byte-bound, continuously checked in-process witness.
- return withRetainedApplicationAttestation(()=>publishAttestedClosedActiveBooking({lock,toolRevision}));
+ return withPublicationNetworkAdmission(toolRevision,()=>withRetainedApplicationAttestation(()=>publishAttestedClosedActiveBooking({lock,toolRevision})));
 }
 async function publishAttestedClosedActiveBooking({lock,toolRevision}){
  assertOnlineRetentionHeldLocks(lock);const authority=reviewedBookingExecution(toolRevision);need(authority?.prepared.activeIncidentClosed?.toolRevision===toolRevision,'source_changed');let window=null,scope=null,backupDirectory=null,publicationDirectory=null,handle=null,mutationPossible=false,stage='inspect',lastAudit=null,metadata=null,certificate=null;const diagnosticDirectories=new Map(),directoryIdentity=directory=>Object.fromEntries(['dev','ino','uid','mode'].map(key=>[key,fs.lstatSync(directory)[key]]));
@@ -30,7 +31,7 @@ async function publishAttestedClosedActiveBooking({lock,toolRevision}){
  const options=()=>({scope,lock,toolRevision,window}),held=()=>{assertOnlineRetentionHeldLocks(lock);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');if(window)assertActiveBookingWindow(window);if(scope)inspectActiveBookingPublicationScope(scope);};
  try{return await executeActiveBookingPublication({assertHeld:held,progress:name=>{stage=name;},stageTiming:timing,
   inspect:()=>inspectClosedActiveBookingIncidentUnderHeldLocks({lock,toolRevision}),
-  sourceAndCi:async()=>{await refreshReviewedBookingExecution(toolRevision);held();same(observeBookingReadyApplication(),authority.prepared.application);},
+  sourceAndCi:async()=>{await refreshReviewedBookingExecution(toolRevision);held();same(observeBookingReadyApplication(),authority.prepared.application);observeActiveBookingPublicationNetworkPreflight();},
   freshBackup:async()=>{const parent='/var/lib/faolla-booking-handoff/'+P.candidate+'/toolchain-admission';ownedReleasePath(parent,{directory:true,privateMode:true});backupDirectory=parent+'/'+Date.now()+'-'+randomUUID();fs.mkdirSync(backupDirectory,{mode:0o700});bookingHostSync(parent);diagnosticDirectories.set(backupDirectory,directoryIdentity(backupDirectory));seal(backupDirectory+'/active-publication-backup-attempt.json',{kind:'active-booking-publication-backup-attempt',toolRevision,closedIncidentSha256:authority.prepared.activeIncidentClosed.closedSha256,at:new Date().toISOString(),mailEnabled:false,publicationAuthority:false});await createReviewedBookingBackup({lock,toolRevision,directory:backupDirectory});},
   freshCompatibility:()=>{const qualification=verifyLatestActiveBookingQualification({lock,toolRevision});same(observeBookingCompatibility(qualification.native),qualification.proof.compatibility);},
   freshRollbackReadiness:async()=>{await refreshReviewedBookingExecution(toolRevision);scope=await openActiveBookingPublicationScope({lock,toolRevision,backupDirectory});const admitted=inspectActiveBookingPublicationScope(scope);window=admitted.window;publicationDirectory=admitted.directory;diagnosticDirectories.set(publicationDirectory,directoryIdentity(publicationDirectory));},

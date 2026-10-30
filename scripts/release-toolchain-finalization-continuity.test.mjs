@@ -92,7 +92,9 @@ test('only explicitly excluded runtime cache contents may change', () => {
     const witness = captureFileContinuity({trees: [{root: f.tree, exclude: ['cache']}]});
     fs.writeFileSync(path.join(f.tree, 'cache', 'a'), 'new');
     assert.equal(witness.assertUnchanged(), true);
-    fs.writeFileSync(f.file, 'bbb'); assert.throws(() => witness.assertUnchanged());
+    // This case tests exclusion boundaries, not filesystem clock resolution.
+    // Same-size/mtime-restored rewrites retain their separate test above.
+    fs.writeFileSync(f.file, 'changed-outside-excluded-cache'); assert.throws(() => witness.assertUnchanged());
   } finally { fs.rmSync(f.root, {recursive: true}); }
 });
 test('symlinks cannot escape an attested dependency root or be retargeted', {skip: process.platform === 'win32'}, () => {
@@ -111,7 +113,9 @@ test('originally allowed dependency hardlinks stay pinned, including writes thro
   try {
     const other = path.join(f.root, 'other-link'); fs.linkSync(f.file, other);
     const witness = f.pin(); assert.equal(witness.assertUnchanged(), true);
-    fs.writeFileSync(other, 'bbb'); assert.throws(() => witness.assertUnchanged());
+    // Exercise the hardlink write path with a deterministic metadata delta.
+    // Same-size rewrites remain independently tested above.
+    fs.writeFileSync(other, 'changed-through-other-hardlink'); assert.throws(() => witness.assertUnchanged());
   } finally { fs.rmSync(f.root, {recursive: true}); }
 });
 test('tracked files retain single-link policy and ancestors cannot be redirected', {skip: process.platform === 'win32'}, () => {
