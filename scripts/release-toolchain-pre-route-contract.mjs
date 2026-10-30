@@ -4,6 +4,7 @@ import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain
 import {ACTIVE_BOOKING_INCIDENT as P,assertActiveBookingDatabaseProgress} from './release-toolchain-active-generation-contract.mjs';
 import preIntentPins from './release-toolchain-pre-intent-pins.mjs';
 import {assertProcWitnessHistoricalBinding} from './release-toolchain-proc-witness-contract.mjs';
+import {assertOriginRecoveryHistoricalBinding} from './release-toolchain-origin-recovery-contract.mjs';
 export const PRE_ROUTE=Object.freeze({toolRevision:'dc80eacba6b3c6a78b271f88786372b026efd7dc',inventorySha256:'c46b751a2ca5af917a7e36ceb6bc595caffb2d65c0e6b761c7acdf4cb5afcbf4',windowId:'75b442b3-b569-43bf-a219-70e75fc650bd',closedDirectory:'/var/lib/faolla-booking-active-closures/b49808d6-1950-4cb4-b029-97086873d7a7/28c52817-ff38-49bd-94b7-ccd570c4d71b',closedSha256:'223c7799299cd1086e704eeae5871274fa05cb32c9ec7ce94e1b0e36a08c823a',qualificationSha256:'9f9609daabcf2f73f0943d55623a099826bdc88d9c3fb694dbb2d40239dba925',archive:'/var/lib/faolla-booking-pre-route-continuations/75b442b3-b569-43bf-a219-70e75fc650bd'});
 export function isPinnedPriorClosedReceipt(text){let v;try{v=JSON.parse(text);}catch{return false;}return text===canonicalJson(v)+'\n'&&sha256(text)===PRE_ROUTE.closedSha256&&v.toolRevision===PRE_ROUTE.toolRevision;}
 export function assertPreRouteRefusal({attempt,failure,names,controllerGone}){
@@ -18,6 +19,7 @@ export function assertClosedSourceObservationProgress(before,after){
  need(isDeepStrictEqual(strip(before),strip(after))&&Date.parse(after.observedAt)>=Date.parse(before.observedAt),'observation_mismatch');return true;
 }
 export function assertQualificationForClosedSource(qualification,closed){
+ if(closed.originRecoveryHistoricalBinding)assertOriginRecoveryHistoricalBinding(closed.originRecoveryHistoricalBinding);
  if(closed.procWitnessHistoricalBinding)assertProcWitnessHistoricalBinding(closed.procWitnessHistoricalBinding,closed.toolRevision);
  if(closed.preIntentHistoricalBinding){
   const h=closed.preIntentHistoricalBinding;
