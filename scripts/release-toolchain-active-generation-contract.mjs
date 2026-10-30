@@ -76,7 +76,7 @@ export const ACTIVE_RECONCILIATION_STEPS=Object.freeze(['inspect','sourceAndCi',
 export const ACTIVE_PUBLICATION_STEPS=Object.freeze(['inspect','sourceAndCi','freshBackup','freshCompatibility','freshRollbackReadiness','prepareGatedWorker','admit','armSupervisor','gateAndDrain','routePrimary','unfence','publicProof','persistProcesses','publicationMetadata','certificate','enableBookingWorker','finalAudit','finishSupervisor']);
 export const ACTIVE_RECOVERY_STEPS=Object.freeze(['inspect','parentGone','databaseBarrier','disableBookingWorker','routeCompatibleRollback','unfence','publicProof','publicationMetadata','persistProcesses','complete']);
 async function sequence(steps,operations){
- let last,stage='startup';try{for(const name of steps){stage=name;await operations.assertHeld();if(operations.progress)await operations.progress(name);last=await operations[name]();await operations.assertHeld();}return last;
+ let last,stage='startup';try{for(const name of steps){stage=name;const started=performance.now();await operations.assertHeld();if(operations.progress)await operations.progress(name);if(operations.stageTiming)await operations.stageTiming({stage:name,phase:'started',elapsedMs:0});last=await operations[name]();await operations.assertHeld();if(operations.stageTiming)await operations.stageTiming({stage:name,phase:'completed',elapsedMs:Math.ceil(performance.now()-started)});}return last;
  }catch(error){if(operations.failure)try{await operations.failure(error,stage);}catch{/* Original error and unknown result must survive diagnostic failure. */}throw error;}
 }
 export const executeActiveBookingReconciliation=operations=>sequence(ACTIVE_RECONCILIATION_STEPS,operations);
