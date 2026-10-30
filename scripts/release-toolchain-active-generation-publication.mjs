@@ -23,7 +23,7 @@ export async function publishClosedActiveBookingUnderHeldLocks({lock,toolRevisio
  // Full retained-source/dependency/build verification happens BEFORE the
  // mutable window. All original observations remain, but their immutable
  // inputs use the same byte-bound, continuously checked in-process witness.
- return withRetainedApplicationAttestation(()=>withPublicationNetworkAdmission(toolRevision,()=>publishAttestedClosedActiveBooking({lock,toolRevision})));
+ return withPublicationNetworkAdmission(toolRevision,()=>withRetainedApplicationAttestation(()=>publishAttestedClosedActiveBooking({lock,toolRevision})));
 }
 async function publishAttestedClosedActiveBooking({lock,toolRevision}){
  assertOnlineRetentionHeldLocks(lock);const authority=reviewedBookingExecution(toolRevision);need(authority?.prepared.activeIncidentClosed?.toolRevision===toolRevision,'source_changed');let window=null,scope=null,backupDirectory=null,publicationDirectory=null,handle=null,mutationPossible=false,stage='inspect',lastAudit=null,metadata=null,certificate=null;const diagnosticDirectories=new Map(),directoryIdentity=directory=>Object.fromEntries(['dev','ino','uid','mode'].map(key=>[key,fs.lstatSync(directory)[key]]));
