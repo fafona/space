@@ -3,6 +3,7 @@ import {AsyncLocalStorage} from 'node:async_hooks';import * as fs from 'node:fs'
 import {collectRemoteReleaseReview,assertReviewFresh,inspectPinnedExecutionSource,sourceGit,parseSourceTree,assertUnchangedApplicationSource,ownedReleasePath} from './release-toolchain-source.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 import {assertRetainedBookingSource} from './release-toolchain-retained-booking-source.mjs';
+import {withPinnedFormalPm2Process} from './release-toolchain-proc-witness.mjs';
 const active=new AsyncLocalStorage(),issued=new WeakSet();
 const freeze=value=>{if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;};
 const fact=s=>['dev','ino','uid','mode','size','mtimeMs','ctimeMs','nlink'].map(k=>s[k]);
@@ -25,7 +26,7 @@ export async function withReviewedBookingExecution({applicationRevision,preparat
 }
 // Separate, fixed retained-build boundary. No option can relax the original entry.
 export async function withReviewedRetainedBookingExecution({applicationRevision,preparationRevision,verifyPreparation},work){
- return withExecution({applicationRevision,preparationRevision,verifyPreparation},work,true);
+ return withPinnedFormalPm2Process(()=>withExecution({applicationRevision,preparationRevision,verifyPreparation},work,true));
 }
 async function withExecution({applicationRevision,preparationRevision,verifyPreparation},work,retained){
  need(process.platform==='linux'&&process.getuid()===0&&typeof work==='function'&&typeof verifyPreparation==='function','unsupported_runtime');

@@ -11,6 +11,7 @@ import{stageFailureDiagnostic}from'./release-toolchain-diagnostics.mjs';
 import{captureProcessFact}from'./check-production-runtime-supervision.mjs';
 import{inspectPm2Registry,capturePm2DumpTarget,persistPm2Dump,verifyPm2Dump}from'./production-maintenance-pm2-adapter.mjs';
 import{inspectReleasePm2Registry,captureReleasePm2DumpTarget,verifyReleasePm2Dump}from'./release-toolchain-pm2-readonly-diagnostic.mjs';
+import{withOwnedCiPm2ProcessWitness}from'./release-toolchain-proc-witness.mjs';
 import{collectOwnedCiPm2Registry}from'./release-toolchain-pm2-observation.mjs';
 import{bookingReadyWorkerConfiguration,assertBookingReadyWorkerRawTransition}from'./booking-ready-worker.mjs';
 import{assertActiveBookingWorkerConfigurationTransition,waitForActiveBookingWorkerSettlement,activeBookingWorkerObservation}from'./release-toolchain-active-generation-worker-settlement.mjs';
@@ -148,9 +149,16 @@ try{
  need(dumpReceipt.saved===true&&dumpReceipt.peerVerified===true&&dumpReceipt.processCount===3,'dump_receipt');
  need(python({...dumpRequest,action:'dump-verify',registry:dumpRegistry,proof:dumpReceipt})===true,'dump_verification');
  need(await verifyPm2Dump(dumpDaemon,dumpBoot,dumpRegistry,dumpReceipt)===true,'production_adapter_dump_verification');
- assert.deepEqual(await inspectReleasePm2Registry(dumpDaemon,dumpBoot),dumpRegistry);
- assert.deepEqual(await captureReleasePm2DumpTarget(dumpDaemon,dumpBoot),await capturePm2DumpTarget(dumpDaemon,dumpBoot));
- need(await verifyReleasePm2Dump(dumpDaemon,dumpBoot,dumpRegistry,dumpReceipt)===true,'release_readonly_dump_verification');
+ const processDirectoryHandles=()=>fs.readdirSync('/proc/self/fd').filter(fd=>{try{return fs.readlinkSync('/proc/self/fd/'+fd)==='/proc/'+daemon.pid;}catch(error){if(error.code==='ENOENT')return false;throw error;}}).length;
+ const priorDirectoryHandles=processDirectoryHandles();
+ await withOwnedCiPm2ProcessWitness(root,async verify=>{
+  need(processDirectoryHandles()===priorDirectoryHandles+1,'proc_directory_descriptor_not_held');verify();
+  assert.deepEqual(await inspectReleasePm2Registry(dumpDaemon,dumpBoot),dumpRegistry);
+  assert.deepEqual(await captureReleasePm2DumpTarget(dumpDaemon,dumpBoot),await capturePm2DumpTarget(dumpDaemon,dumpBoot));
+  need(await verifyReleasePm2Dump(dumpDaemon,dumpBoot,dumpRegistry,dumpReceipt)===true,'release_readonly_dump_verification');verify();
+ });
+ need(processDirectoryHandles()===priorDirectoryHandles,'proc_directory_descriptor_not_closed');
+ seal('proc-directory-witness-verified.json',{kind:'owned-pm2-proc-directory-witness-verified',toolRevision:revision,actualDirectoryDescriptorHeld:true,actualIdentityStable:true,descriptorReleased:true,originalFreshChecksUnchanged:true,registryRead:true,dumpCapture:true,dumpVerify:true,additionalSavePerformed:false,processControlPerformed:false,formalHostTouched:false,publicationAuthority:false});
  seal('readonly-diagnostic-wrapper-verified.json',{kind:'owned-release-readonly-observer-verified',toolRevision:revision,originalSharedGuards:true,registryRead:true,dumpCapture:true,dumpVerify:true,additionalSavePerformed:false,controlPerformed:false,publicationAuthority:false,formalHostTouched:false});
  const dumpSha=sha(fs.readFileSync(home+'/dump.pm2'));
  python({...dumpRequest,action:'dump-persist',registry:dumpRegistry,proof:dumpTarget},{reject:true,rejectLastLine:'fixed_dump.PM2DumpError: pm2_dump_target_changed'});
