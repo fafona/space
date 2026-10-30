@@ -4,7 +4,7 @@
 import {isDeepStrictEqual} from 'node:util';
 import {BOOKING_HANDOFF_CANDIDATE as C,BOOKING_HANDOFF_APPLICATION as A,BOOKING_HANDOFF_BASELINE as B,BOOKING_HANDOFF_PM2_PROVENANCE,assertBookingHandoffWindow,assertBookingLegacyTaskTransition,assertBookingLegacyEnvironmentTransition} from './booking-handoff-policy.mjs';
 import {assertManagedPauseEnvironmentDelta} from './release-toolchain-pm2-transition.mjs';
-import {sha256} from './release-toolchain-contracts.mjs';
+import {sha256,requireToolchain} from './release-toolchain-contracts.mjs';
 export const ACTIVE_BOOKING_INCIDENT=Object.freeze({operationId:'b49808d6-1950-4cb4-b029-97086873d7a7',toolRevision:'0fdad28d24245a84f7ced1656b5e1f2313bee0e7',generation:'9b85e75c-f474-4b17-b2a5-75601f7940b4',candidate:C,compatibleRollback:A,legacyBaseline:B,legacyPid:3902224,legacyRestartCount:1,privateWorkerPid:3889167,originalWindow:Object.freeze({id:'b49808d6-1950-4cb4-b029-97086873d7a7',startedAt:'2026-10-28T18:49:45.425Z',deadlineAt:'2026-10-28T18:59:45.425Z'})});
 export const ACTIVE_BOOKING_METADATA=Object.freeze({
  beforeText:JSON.stringify({target:B,port:3103,directory:'/www/wwwroot/merchant-space.web-releases/'+B.slice(0,12)+'-online',name:'merchant-space-online-'+B.slice(0,12)}),
@@ -24,6 +24,13 @@ function keys(v,n){need(object(v)&&isDeepStrictEqual(Object.keys(v).sort(),[...n
 function iso(value){const ms=Date.parse(value);need(typeof value==='string'&&Number.isFinite(ms)&&new Date(ms).toISOString()===value,'observation_time');return ms;}
 export function assertActiveBookingWindow(window,{nowMs=Date.now()}={}){
  const result=assertBookingHandoffWindow(window,{nowMs});need(window.id!==ACTIVE_BOOKING_INCIDENT.operationId&&result.deadlineAtMs-result.startedAtMs===600000&&result.startedAtMs>Date.parse(ACTIVE_BOOKING_INCIDENT.originalWindow.deadlineAt),'new_window_required');return result;
+}
+// Recognition only, NOT validation of a caller's JSON or release authority.
+// Both private actors still require their original live lock/scope first.
+// Keep one check before worker intent AND at supervisor arming so a newly
+// advertised closure cannot be discovered unsupported only after control.
+export function assertActiveBookingSupervisorClosureProfile(closed){
+ requireToolchain(Boolean(closed&&(closed.originRecoveryClosed||closed.recoveredPublicationClosed||closed.settledPreIngressClosed||closed.preSupervisorClosed)),'evidence_invalid');return true;
 }
 export function assertActiveBookingDatabase(database,{systemIdentifier,databaseOid,generation=ACTIVE_BOOKING_INCIDENT.generation}={}){
  keys(database,['systemIdentifier','databaseOid','serverVersionNum','generation','revision','protocol','active','savedBookingRowsSha256','commands','mailJobs']);
