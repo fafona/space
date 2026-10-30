@@ -524,6 +524,23 @@ export function preIntentAbortArchiveWitness(token){
  const archive=held.activeArchive;if(archive.vault!==marker.root+'/'+held.activeWindow.id||archive.original.ino!==marker.originalInode)fail('active_archive_not_authorized');equal(dirIdentity(privateDirectory(archive.destination)),archive.original,'active_archive_original_changed');return Object.freeze(structuredClone({...archive,window:held.activeWindow,released:held.activeScopeReleased===true}));
 }
 
+// Exact recovered gate/drain failure. Old preparation factories and their
+// protected-resource rules remain unchanged; JSON cannot construct this token.
+export async function withOriginRecoveryPreparationLocks({toolRevision},work){
+ if(process.platform!=='linux'||process.getuid?.()!==0||typeof work!=='function')fail('active_incident_scope');
+ const{reviewedBookingExecution}=await import('./release-toolchain-authority.mjs'),{ORIGIN_RECOVERY:H,originRecoveryProofSha256}=await import('./release-toolchain-origin-recovery-contract.mjs'),{observeRecoveredOriginBeforeClosure}=await import('./release-toolchain-origin-recovery-evidence.mjs'),authority=reviewedBookingExecution(toolRevision);
+ if(authority?.prepared.originRecovered?.proofSha256!==originRecoveryProofSha256()||authority.prepared.originRecovered.priorToolRevision!==H.priorTool)fail('active_incident_review_required');
+ return withExistingOperationPreparation({deployLock:DEPLOY_LOCK,operation:OPERATION_LOCK,observe:async()=>{if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return observeRecoveredOriginBeforeClosure();}},async(token,context)=>{
+  const held=heldLocks.get(token);held.originRecovery=Object.freeze({toolRevision,proofSha256:originRecoveryProofSha256(),root:H.root,originalInode:H.operationInode});assertOriginRecoveryHeldWindow(token,context.window);const result=await work(token,context);if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return result;
+ });
+}
+export function assertOriginRecoveryHeldWindow(token,window){assertHeldLocks(token);const held=heldLocks.get(token);if(!held.originRecovery||!isDeepStrictEqual(held.activeWindow,window))fail('origin_recovery_scope_required');return Object.freeze({...held.originRecovery});}
+export function originRecoveryLockProfile(token){assertHeldLocks(token);const held=heldLocks.get(token);return held.originRecovery?Object.freeze({...held.originRecovery,window:structuredClone(held.activeWindow)}):null;}
+export function originRecoveryArchiveWitness(token){
+ assertExistingOperationScopeHeld(token);const held=heldLocks.get(token),marker=held.originRecovery;if(!marker)fail('origin_recovery_scope_required');if(!held.activeArchive)return null;
+ const a=held.activeArchive;if(a.vault!==marker.root+'/'+held.activeWindow.id||a.original.ino!==marker.originalInode)fail('active_archive_not_authorized');equal(dirIdentity(privateDirectory(a.destination)),a.original,'active_archive_original_changed');return Object.freeze(structuredClone({...a,window:held.activeWindow,released:held.activeScopeReleased===true}));
+}
+
 // Closed disposable CI entry: same actual FD/flock/inode implementation, but a
 // separate owned resource identity. Its tokens MUST fail production admission.
 export async function acceptActiveIncidentPreparationLocksInCi() {
@@ -696,6 +713,28 @@ export async function acceptPreIntentAbortClosureInCi(){
  }catch(error){privateWrite(root+'/failure.json',retentionCanonicalText({kind:'pre-intent-abort-native-composition-unconfirmed',stage,errorSha256:digest(String(error?.message??'unknown')),automaticRetryAllowed:false,publicationAuthority:false}));throw error;}
 }
 
+// Disposable composition of the SAME kernel-lock, CAS, inode-archive and
+// replacement-release primitives used by the fixed recovered profile.
+export async function acceptOriginRecoveryClosureInCi(){
+ const anchors=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];if(process.platform!=='linux'||process.getuid?.()!==0||process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted'||process.env.FAOLLA_RELEASE_PRODUCTION_EQ!=='1'||anchors.some(f=>exists(f)))fail('ci_only');
+ const root=fs.mkdtempSync('/var/lib/faolla-origin-recovery-ci-');fs.chmodSync(root,0o700);const cases=[];let stage='prepare';privateWrite(root+'/started.json',retentionCanonicalText({kind:'origin-recovery-native-composition-started',syntheticInputsOnly:true,formalHostTouched:false,publicationAuthority:false}));
+ try{const{bookingHostReplace}=await import('./booking-handoff-host-io.mjs');
+  for(const outcome of ['normal','wrong-metadata','unknown-after-metadata','unknown-after-archive','wrong-completion']){
+   stage=outcome;const parent=root+'/'+outcome;fs.mkdirSync(parent,{mode:0o700});const deployLock=parent+'/deploy.lock',operation=parent+'/operation.lock',publication=parent+'/publication',vault=parent+'/vault',metadata=parent+'/state.json';privateWrite(deployLock,'owned-only\n');for(const d of [operation,publication,vault])fs.mkdirSync(d,{mode:0o700});privateWrite(metadata,'{"status":"owned-failed"}\n');const names=['controller-exit-unconfirmed.json','supervisor-finished.json','worker-completed.json','recovery-completed.json'];for(const name of names)privateWrite(publication+'/'+name,retentionCanonicalText({kind:'synthetic-origin-recovery-'+name}));
+   const original=dirIdentity(fs.lstatSync(operation)),pubIdentity=dirIdentity(fs.lstatSync(publication)),files=Object.fromEntries(names.map(name=>[name,digest(readOwned(publication+'/'+name))])),closure={directory:vault,sha256:'a'.repeat(64)};let caught,replacement,moved=false,reset=false;
+   try{await withExistingOperationPreparation({deployLock,operation,observe:async()=>({syntheticInputsOnly:true})},async token=>{
+    let refused=false;try{assertOriginRecoveryHeldWindow(token,heldLocks.get(token).activeWindow);}catch{refused=true;}if(!refused)fail('ci_token_production_leak');privateWrite(vault+'/failed-state-before-reset.json',readOwned(metadata));
+    bookingHostReplace(metadata,outcome==='wrong-metadata'?'foreign\n':'{"status":"owned-failed"}\n','{"status":"owned-ready"}\n','owned-origin-recovery');reset=true;if(outcome==='unknown-after-metadata')throw Error('owned-origin-after-metadata-unknown');
+    const archive=archiveOwnedExistingOperation(token,vault,closure.sha256);replacement=archive.replacement;if(outcome==='unknown-after-archive')throw Error('owned-origin-after-archive-unknown');
+    fs.renameSync(publication,vault+'/publication');syncDirectory(parent);syncDirectory(vault);moved=true;equal(dirIdentity(fs.lstatSync(vault+'/publication')),pubIdentity,'ci_publication_inode_lost');privateWrite(vault+'/reconciliation-completed.json',retentionCanonicalText({kind:outcome==='wrong-completion'?'foreign-completion':'origin-gate-recovery-reconciled',closureSha256:closure.sha256,archiveSha256:digest(readOwned(vault+'/operation-archived.json')),publicationAuthority:false}));releaseArchivedReplacement(token,closure,'origin-gate-recovery-reconciled','origin-gate-recovery-replacement');assertExistingOperationScopeHeld(token);
+   });}catch(error){caught=error;}
+   const opLocation=replacement?vault+'/operation.lock':operation,pubLocation=moved?vault+'/publication':publication;equal(dirIdentity(fs.lstatSync(opLocation)),original,'ci_original_inode_lost');equal(dirIdentity(fs.lstatSync(pubLocation)),pubIdentity,'ci_publication_inode_lost');for(const name of names)equal(digest(readOwned(pubLocation+'/'+name)),files[name],'ci_failure_evidence_changed');equal(readOwned(vault+'/failed-state-before-reset.json').toString(),'{"status":"owned-failed"}\n','ci_failed_metadata_lost');equal(readOwned(metadata).toString(),reset?'{"status":"owned-ready"}\n':'{"status":"owned-failed"}\n','ci_metadata_cas_changed');
+   const probe=spawnSync('flock',['--nonblock',deployLock,'true'],{env:runtimeEnvironment(),timeout:10000,windowsHide:true});if(probe.status!==0||probe.error||probe.signal)fail('ci_deploy_lock_not_released');if(outcome==='normal'){if(caught||exists(operation)||!moved||!exists(vault+'/replacement-released.json'))fail('ci_origin_normal_failed');}else{if(!caught||exists(vault+'/replacement-released.json'))fail('ci_origin_unknown_false_success');if(replacement)equal(dirIdentity(fs.lstatSync(operation)),replacement,'ci_unknown_replacement_lost');}cases.push(outcome+'-preserves-failed-bytes-and-original-inodes');
+  }
+  if(anchors.some(f=>exists(f)))fail('ci_formal_anchor_created');const result={kind:'origin-recovery-native-composition-accepted',root,cases,realKernelFlock:true,actualCompareAndSwap:true,productionTokensRejected:true,originalFailedBytesRetained:true,originalInodesRetained:true,unknownOutcomesNotReleased:true,processControlPerformed:false,processSavePerformed:false,businessSqlWritten:false,formalHostTouched:false,publicationAuthority:false};privateWrite(root+'/acceptance.json',retentionCanonicalText(result));return result;
+ }catch(error){privateWrite(root+'/failure.json',retentionCanonicalText({kind:'origin-recovery-native-composition-unconfirmed',stage,errorSha256:digest(String(error?.message)),automaticRetryAllowed:false,publicationAuthority:false}));throw error;}
+}
+
 
 // Genuine owned CI capability, same kernel/inode engine; formal tokens still
 // require their exact paths AND reviewed execution authority independently.
@@ -776,6 +815,9 @@ export async function releasePreConnectAbortOperation(options){assertPreConnectA
 
 export async function archivePreIntentAbortOperation(options){assertPreIntentAbortHeldWindow(options.lock,options.window);const{verifyPreIntentAbortClosure}=await import('./release-toolchain-pre-intent-closure.mjs'),closure=await verifyPreIntentAbortClosure(options);return archiveOwnedExistingOperation(options.lock,closure.directory,closure.sha256);}
 export async function releasePreIntentAbortOperation(options){assertPreIntentAbortHeldWindow(options.lock,options.window);const{verifyPreIntentAbortClosure}=await import('./release-toolchain-pre-intent-closure.mjs'),closure=await verifyPreIntentAbortClosure(options);return releaseArchivedReplacement(options.lock,closure,'pre-intent-worker-attempt-reconciled','pre-intent-abort-replacement');}
+
+export async function archiveOriginRecoveryOperation(options){assertOriginRecoveryHeldWindow(options.lock,options.window);const{verifyOriginRecoveryClosure}=await import('./release-toolchain-origin-recovery-closure.mjs'),closure=await verifyOriginRecoveryClosure(options);return archiveOwnedExistingOperation(options.lock,closure.directory,closure.sha256);}
+export async function releaseOriginRecoveryOperation(options){assertOriginRecoveryHeldWindow(options.lock,options.window);const{verifyOriginRecoveryClosure}=await import('./release-toolchain-origin-recovery-closure.mjs'),closure=await verifyOriginRecoveryClosure(options);return releaseArchivedReplacement(options.lock,closure,'origin-gate-recovery-reconciled','origin-gate-recovery-replacement');}
 
 // Physical archive primitive shared with disposable native tests. Deliberately
 // NOT exported as a production action: a future closure entry must first verify

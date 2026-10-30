@@ -9,7 +9,7 @@ import {assertActiveBookingSupervisorLease} from './release-toolchain-active-gen
 import {observeActiveBookingPreparedWorker,observeActiveBookingCertifiedWorker} from './release-toolchain-active-generation-worker.mjs';
 import {createActiveBookingRoutingPlan,assertActiveBookingRoutingPlan,executeActiveBookingRoutingPhase} from './release-toolchain-active-generation-routing.mjs';
 import {BOOKING_INGRESS_MAIN_SHA256,BOOKING_INGRESS_VHOST} from './booking-handoff-ingress.mjs';
-import {createActiveBookingIngressPlan} from './release-toolchain-active-generation-ingress.mjs';
+import {assertPublicationIngressPlan} from './release-toolchain-origin-probe-ingress.mjs';
 import {bookingHostRead,bookingHostWriteOnce,bookingHostReplace,bookingHostRun,bookingHostSql} from './booking-handoff-host-io.mjs';
 import {bookingHandoffActivationSnapshotSql} from './booking-handoff-activation.mjs';import {captureProcessFact} from './check-production-runtime-supervision.mjs';
 import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY} from './web-presentation-release-policy.mjs';import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
@@ -31,7 +31,7 @@ async function gateResponse(origin,uri,method,operation){const response=await fe
 export async function verifyActiveBookingPublicationIngressGate(options){inspectLiveActiveBookingPublicationSupervisor(options);for(const origin of ['https://faolla.com','https://launch.faolla.com'])for(const [uri,method]of [['/api/bookings','GET'],['/api/publish','POST'],['/api/personal-guest-merge','POST']])await gateResponse(origin,uri,method,options.window.id);inspectLiveActiveBookingPublicationSupervisor(options);return true;}
 export async function applyActiveBookingPublicationPrimaryRouting(options){
  const {window}=options,observed=inspectLiveActiveBookingPublicationSupervisor(options),directory=observed.admission.directory,originalPlan=read(ROOT+'/routing-plan.json'),plan=read(directory+'/routing-plan.json');
- same(plan,createActiveBookingRoutingPlan({originalPlan,window}));assertActiveBookingRoutingPlan(plan,originalPlan);const gate=read(directory+'/ingress-plan.json');same(gate,createActiveBookingIngressPlan({vhostText:gate.beforeText,mainSha256:BOOKING_INGRESS_MAIN_SHA256,window}));
+ same(plan,createActiveBookingRoutingPlan({originalPlan,window}));assertActiveBookingRoutingPlan(plan,originalPlan);const gate=read(directory+'/ingress-plan.json');assertPublicationIngressPlan(gate);same(gate.window,window);
  const before=JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql));need(before.active===true&&before.generation===P.generation&&before.systemIdentifier==='7612049595342295079'&&before.databaseOid==='5','database_identity_mismatch');
  const verify=()=>{inspectLiveActiveBookingPublicationSupervisor(options);same(bookingHostRead(BOOKING_INGRESS_VHOST,{privateMode:false}),gate.afterText);const drain=read(directory+'/drain-completed.json');same(drain.window,window);need(drain.kind==='booking-legacy-ingress-drained'&&drain.oldWorkersRemaining===0&&drain.applicationConnections===0&&drain.automationEligibleRecords===0&&Date.parse(drain.automationCheckedThrough)>=Date.parse(window.deadlineAt)&&Date.now()-Date.parse(drain.completedAt)>=0&&Date.now()-Date.parse(drain.completedAt)<30000,'ingress_not_drained');same(sha256(bookingHostRead('/www/server/nginx/conf/nginx.conf',{privateMode:false})),BOOKING_INGRESS_MAIN_SHA256);};
  const current=()=>Object.fromEntries(WEB_RELEASE_FILES.map(file=>[file,bookingHostRead(WEB_RELEASE_PROXY+'/'+file,{privateMode:false})]));

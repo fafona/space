@@ -73,7 +73,7 @@ def _strict_instant(text):
         raise ValueError("active_worker_time") from None
 
 
-def _formal_witness(value):
+def _formal_common_witness(value):
     operation, revision = value["operationId"], value["revision"]
     if not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", operation or "") or operation == "b49808d6-1950-4cb4-b029-97086873d7a7" or not re.fullmatch(r"[a-f0-9]{40}", revision or "") or revision == _OLD or _SOURCE != "/var/lib/faolla-online-code/" + revision + "/scripts":
         raise ValueError("active_worker_source")
@@ -110,6 +110,13 @@ def _formal_witness(value):
     flags = open("/proc/self/fdinfo/3", "r", encoding="ascii").read()
     if "FLOCK" not in flags or "WRITE" not in flags:
         raise ValueError("active_worker_lock_not_held")
+    return attempt
+
+
+def _formal_witness(value):
+    # The original entry retains its exact fixed predecessor. The separate
+    # recovered profile shares only these unchanged parent/FD/window guards.
+    attempt = _formal_common_witness(value)
     expected = _worker.snapshot(value["expected"])
     if expected["pid"] != 3889167 or expected["pm2_env"]["pm_exec_path"] != "/var/lib/faolla-online-code/" + _OLD + "/scripts/booking-atomic-worker.mjs":
         raise ValueError("active_worker_fixed_predecessor")
