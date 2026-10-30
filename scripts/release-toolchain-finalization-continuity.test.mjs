@@ -92,7 +92,9 @@ test('only explicitly excluded runtime cache contents may change', () => {
     const witness = captureFileContinuity({trees: [{root: f.tree, exclude: ['cache']}]});
     fs.writeFileSync(path.join(f.tree, 'cache', 'a'), 'new');
     assert.equal(witness.assertUnchanged(), true);
-    fs.writeFileSync(f.file, 'bbb'); assert.throws(() => witness.assertUnchanged());
+    // This case tests exclusion boundaries, not filesystem clock resolution.
+    // Same-size/mtime-restored rewrites retain their separate test above.
+    fs.writeFileSync(f.file, 'changed-outside-excluded-cache'); assert.throws(() => witness.assertUnchanged());
   } finally { fs.rmSync(f.root, {recursive: true}); }
 });
 test('symlinks cannot escape an attested dependency root or be retargeted', {skip: process.platform === 'win32'}, () => {
