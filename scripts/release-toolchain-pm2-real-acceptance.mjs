@@ -10,6 +10,7 @@ import{capturePm2TerminationAnchor,inspectPm2SigintTermination,inspectPinnedPm2R
 import{stageFailureDiagnostic}from'./release-toolchain-diagnostics.mjs';
 import{captureProcessFact}from'./check-production-runtime-supervision.mjs';
 import{inspectPm2Registry,capturePm2DumpTarget,persistPm2Dump,verifyPm2Dump}from'./production-maintenance-pm2-adapter.mjs';
+import{inspectReleasePm2Registry,captureReleasePm2DumpTarget,verifyReleasePm2Dump}from'./release-toolchain-pm2-readonly-diagnostic.mjs';
 import{collectOwnedCiPm2Registry}from'./release-toolchain-pm2-observation.mjs';
 import{bookingReadyWorkerConfiguration,assertBookingReadyWorkerRawTransition}from'./booking-ready-worker.mjs';
 import{assertActiveBookingWorkerConfigurationTransition,waitForActiveBookingWorkerSettlement,activeBookingWorkerObservation}from'./release-toolchain-active-generation-worker-settlement.mjs';
@@ -147,6 +148,10 @@ try{
  need(dumpReceipt.saved===true&&dumpReceipt.peerVerified===true&&dumpReceipt.processCount===3,'dump_receipt');
  need(python({...dumpRequest,action:'dump-verify',registry:dumpRegistry,proof:dumpReceipt})===true,'dump_verification');
  need(await verifyPm2Dump(dumpDaemon,dumpBoot,dumpRegistry,dumpReceipt)===true,'production_adapter_dump_verification');
+ assert.deepEqual(await inspectReleasePm2Registry(dumpDaemon,dumpBoot),dumpRegistry);
+ assert.deepEqual(await captureReleasePm2DumpTarget(dumpDaemon,dumpBoot),await capturePm2DumpTarget(dumpDaemon,dumpBoot));
+ need(await verifyReleasePm2Dump(dumpDaemon,dumpBoot,dumpRegistry,dumpReceipt)===true,'release_readonly_dump_verification');
+ seal('readonly-diagnostic-wrapper-verified.json',{kind:'owned-release-readonly-observer-verified',toolRevision:revision,originalSharedGuards:true,registryRead:true,dumpCapture:true,dumpVerify:true,additionalSavePerformed:false,controlPerformed:false,publicationAuthority:false,formalHostTouched:false});
  const dumpSha=sha(fs.readFileSync(home+'/dump.pm2'));
  python({...dumpRequest,action:'dump-persist',registry:dumpRegistry,proof:dumpTarget},{reject:true,rejectLastLine:'fixed_dump.PM2DumpError: pm2_dump_target_changed'});
  need(sha(fs.readFileSync(home+'/dump.pm2'))===dumpSha,'stale_dump_changed');

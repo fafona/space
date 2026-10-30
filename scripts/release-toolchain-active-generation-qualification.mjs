@@ -50,6 +50,7 @@ async function qualify({lock,toolRevision,window},observe,closedProfile=false){
   'release-toolchain-full-rehearsal.mjs',
   'release-toolchain-full-interrupt.mjs',
   'production-maintenance-pm2-adapter.mjs',
+  'release-toolchain-pm2-readonly-diagnostic.mjs',
   'release-toolchain-post-save-evidence.mjs',
   'release-toolchain-post-save-closed.mjs',
   'release-toolchain-pre-intent-profile.mjs',

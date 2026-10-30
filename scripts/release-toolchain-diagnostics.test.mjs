@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {stageFailureDiagnostic} from './release-toolchain-diagnostics.mjs';
 import {sha256,ToolchainError} from './release-toolchain-contracts.mjs';
-import {inspectPm2Registry} from './production-maintenance-pm2-adapter.mjs';
+import {executeObservedReadOnlyPm2} from './release-toolchain-pm2-readonly-diagnostic.mjs';
 const revision='a'.repeat(40),prefix='file:///var/lib/faolla-online-code/'+revision+'/scripts/',knownFiles=['booking-handoff-execution.mjs','booking-handoff-host-io.mjs'];
 test('stage diagnostics retain known source line/column evidence without arbitrary exception text or stacks',()=>{
  // Model the supported Node 20 data property explicitly; newer workstation
@@ -29,9 +29,9 @@ test('only fixed historical tool frames survive generic remapping, without unrel
 });
 
 test('reporter carries only schema-validated private PM2 refusal evidence',async()=>{
- let error;try{await inspectPm2Registry({},'invalid');}catch(e){error=e;}
+ let error;try{await executeObservedReadOnlyPm2({operation:'registry-read',io:{},perform:()=>{throw Error('private');}});}catch(e){error=e;}
  const d=stageFailureDiagnostic(error,{stage:'rehearsal',toolRevision:revision,knownFiles:[]});
- assert.equal(d.pm2.phase,'input');assert.equal(d.pm2.attempted,false);assert.equal(d.pm2.automaticRetryAllowed,false);
- const forged=Error('private');Object.defineProperty(forged,'pm2FailureDiagnostic',{value:{...d.pm2,stdout:'secret'}});
+ assert.equal(d.pm2.lastIo,'start');assert.equal(d.pm2.operation,'registry-read');assert.equal(d.pm2.automaticRetryAllowed,false);
+ const forged=Error('private');Object.defineProperty(forged,'releasePm2FailureDiagnostic',{value:{...d.pm2,stdout:'secret'}});
  assert.equal(Object.hasOwn(stageFailureDiagnostic(forged,{stage:'rehearsal',toolRevision:revision,knownFiles:[]}),'pm2'),false);
 });

@@ -21,54 +21,6 @@ const DIGEST = /^[a-f0-9]{64}$/;
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const pick = (a, keys) => Object.fromEntries(keys.map((key) => [key, a[key]]));
 const fail = () => { throw new Error(ERROR); };
-const REFUSAL_PHASES = ["input", "request", "dependencies", "boot", "process-shape", "daemon-binding", "fresh-process",
-  "daemon-title", "daemon-environment", "repeat-process", "python-capture", "helper-capture", "python-before", "helper-before",
-  "payload", "invoke", "python-after", "peer-after", "helper-after", "child-result", "decode", "answer", "registry"];
-const REFUSAL_OPERATIONS = ["unclassified", "registry-read", "control", "dump-capture", "dump-verify", "dump-persist"];
-const CHILD_ERROR_CODES = ["EAGAIN", "ENOMEM", "ENOBUFS", "ETIMEDOUT", "EACCES", "ENOENT"];
-function ownData(value, key) {
-  try { if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
-    const d = Object.getOwnPropertyDescriptor(value, key); return d && Object.hasOwn(d, "value") ? d.value : undefined;
-  } catch { return undefined; }
-}
-function refusalEvidence(error, { phase, operation, attempted, changedFields, child }) {
-  const innerFrames = [], stack = ownData(error, "stack"), prefix = import.meta.url + ":";
-  for (const line of (typeof stack === "string" ? stack : "").slice(0, 16384).split("\n").slice(1, 12)) {
-    const at = line.indexOf(prefix), m = at < 0 ? null : /^(\d{1,7}):(\d{1,7})(?:\)|\s|$)/.exec(line.slice(at + prefix.length));
-    if (m && Number(m[1]) > 0 && Number(m[2]) > 0) innerFrames.push({ file: "production-maintenance-pm2-adapter.mjs", line: Number(m[1]), column: Number(m[2]) });
-    if (innerFrames.length === 4) break;
-  }
-  let childEvidence = null;
-  if (child && typeof child === "object" && !types.isProxy(child)) {
-    const status = ownData(child, "status"), signal = ownData(child, "signal"), stderr = ownData(child, "stderr"), stdout = ownData(child, "stdout"), childError = ownData(child, "error"), code = ownData(childError, "code");
-    childEvidence = { status: Number.isSafeInteger(status) && status >= -1 && status <= 255 ? status : null,
-      signal: signal == null ? null : ["SIGKILL", "SIGTERM"].includes(signal) ? signal : "other", error: !!childError,
-      errorCode: childError ? CHILD_ERROR_CODES.includes(code) ? code : "other" : null,
-      stderrEmpty: typeof stderr === "string" ? stderr === "" : null, stdoutBytes: typeof stdout === "string" ? Buffer.byteLength(stdout) : null };
-  }
-  return Object.freeze({ version: 1, kind: "pm2-exchange-refusal", phase, operation, attempted, changedFields: [...changedFields],
-    innerFrames, child: childEvidence, automaticRetryAllowed: false });
-}
-// Private bounded evidence only. It cannot authorize a retry, control, save or
-// publication. No arbitrary exception text, output, registry or environment.
-export function readPm2FailureDiagnostic(error) {
-  try {
-    const raw = ownData(error, "pm2FailureDiagnostic");
-    if (!raw || typeof raw !== "object" || types.isProxy(raw)) return null;
-    const value = plain(raw);
-    if (!exact(value, ["version", "kind", "phase", "operation", "attempted", "changedFields", "innerFrames", "child", "automaticRetryAllowed"]) ||
-        value.version !== 1 || value.kind !== "pm2-exchange-refusal" || !REFUSAL_PHASES.includes(value.phase) || !REFUSAL_OPERATIONS.includes(value.operation) ||
-        typeof value.attempted !== "boolean" || value.automaticRetryAllowed !== false || !Array.isArray(value.changedFields) ||
-        value.changedFields.length > PROCESS_KEYS.length || new Set(value.changedFields).size !== value.changedFields.length || value.changedFields.some(k => !PROCESS_KEYS.includes(k)) ||
-        !Array.isArray(value.innerFrames) || value.innerFrames.length > 4 || value.innerFrames.some(f => !exact(f, ["file", "line", "column"]) ||
-          f.file !== "production-maintenance-pm2-adapter.mjs" || !integer(f.line, 1, 9999999) || !integer(f.column, 1, 9999999))) return null;
-    const c = value.child;
-    if (c !== null && (!exact(c, ["status", "signal", "error", "errorCode", "stderrEmpty", "stdoutBytes"]) ||
-        !(c.status === null || integer(c.status, -1, 255)) || ![null, "SIGKILL", "SIGTERM", "other"].includes(c.signal) || typeof c.error !== "boolean" ||
-        ![null, "other", ...CHILD_ERROR_CODES].includes(c.errorCode) || ![null, true, false].includes(c.stderrEmpty) || !(c.stdoutBytes === null || integer(c.stdoutBytes, 0)))) return null;
-    return value;
-  } catch { return null; }
-}
 const integer = (value, minimum = 0, maximum = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 const text = (value, maximum = 4096) => typeof value === "string" && value.length > 0 && value.length <= maximum && !/[\0\r\n]/.test(value);
 const absolute = (value) => text(value) && value.startsWith("/") && value !== "/" && !value.endsWith("/") && posix.normalize(value) === value;
@@ -256,10 +208,9 @@ async function dependencies(overrides) {
     canonical: realpathSync, daemonEnvironment, python: captureTrustedPython, verifyPython: verifyTrustedPython, helperProof, invoke, invokeDump, ...overrides };
 }
 async function exchange(rawDaemon, bootId, rawRequest, overrides, dump = false) {
-  let attempted = false, phase = "input", operation = "unclassified", changedFields = [], child = null;
+  let attempted = false;
   try {
     const daemon = daemonCopy(rawDaemon, bootId), request = plain(rawRequest);
-    phase = "request";
     if (dump) {
       if (!exact(request, ["action", "registry", "proof"]) || !["capture", "persist", "verify"].includes(request.action)) fail();
       if (request.action === "capture") { if (request.registry !== null || request.proof !== null) fail(); }
@@ -271,55 +222,36 @@ async function exchange(rawDaemon, bootId, rawRequest, overrides, dump = false) 
       }
     } else if (request !== null && !(exact(request, ["action", "launch"]) && request.action === "prepare") &&
         !(exact(request, ["action", "expected", "expectedProcess"]) && ["stop", "delete"].includes(request.action))) fail();
-    operation = dump ? "dump-" + request.action : request === null ? "registry-read" : "control";
-    phase = "dependencies"; const d = await dependencies(overrides);
+    const d = await dependencies(overrides);
     let observation = null;
     const observe = () => {
-      phase = "boot";
       if (d.boot() !== bootId) fail();
-      phase = "process-shape";
       const current = plain(d.readProcess(daemon.pid));
       if (!exact(current, [...PROCESS_KEYS, "commandLine"])) fail();
       const fact = pick(current, PROCESS_KEYS);
-      phase = "daemon-binding";
       assertBoundMaintenanceDaemonContinuity(daemon, fact, bootId, d.boot());
       // Historical procfs metadata may differ from the frozen audit, but every
       // fresh sample across this complete exchange must still match exactly.
-      phase = "fresh-process";
-      if (observation !== null && !equal(fact, observation)) { changedFields = PROCESS_KEYS.filter(k => fact[k] !== observation[k]); fail(); }
+      if (observation !== null && !equal(fact, observation)) fail();
       observation = fact;
-      phase = "daemon-title";
       const title = current.commandLine?.length === 1 && typeof current.commandLine[0] === "string"
         ? current.commandLine[0].match(/^PM2 v6\.0\.14: God Daemon \(([^\0\r\n]+)\)$/) : null;
       if (!title || !absolute(title[1]) || d.canonical(title[1]) !== title[1]) fail();
-      phase = "daemon-environment";
-      if (d.daemonEnvironment(daemon.pid, title[1]) !== true) fail();
-      phase = "repeat-process";
-      const repeated = pick(plain(d.readProcess(daemon.pid)), PROCESS_KEYS);
-      if (!equal(repeated, observation)) { changedFields = PROCESS_KEYS.filter(k => repeated[k] !== observation[k]); fail(); }
+      if (d.daemonEnvironment(daemon.pid, title[1]) !== true || !equal(pick(plain(d.readProcess(daemon.pid)), PROCESS_KEYS), observation)) fail();
       return title[1] + "/rpc.sock";
     };
-    const socketPath = observe(); phase = "python-capture"; const python = d.python(); phase = "helper-capture"; const code = d.helperProof();
-    phase = "python-before";
+    const socketPath = observe(), python = d.python(), code = d.helperProof();
     d.verifyPython(python);
-    if (observe() !== socketPath) fail();
-    phase = "helper-before"; if (!equal(d.helperProof(), code)) fail();
-    phase = "payload";
+    if (observe() !== socketPath || !equal(d.helperProof(), code)) fail();
     const payload = { socketPath, daemon: pick({ ...daemon, bootId }, PEER_KEYS), request };
     if (Buffer.byteLength(JSON.stringify(payload)) > (dump ? 524288 : 65536)) fail();
     if (dump && request.action !== "capture" && (request.action === "persist" ? request.proof.socketPath : request.proof.target.socketPath) !== socketPath) fail();
     attempted = dump ? request.action === "persist" : request !== null;
-    phase = "invoke"; const result = dump ? d.invokeDump(python, payload) : d.invoke(python, payload); child = result;
-    phase = "python-after";
+    const result = dump ? d.invokeDump(python, payload) : d.invoke(python, payload);
     d.verifyPython(python);
-    phase = "peer-after"; if (observe() !== socketPath) fail();
-    phase = "helper-after"; if (!equal(d.helperProof(), code)) fail();
-    phase = "child-result";
-    if (result.error || result.signal || result.status !== 0 ||
+    if (observe() !== socketPath || !equal(d.helperProof(), code) || result.error || result.signal || result.status !== 0 ||
         result.stderr !== "" || typeof result.stdout !== "string" || Buffer.byteLength(result.stdout) > 524288) fail();
-    phase = "decode";
     const answer = plain(JSON.parse(result.stdout));
-    phase = "answer";
     if (dump) {
       if (request.action === "capture") return validatePm2DumpTarget(answer, daemon, bootId, socketPath);
       if (request.action === "persist") return validatePm2DumpReceipt(answer, daemon, bootId, request.registry, socketPath);
@@ -329,13 +261,9 @@ async function exchange(rawDaemon, bootId, rawRequest, overrides, dump = false) 
     if (!exact(answer, ["version", "pm2Version", "peerVerified", "registry", ...(request === null ? [] : ["acknowledged"])]) ||
         answer.version !== 1 || answer.pm2Version !== "6.0.14" || answer.peerVerified !== true ||
         (request !== null && answer.acknowledged !== true)) fail();
-    phase = "registry"; answer.registry = validatePm2Registry(answer.registry);
+    answer.registry = validatePm2Registry(answer.registry);
     return answer;
-  } catch (error) {
-    const refusal = new Error(attempted ? UNKNOWN : ERROR);
-    try { Object.defineProperty(refusal, "pm2FailureDiagnostic", { value: refusalEvidence(error, { phase, operation, attempted, changedFields, child }) }); } catch { /* Never replace the original refusal semantics. */ }
-    throw refusal;
-  }
+  } catch { throw new Error(attempted ? UNKNOWN : ERROR); }
 }
 export async function inspectPm2Registry(daemon, bootId, overrides = {}) {
   return (await exchange(daemon, bootId, null, overrides)).registry;

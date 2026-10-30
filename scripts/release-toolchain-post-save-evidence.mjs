@@ -8,7 +8,8 @@ import {ACTIVE_BOOKING_INCIDENT as P,ACTIVE_BOOKING_METADATA as M} from './relea
 import {assertActiveMetadataOnlyDelta,assertActiveCorrectedObservationProgress} from './release-toolchain-active-generation-metadata.mjs';
 import {inspectActiveBookingIncidentAfterMetadata} from './release-toolchain-active-generation-incident.mjs';
 import {ownedReleasePath,inspectPinnedExecutionSource,collectRemoteReleaseReview} from './release-toolchain-source.mjs';
-import {inspectPm2Registry,verifyPm2Dump,pm2RegistryDigest} from './production-maintenance-pm2-adapter.mjs';
+import {pm2RegistryDigest} from './production-maintenance-pm2-adapter.mjs';
+import {inspectReleasePm2Registry as inspectPm2Registry,verifyReleasePm2Dump as verifyPm2Dump,captureReleasePm2DumpTarget as capturePm2DumpTarget} from './release-toolchain-pm2-readonly-diagnostic.mjs';
 import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
 import {assertCompletePm2DumpSet} from './release-toolchain-pm2-transition.mjs';
 import {captureProcessFact} from './check-production-runtime-supervision.mjs';
@@ -61,7 +62,7 @@ export async function verifyPinnedPostSaveHistory(){
 export async function verifyPostSaveCurrentProcesses(records,{physical=collectFormalBookingPm2Registry(),priorRegistry=null}={}){
  const {commandLine,...daemon}=captureProcessFact(physical.daemon.pid),boot=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();assertSameLongLivedDaemon(daemon,records.attempt.daemon);same(boot,records.attempt.bootId);same(commandLine,['PM2 v6.0.14: God Daemon (/root/.pm2)']);
  const registry=await inspectPm2Registry(daemon,boot);same(registry,physical.filteredRegistry);assertCompletePm2DumpSet(physical.rows,registry);need(physical.rows.length===25,'owned_resource_changed');
- if(priorRegistry){const {capturePm2DumpTarget}=await import('./production-maintenance-pm2-adapter.mjs');same(pm2RegistryDigest(priorRegistry),records.saved.registrySha256);same(await capturePm2DumpTarget(daemon,boot),records.saved.receipt.target);}
+ if(priorRegistry){same(pm2RegistryDigest(priorRegistry),records.saved.registrySha256);same(await capturePm2DumpTarget(daemon,boot),records.saved.receipt.target);}
  else{same(pm2RegistryDigest(registry),records.saved.registrySha256);need(await verifyPm2Dump(daemon,boot,registry,records.saved.receipt)===true,'operation_unconfirmed');}
  return{daemon,boot,registrySha256:records.saved.registrySha256,processCount:25,savedReceiptSha256:records.persistenceSha256,savePerformed:false};
 }

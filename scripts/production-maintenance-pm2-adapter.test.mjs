@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { controlPm2, inspectPm2Registry, validatePm2Registry, PM2_CONTROL_BRIDGE_SOURCE,
-  capturePm2DumpTarget, persistPm2Dump, verifyPm2Dump, validatePm2DumpReceipt, pm2RegistryDigest, readPm2FailureDiagnostic } from "./production-maintenance-pm2-adapter.mjs";
+  capturePm2DumpTarget, persistPm2Dump, verifyPm2Dump, validatePm2DumpReceipt, pm2RegistryDigest } from "./production-maintenance-pm2-adapter.mjs";
 
 const BOOT = "12345678-1234-1234-1234-123456789012";
 const id = "1:2:3:4:5:1:0:33261";
@@ -117,73 +117,6 @@ test("import from stdin is inert", () => {
   const url = new URL("./production-maintenance-pm2-adapter.mjs", import.meta.url).href;
   const result = spawnSync(process.execPath, ["--input-type=module", "-"], { input: `await import(${JSON.stringify(url)});`, encoding: "utf8" });
   assert.equal(result.status, 0); assert.equal(result.stdout, ""); assert.equal(result.stderr, "");
-});
-
-test("private refusal distinguishes child transport failure without exposing output or granting retry", async () => {
-  const f = fixture(); let calls = 0;
-  f.d.invoke = () => { calls++; return { status: 1, signal: null, error: Object.assign(Error("password=private"), { code: "ENOMEM" }), stderr: "private stderr", stdout: "private stdout" }; };
-  await assert.rejects(inspectPm2Registry(daemon, BOOT, f.d), error => {
-    const d = readPm2FailureDiagnostic(error);
-    assert.equal(error.message, "production_maintenance_pm2_unverified"); assert.deepEqual(Object.keys(error), []);
-    assert.equal(d.phase, "child-result"); assert.equal(d.operation, "registry-read"); assert.equal(d.attempted, false); assert.equal(d.automaticRetryAllowed, false);
-    assert.deepEqual(d.child, { status: 1, signal: null, error: true, errorCode: "ENOMEM", stderrEmpty: false, stdoutBytes: 14 });
-    assert.doesNotMatch(JSON.stringify(d), /password|private|stderr text/); return true;
-  });
-  assert.equal(calls, 1);
-});
-
-test("private read-only refusal locates decode, answer, registry and helper guards without changing rejection", async () => {
-  for (const [phase, change] of [
-    ["decode", f => { f.d.invoke = () => ({ status: 0, stderr: "", stdout: "not-json-private" }); }],
-    ["answer", f => { f.d.invoke = () => ({ status: 0, stderr: "", stdout: JSON.stringify({ private: "secret" }) }); }],
-    ["registry", f => { f.rows[0].pm2_env.watch = true; }],
-    ["helper-after", f => { f.after = () => { f.helper = "private changed helper"; }; }],
-    ["invoke", f => { f.d.invoke = () => { throw Error("private invocation failure"); }; }],
-  ]) {
-    const f = fixture(); change(f);
-    await assert.rejects(inspectPm2Registry(daemon, BOOT, f.d), error => {
-      const d = readPm2FailureDiagnostic(error); assert.equal(d.phase, phase); assert.equal(d.attempted, false);
-      assert.equal(error.message, "production_maintenance_pm2_unverified"); assert.equal(d.automaticRetryAllowed, false);
-      assert.doesNotMatch(JSON.stringify(d), /secret|private|not-json/); return true;
-    });
-  }
-});
-
-test("fresh proc drift names only changed field and keeps pre-send refusal and post-send unknown boundaries", async () => {
-  const early = fixture(), read = early.d.readProcess; let reads = 0;
-  early.d.readProcess = (...args) => { if (++reads === 2) changeProc(early.current); return read(...args); };
-  await assert.rejects(controlPm2(daemon, BOOT, request(), early.d), error => {
-    const d = readPm2FailureDiagnostic(error); assert.equal(error.message, "production_maintenance_pm2_unverified");
-    assert.equal(d.phase, "repeat-process"); assert.deepEqual(d.changedFields, ["processIdentity"]); assert.equal(d.attempted, false); return true;
-  });
-  assert.equal(early.calls.length, 0);
-  const late = fixture(); late.after = () => changeProc(late.current);
-  await assert.rejects(controlPm2(daemon, BOOT, request(), late.d), error => {
-    const d = readPm2FailureDiagnostic(error); assert.equal(error.message, "production_maintenance_pm2_outcome_unknown");
-    assert.equal(d.phase, "fresh-process"); assert.deepEqual(d.changedFields, ["processIdentity"]); assert.equal(d.attempted, true);
-    assert.equal(d.automaticRetryAllowed, false); assert.doesNotMatch(JSON.stringify(d), /1:2:3|commandLineDigest.*[a-f0-9]{64}/); return true;
-  });
-  assert.equal(late.calls.length, 1);
-});
-
-test("private diagnostic reader rejects accessors, proxies and forged output fields", async () => {
-  const f = fixture(); f.d.invoke = () => ({ status: 1, stderr: "secret", stdout: "secret" }); let captured;
-  await assert.rejects(inspectPm2Registry(daemon, BOOT, f.d), error => { captured = readPm2FailureDiagnostic(error); return true; });
-  let touched = 0; const getter = {}; Object.defineProperty(getter, "pm2FailureDiagnostic", { get() { touched++; return captured; } });
-  const proxy = new Proxy({}, { getOwnPropertyDescriptor() { touched++; return {}; } });
-  assert.equal(readPm2FailureDiagnostic(getter), null); assert.equal(readPm2FailureDiagnostic(proxy), null); assert.equal(touched, 0);
-  assert.equal(readPm2FailureDiagnostic({ pm2FailureDiagnostic: { ...captured, rawEnvironment: "secret" } }), null);
-  assert.equal(readPm2FailureDiagnostic({ pm2FailureDiagnostic: { ...captured, child: { ...captured.child, stdout: "secret" } } }), null);
-});
-
-test("private inner location accepts only the exact adapter URL and bounded coordinates", async () => {
-  const f = fixture(), inner = Error("password=private");
-  Object.defineProperty(inner, "stack", { value: "Error: password=private\n at inspect (" + new URL("./production-maintenance-pm2-adapter.mjs", import.meta.url).href + ":123:4)\n at secret (/root/.env:2:3)", configurable: true });
-  f.d.invoke = () => { throw inner; };
-  await assert.rejects(inspectPm2Registry(daemon, BOOT, f.d), error => {
-    const d = readPm2FailureDiagnostic(error); assert.deepEqual(d.innerFrames, [{ file: "production-maintenance-pm2-adapter.mjs", line: 123, column: 4 }]);
-    assert.doesNotMatch(JSON.stringify(d), /password|private|\.env/); return true;
-  });
 });
 const target = () => ({ version: 1, socketPath: "/root/.pm2/rpc.sock",
   daemon: { pid: daemon.pid, uid: daemon.uid, startTicks: daemon.startTicks, bootId: BOOT,
