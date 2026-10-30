@@ -18,6 +18,7 @@ import {attendanceRepairTreeFingerprint as tree} from './attendance-staged-tool-
 import {validateAttendanceBackupEvidence} from './attendance-production-database-migrations.mjs';
 import {bookingPublicationBackupRequest,assertBookingFormalBackupBinding,validateBookingPublicationBackupEvidence as priorValidate} from './booking-formal-backup.mjs';
 import {runOnlineToolGit} from './prepare-online-release-tool.mjs';
+import {currentRetainedApplicationAttestation} from './release-toolchain-application-attestation.mjs';
 export {bookingPublicationBackupRequest};
 const ROOT=path.dirname(path.dirname(fileURLToPath(import.meta.url))),APP='/www/wwwroot/merchant-space';
 const OP='/var/lib/faolla-online-release/'+C,DIR=OP+'/'+BOOKING_FORMAL_DIRECTORY;
@@ -25,6 +26,7 @@ const need=(v,c)=>{if(!v)throw Error('booking_ready_backup_'+c);};
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const same=(a,b,c)=>need(isDeepStrictEqual(a,b),c);
 export function observeBookingReadyApplication(){
+ const attested=currentRetainedApplicationAttestation();if(attested)return attested;
  const application={};
  for(const pin of P.pair){
   const operation='/var/lib/faolla-online-release/'+pin.target,directory=APP+'.web-releases/'+pin.target.slice(0,12)+'-online';

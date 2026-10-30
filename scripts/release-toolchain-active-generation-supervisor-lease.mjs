@@ -4,9 +4,10 @@
 import {assertSameReparentableNodeProcess} from './release-toolchain-process-identity.mjs';
 import * as fs from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';import {isDeepStrictEqual} from 'node:util';
 import {ACTIVE_BOOKING_INCIDENT as P,assertActiveBookingWindow} from './release-toolchain-active-generation-contract.mjs';
-import {captureProcessFact} from './check-production-runtime-supervision.mjs';import {inspectPinnedExecutionSource,ownedReleasePath,collectRemoteReleaseReview} from './release-toolchain-source.mjs';
+import {inspectPinnedExecutionSource,ownedReleasePath,collectRemoteReleaseReview} from './release-toolchain-source.mjs';
 import {bookingHostRead} from './booking-handoff-host-io.mjs';import {canonicalJson,sha256,requireToolchain as need,exactKeys} from './release-toolchain-contracts.mjs';
 import {expectedProcessState} from './release-toolchain-process-birth.mjs';
+import {captureReparentableProcessFact} from './release-toolchain-process-reparent-capture.mjs';
 const ROOT='/var/lib/faolla-booking-active-publications/'+P.candidate,DEPLOY='/www/wwwroot/merchant-space.deploy.lock',OPERATION='/var/lib/faolla-maintenance/merchant-space/operation.lock',caps=new WeakMap();
 const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),toolRevision=path.basename(source),same=(a,b)=>need(isDeepStrictEqual(a,b),'owned_resource_changed'),hash=/^[a-f0-9]{64}$/;
 const read=file=>{const text=bookingHostRead(file),value=JSON.parse(text);same(text,canonicalJson(value)+'\n');return value;};
@@ -33,7 +34,7 @@ export function assertActiveBookingSupervisorLease(lease){
 const parentState=expectedProcessState;
 function verify(value,{requireParentGone=false}={}){
  const {lease,directory}=value;assertActiveBookingSupervisorLease(lease);need(Date.now()>=Date.parse(lease.window.startedAt)&&Date.now()<=Date.parse(lease.window.deadlineAt)+60000,'evidence_stale');
- const currentSelf=captureProcessFact(process.pid);assertSameReparentableNodeProcess(value.self,currentSelf);same(sha256(bookingHostRead(directory+'/supervisor-lease.json')),value.leaseSha256);
+ const currentSelf=captureReparentableProcessFact(process.pid);assertSameReparentableNodeProcess(value.self,currentSelf);same(sha256(bookingHostRead(directory+'/supervisor-lease.json')),value.leaseSha256);
  for(const [file,identity]of value.sourceWitnesses)same(sourceIdentity(fs.lstatSync(file)),identity);
  assertActualActiveSupervisorKernelIdentity({deploy:lease.deploy,operation:lease.operation});
  for(const [name,key]of [['publication-attempt.json','publicationAttemptSha256'],['routing-plan.json','routingPlanSha256'],['ingress-plan.json','ingressPlanSha256'],['worker-completed.json','workerPreparationSha256']])same(sha256(bookingHostRead(directory+'/'+name)),lease[key]);
@@ -42,7 +43,7 @@ function verify(value,{requireParentGone=false}={}){
 }
 export async function adoptActiveBookingSupervisorInheritedLease(){
  need(process.platform==='linux'&&process.getuid?.()===0&&process.execPath==='/usr/bin/node'&&source==='/var/lib/faolla-online-code/'+toolRevision&&process.cwd()===source&&process.argv.length===3,'unsupported_runtime');
- const id=process.argv[2];need(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(id??'')&&id!==P.operationId,'invalid_contract');const self=captureProcessFact(process.pid);same(self.commandLine,['/usr/bin/node',source+'/scripts/release-toolchain-active-generation-supervisor-entry.mjs',id]);
+ const id=process.argv[2];need(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(id??'')&&id!==P.operationId,'invalid_contract');const self=captureReparentableProcessFact(process.pid);same(self.commandLine,['/usr/bin/node',source+'/scripts/release-toolchain-active-generation-supervisor-entry.mjs',id]);
  const directory=ROOT+'/'+id;ownedReleasePath(directory,{directory:true,privateMode:true});const lease=read(directory+'/supervisor-lease.json');assertActiveBookingSupervisorLease(lease);need(lease.toolRevision===toolRevision&&lease.directory===directory,'source_changed');
  const launched=read(directory+'/supervisor-spawned.json');need(launched.kind==='active-booking-supervisor-spawned'&&launched.leaseSha256===sha256(bookingHostRead(directory+'/supervisor-lease.json')),'evidence_invalid');assertSameReparentableNodeProcess(launched.process,self);need(launched.process.parentPid===lease.parent.pid,'evidence_invalid');
  const pinned=inspectPinnedExecutionSource({revision:toolRevision,directory:source});same(pinned.inventorySha256,lease.toolInventorySha256);await collectRemoteReleaseReview(toolRevision);
