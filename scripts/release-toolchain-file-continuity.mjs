@@ -17,8 +17,8 @@ const stamp = value => ['dev', 'ino', 'uid', 'gid', 'mode', 'nlink', 'size', 'mt
 const ancestorStamp = value => ['dev', 'ino', 'uid', 'gid', 'mode'].map(key => value[key].toString()).join(':');
 export function captureFileContinuity({files = [], trees = []}) {
   const rows = new Map(), ancestors = new Map();
-  const record = (file, value, extra = null) => {
-    const row = {stamp: stamp(value), extra};
+  const record = (file, value, extra = null, directoryEntries = null, excluded = []) => {
+    const row = {stamp: stamp(value), extra, ...(directoryEntries === null ? {} : {directoryEntries, excluded})};
     if (rows.has(file) && JSON.stringify(rows.get(file)) !== JSON.stringify(row)) fail('capture_changed', file);
     rows.set(file, row);
     if (rows.size > 200000) fail();
@@ -47,7 +47,9 @@ export function captureFileContinuity({files = [], trees = []}) {
       const before = fs.lstatSync(directory, {bigint: true});
       if (!before.isDirectory() || before.isSymbolicLink()) fail('tree_directory_type', directory);
       const names = fs.readdirSync(directory).sort();
-      record(directory, before);
+      // Directory timestamp granularity is filesystem-dependent. Check actual
+      // names too, so a rapid add/remove cannot hide inside one timestamp tick.
+      record(directory, before, null, names.filter(name => prefix || !exclude.includes(name)), prefix ? [] : exclude);
       for (const name of names) {
         if (!prefix && exclude.includes(name)) continue;
         const file = path.join(directory, name), value = fs.lstatSync(file, {bigint: true});
@@ -74,6 +76,8 @@ export function captureFileContinuity({files = [], trees = []}) {
     for (const [file, expected] of rows) {
       const value = fs.lstatSync(file, {bigint: true});
       if (stamp(value) !== expected.stamp) fail('metadata_changed', file);
+      if (expected.directoryEntries && JSON.stringify(fs.readdirSync(file).sort().filter(name => !expected.excluded.includes(name))) !==
+          JSON.stringify(expected.directoryEntries)) fail('directory_entries_changed', file);
       if (expected.extra && (fs.readlinkSync(file) !== expected.extra.target ||
           fs.realpathSync(file) !== expected.extra.resolved)) fail('link_changed', file);
     }

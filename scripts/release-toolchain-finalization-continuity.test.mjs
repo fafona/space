@@ -61,6 +61,19 @@ test('continuity accepts unchanged bytes; caller result is not a content attesta
   try { const witness = f.pin(); assert.equal(witness.assertUnchanged(), true); assert.equal(witness.files, 2); assert.equal(witness.verified, undefined); }
   finally { fs.rmSync(f.root, {recursive: true}); }
 });
+test('actual directory names detect additions even when the filesystem reports the exact old timestamps', () => {
+  const moduleUrl = new URL('./release-toolchain-file-continuity.mjs', import.meta.url).href;
+  const code = `import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import assert from 'node:assert/strict';import {syncBuiltinESMExports} from 'node:module';
+    const {captureFileContinuity}=await import(${JSON.stringify(moduleUrl)});
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'release-coarse-clock-')),tree=path.join(root,'tree');fs.mkdirSync(tree);fs.writeFileSync(path.join(tree,'a'),'a');
+    const original=fs.lstatSync,oldBig=original(tree,{bigint:true}),oldNumber=original(tree);
+    fs.lstatSync=function(file,options){return file===tree?(options?.bigint?oldBig:oldNumber):original(file,options);};syncBuiltinESMExports();
+    try{const witness=captureFileContinuity({trees:[{root:tree}]});fs.writeFileSync(path.join(tree,'new'),'b');assert.throws(()=>witness.assertUnchanged(),error=>error.continuityReason==='directory_entries_changed');}
+    finally{fs.lstatSync=original;syncBuiltinESMExports();fs.rmSync(root,{recursive:true});}
+    process.stdout.write('coarse-clock-addition-rejected');`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', code], {encoding:'utf8', timeout:10000, maxBuffer:32768});
+  assert.equal(result.error,undefined); assert.equal(result.status,0,result.stderr); assert.equal(result.stdout,'coarse-clock-addition-rejected');
+});
 for (const [name, change] of [
   ['same-size rewrite with restored mtime', f => {const old = fs.statSync(f.file); fs.writeFileSync(f.file, 'bbb'); fs.utimesSync(f.file, old.atime, old.mtime);} ],
   ['new file', f => fs.writeFileSync(path.join(f.tree, 'new'), 'x')],
