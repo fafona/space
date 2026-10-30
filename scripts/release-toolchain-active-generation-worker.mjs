@@ -19,7 +19,7 @@ import {bookingHostRead,bookingHostSql,bookingHostWriteOnce} from './booking-han
 import {bookingHandoffActivationSnapshotSql} from './booking-handoff-activation.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 import {assertActiveBookingWorkerConfigurationTransition,waitForActiveBookingWorkerSettlement,activeBookingWorkerObservation} from './release-toolchain-active-generation-worker-settlement.mjs';
-import {activeBookingPublicationGateProfile} from './release-toolchain-active-generation-publication-scope.mjs';
+import {activeBookingPublicationGateProfile,readAdmittedActiveBookingWorkerContext} from './release-toolchain-active-generation-publication-scope.mjs';
 const ROOT='/var/lib/faolla-booking-handoff/'+P.candidate,NAME='merchant-space-booking-atomic-'+P.candidate.slice(0,12),BASE='/var/lib/faolla-booking-active-publications/'+P.candidate;
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'observation_mismatch'),read=file=>JSON.parse(bookingHostRead(file)),seal=(file,value)=>bookingHostWriteOnce(file,canonicalJson(value)+'\n');
 const raw=pid=>{const rows={};for(const entry of fs.readFileSync('/proc/'+pid+'/environ','utf8').split('\0').filter(Boolean)){const index=entry.indexOf('=');need(index>0&&!Object.hasOwn(rows,entry.slice(0,index)),'evidence_invalid');rows[entry.slice(0,index)]=entry.slice(index+1);}return rows;};
@@ -34,12 +34,12 @@ export function parseActiveWorkerPreConnectRefusal(response){
  if(value.schemaVersion!==1||value.kind!=='active-gated-worker-refused-before-connect'||!['input','formal-witness'].includes(value.stage)||!codes.includes(value.code)||value.socketOpened!==false||value.controlSent!==false||value.mutationPossible!==false||value.automaticRetryAllowed!==false||value.detailsRedacted!==true||response.stderr!==canonicalJson(value)+'\n')return null;return Object.freeze(value);
 }
 function peer(pid){const {commandLine,...fact}=captureProcessFact(pid);void commandLine;return{pid,uid:fact.uid,startTicks:fact.startTicks,bootId:fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim(),executable:fact.executable,executableIdentity:fact.executableIdentity};}
-export async function prepareActiveBookingGatedWorker({lock,toolRevision,window,directory,beforeIntent}){
+export async function prepareActiveBookingGatedWorker({scope,lock,toolRevision,window,directory,beforeIntent}){
  assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);const authority=reviewedBookingExecution(toolRevision);need(authority?.prepared.activeIncidentClosed?.oldOperationId===P.operationId,'source_changed');
  need(typeof beforeIntent==='function','invalid_contract');
  need(directory===BASE+'/'+window.id,'invalid_path');ownedReleasePath(directory,{directory:true,privateMode:true});need(!['worker-attempt.json','worker-completed.json','worker-unconfirmed.json'].some(name=>fs.existsSync(directory+'/'+name)),'attempt_replay_forbidden');
  const absent=()=>need(!fs.existsSync(ROOT+'/worker-enabled.json'),'attempt_unknown'),held=()=>{assertOnlineRetentionHeldLocks(lock);assertActiveBookingWindow(window);need(reviewedBookingExecution(toolRevision)===authority,'source_changed');absent();};
- held();const closed=await inspectClosedActiveBookingIncidentUnderHeldLocks({lock,toolRevision});same(closed.closedSha256,authority.prepared.activeIncidentClosed.closedSha256);need(Date.parse(closed.closedAt)<Date.parse(window.startedAt),'evidence_invalid');
+ held();const closed=scope===undefined?await inspectClosedActiveBookingIncidentUnderHeldLocks({lock,toolRevision}):await readAdmittedActiveBookingWorkerContext(scope,{lock,toolRevision,window,directory});held();same(closed.closedSha256,authority.prepared.activeIncidentClosed.closedSha256);need(Date.parse(closed.closedAt)<Date.parse(window.startedAt),'evidence_invalid');
  same(fs.readFileSync(authority.tool.directory+'/scripts/booking-atomic-worker.mjs'),fs.readFileSync('/var/lib/faolla-online-code/'+P.toolRevision+'/scripts/booking-atomic-worker.mjs'));
  const publication=read(directory+'/publication-attempt.json');need(publication.kind==='active-booking-publication-attempt'&&publication.toolRevision===toolRevision&&publication.closedIncidentSha256===closed.closedSha256,'evidence_invalid');same(publication.window,window);
  const database=JSON.parse(bookingHostSql(bookingHandoffActivationSnapshotSql));assertActiveBookingDatabaseProgress(closed.database,database,{systemIdentifier:'7612049595342295079',databaseOid:'5'});let attempt,intentStarted=false,stage='observe';
