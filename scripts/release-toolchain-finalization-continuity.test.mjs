@@ -113,7 +113,9 @@ test('originally allowed dependency hardlinks stay pinned, including writes thro
   try {
     const other = path.join(f.root, 'other-link'); fs.linkSync(f.file, other);
     const witness = f.pin(); assert.equal(witness.assertUnchanged(), true);
-    fs.writeFileSync(other, 'bbb'); assert.throws(() => witness.assertUnchanged());
+    // Exercise the hardlink write path with a deterministic metadata delta.
+    // Same-size rewrites remain independently tested above.
+    fs.writeFileSync(other, 'changed-through-other-hardlink'); assert.throws(() => witness.assertUnchanged());
   } finally { fs.rmSync(f.root, {recursive: true}); }
 });
 test('tracked files retain single-link policy and ancestors cannot be redirected', {skip: process.platform === 'win32'}, () => {
