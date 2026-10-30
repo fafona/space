@@ -36,3 +36,8 @@ export function assertOriginProbeSocketOwnership(inodes,owners,cohort,masterPid)
  same(Object.keys(owners).map(Number).sort((a,b)=>a-b),[masterPid,...cohort.map(w=>w.pid)].sort((a,b)=>a-b));
  same([...owners[masterPid].socketInodes].filter(i=>inodes.includes(i)).sort(),inodes);const perWorker=cohort.map(w=>{const own=owners[w.pid].epollSocketInodes.filter(i=>inodes.includes(i));need(own.length===1&&owners[w.pid].socketInodes.includes(own[0]),'gate_not_confirmed');return own[0];});same([...perWorker].sort(),inodes);return{socketInodes:inodes,workerSockets:cohort.map((w,i)=>({...w,socketInode:perWorker[i]}))};
 }
+export function originProbeEpollAcceptors(text,sockets,inodes){
+ need(typeof text==='string'&&Buffer.byteLength(text)<=4*1024**2,'evidence_invalid');const active=[];
+ for(const line of text.split('\n')){if(!line.startsWith('tfd:'))continue;const m=/^tfd:\s*(\d+)\s+events:\s*[0-9a-f]+\s+data:\s*[0-9a-f]+\s+pos:\s*\d+\s+ino:\s*([0-9a-f]+)\s+sdev:/i.exec(line);need(m,'evidence_invalid');const inode=BigInt('0x'+m[2]).toString();if(inodes.includes(inode)){need(sockets[m[1]]===inode,'owned_resource_changed');active.push(inode);}}
+ return active;
+}
