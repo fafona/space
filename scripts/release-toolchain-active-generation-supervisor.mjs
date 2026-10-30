@@ -37,6 +37,9 @@ export async function stopExpectedActivePublicationParent(operations){
  for(const signal of ['SIGTERM','SIGKILL']){await operations.verifyOwned();try{await operations.signal(signal);}catch(error){if(error.code!=='ESRCH')throw error;}state=await operations.waitGone();need(state!=='reused','owned_resource_changed');if(state==='absent')return;}need(false,'operation_unconfirmed');
 }
 export async function runActualActiveBookingSupervisor(){
+ need(arguments.length===0,'invalid_contract');const{withPinnedFormalPm2Process}=await import('./release-toolchain-proc-witness.mjs');return withPinnedFormalPm2Process(()=>runProcPinnedActiveBookingSupervisor());
+}
+async function runProcPinnedActiveBookingSupervisor(){
  need(process.platform==='linux'&&process.getuid?.()===0&&process.execPath==='/usr/bin/node'&&/^\/var\/lib\/faolla-online-code\/[a-f0-9]{40}$/.test(process.cwd()),'unsupported_runtime');
  // Spawn evidence uses atomic visibility; waiting for absent is read-only and
  // bounded. Malformed, existing or foreign evidence is never ignored.

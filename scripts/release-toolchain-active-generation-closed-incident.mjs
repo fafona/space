@@ -101,6 +101,8 @@ async function inspect(toolRevision,heldLock,preparedWorker){
  return{kind:'closed-active-incident-current-observation',oldOperationId:P.operationId,generation:P.generation,toolRevision,inventorySha256:source.inventorySha256,directory,closedSha256:sha256(canonicalJson(closed)+'\n'),closureSha256:closed.closureSha256,closedAt:closed.completedAt,qualificationSha256:context.qualificationSha256,qualification,compatibility:context.compatibility,database,actualRoute:P.compatibleRollback,publicProof,originalOperationInodeRetained:true,publicationAuthority:false,observedAt:new Date().toISOString()};
 }
 async function inspectSelectedProfile(toolRevision,lock,worker){
+ const{PROC_WITNESS_PRIOR}=await import('./release-toolchain-proc-witness-contract.mjs');
+ if(toolRevision!==PROC_WITNESS_PRIOR.toolRevision){const{hasProcWitnessContinuationEvidence,inspectProcWitnessContinuation}=await import('./release-toolchain-proc-witness-profile.mjs');if(hasProcWitnessContinuationEvidence())return inspectProcWitnessContinuation(toolRevision,lock,worker);}
  if(toolRevision!=='8607f9d21980f8330cba46eb13c7e8f5d99a8485'){
   const{hasPreIntentContinuationEvidence,inspectPreIntentContinuation}=await import('./release-toolchain-pre-intent-profile.mjs');
   if(hasPreIntentContinuationEvidence())return inspectPreIntentContinuation(toolRevision,lock,worker);
