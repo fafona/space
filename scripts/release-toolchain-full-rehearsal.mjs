@@ -32,6 +32,7 @@ import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observati
 import {publishOnceVisible} from './release-toolchain-once-visible.mjs';
 import {watchOwnedRehearsalChildClose,waitOwnedRehearsalChildrenClosed,ownedRehearsalChildCloseSnapshot,assertOwnedRehearsalChildCloseProof} from './release-toolchain-owned-child-close.mjs';
 import {stageFailureDiagnostic} from './release-toolchain-diagnostics.mjs';
+import {allocateOwnedActiveFixturePorts} from './release-toolchain-active-fixture-ports.mjs';
 export {FULL_REHEARSAL_SOURCES};
 const FILE=fileURLToPath(import.meta.url),NGINX=fs.existsSync('/www/server/nginx/sbin/nginx')?'/www/server/nginx/sbin/nginx':'/usr/sbin/nginx';
 let isolation,diagnosticRoot,cancelled=false;
@@ -266,7 +267,7 @@ async function runFullToolchainRehearsalProfile(activeProfile){
    const database='faolla_booking_activation_'+randomBytes(8).toString('hex'),seeded=await seed(database,defaultPrivileges);postgresSystemIdentifier=seeded.before.systemIdentifier;
    const installed=pg(database,bookingInstalledMetadataReadSql);need(/^[a-f0-9]{64}$/.test(installed),'installed_metadata');if(installedMetadataSha256)equal(installed,installedMetadataSha256,'installed_metadata_changed');else installedMetadataSha256=installed;
    need(seeded.before.serverVersionNum==='150008'&&postgresSystemIdentifier!=='7612049595342295079','actual_pg15');write(runtime+'/original-rows.json',seeded.initial);rehearseIsolatedBackup(isolation,database,runtime);
-   phase='case-runtime:'+name;const ports={};for(const key of ['baseline','primary','rollback','ingress'])ports[key]=await freePort();need(new Set(Object.values(ports)).size===4,'ports');
+   phase='case-runtime:'+name;const ports=activeProfile?await allocateOwnedActiveFixturePorts():{};if(!activeProfile)for(const key of ['baseline','primary','rollback','ingress'])ports[key]=await freePort();need(new Set(Object.values(ports)).size===4,'ports');
    const profile=inspectToolchainNginxProfile(NGINX),lua=profile.httpDirectives?[profile.httpDirectives]:[];
    const window={id:randomUUID(),startedAt:now(),deadlineAt:new Date(Date.now()+600000).toISOString()};
    // Exact ten-minute duration, with no fixture timing override of the seven-
