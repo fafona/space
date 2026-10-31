@@ -13,6 +13,7 @@ import{inspectPm2Registry,capturePm2DumpTarget,persistPm2Dump,verifyPm2Dump}from
 import{inspectReleasePm2Registry,captureReleasePm2DumpTarget,verifyReleasePm2Dump}from'./release-toolchain-pm2-readonly-diagnostic.mjs';
 import{withOwnedCiPm2ProcessWitness}from'./release-toolchain-proc-witness.mjs';
 import{collectOwnedCiPm2Registry}from'./release-toolchain-pm2-observation.mjs';
+import{assertOwnedWorkerEntryCohort}from'./release-toolchain-worker-entry.mjs';
 import{bookingReadyWorkerConfiguration,assertBookingReadyWorkerRawTransition}from'./booking-ready-worker.mjs';
 import{assertActiveBookingWorkerConfigurationTransition,waitForActiveBookingWorkerSettlement,activeBookingWorkerObservation}from'./release-toolchain-active-generation-worker-settlement.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex'),need=(v,c)=>{if(!v)throw Error('equivalence_'+c);},sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -196,6 +197,7 @@ try{
  for(const proof of protectedWorkers){const current=registry().find(row=>row.name===proof.row.name);assert.deepEqual(stablePm2RegistryRow(current),proof.row);assert.deepEqual(fact(current.pid),proof.identity);assert.deepEqual(raw(current.pid),proof.raw);}
  need(!fs.existsSync(root+'/worker-enabled.json'),'owned_worker_gate');seal('active-worker-source-verified.json',{kind:'owned-active-gated-worker-source-transition-acceptance',actualPm2Id:2,formalPm2IdNotAliased:true,actualPidChanged:true,sourceOnlyTransition:true,configuredEnvironmentUnchanged:true,otherTwoProcessesUnchanged:true,staleReplayRefused:true,gateNotOpened:true,sharedUnchangedProductionPeerFraming:true,formalHostTouched:false,publicationAuthority:false});
  stage='actual-esm-worker-entry-and-loop';
+ const esmProtectedRows=registry().map(stablePm2RegistryRow);
  const esmScript=release+'/scripts/booking-entry-probe.mjs',events=root+'/entry-events.jsonl',entryGate=root+'/entry-open.json',entryClosed=root+'/entry-closed.json';
  const fixtureCode=`import fs from 'node:fs';import {bookingWorkerEntryMode} from ${JSON.stringify('file://'+source+'/scripts/release-toolchain-worker-entry.mjs')};import {runBookingAtomicWorkerLoop} from ${JSON.stringify('file://'+source+'/scripts/booking-atomic-worker.mjs')};
  const mode=bookingWorkerEntryMode(import.meta.url);if(mode!=='pm2')throw Error('real_pm2_entry_not_entered');
@@ -210,7 +212,7 @@ try{
  await awaitEntry(rows=>rows.some(v=>v.kind==='status'&&v.status==='paused'));need(!entryRows().some(v=>v.kind==='synthetic-tick'),'esm_gate_closed_tick');
  fs.writeFileSync(entryGate,'{"syntheticOnly":true}\n',{mode:0o600,flag:'wx'});await awaitEntry(rows=>rows.filter(v=>v.kind==='status'&&v.status==='completed').length>=2);
  fs.writeFileSync(entryClosed,'{"syntheticOnly":true}\n',{mode:0o600,flag:'wx'});await awaitEntry(rows=>rows.at(-1)?.status==='paused');const ticks=entryRows().filter(v=>v.kind==='synthetic-tick').length;await sleep(150);need(entryRows().filter(v=>v.kind==='synthetic-tick').length===ticks,'esm_closed_gate_tick');
- const esmRow=registry().find(v=>v.name==='owned-esm-worker-entry');need(esmRow?.pid>0&&esmRow.pm2_env.restart_time===0,'esm_actual_process');
+ assertDaemon();const esmRows=python({action:'registry',daemon:daemonPeer,root,socket:home+'/rpc.sock'}),esmRow=assertOwnedWorkerEntryCohort(esmProtectedRows,esmRows.map(stablePm2RegistryRow),{name:'owned-esm-worker-entry',script:esmScript,cwd:release,pmId:3}),esmIdentity=fact(esmRow.pid);need(esmIdentity.parentPid===daemon.pid&&esmIdentity.cwd===release&&esmIdentity.executable==='/usr/bin/node'&&entryRows()[0].argvUnchanged===true,'esm_actual_process');owned.set(esmRow.pid,esmIdentity);
  seal('booking-worker-esm-entry-verified.json',{kind:'real-pm2-esm-booking-worker-entry-acceptance',toolRevision:revision,realPm2Version:'6.0.14',actualPm2Wrapper:true,argvUnchanged:true,entryMode:entryRows()[0].mode,closedGatePaused:true,openedGateCompletedCycles:ticks,closedAgainNoDispatch:true,syntheticTickOnly:true,applicationOrDatabaseLoaded:false,formalHostTouched:false,publicationAuthority:false,sourceHashes:Object.fromEntries(['release-toolchain-worker-entry.mjs','booking-atomic-worker.mjs','release-toolchain-worker-release-contract.mjs'].map(name=>[name,sha(fs.readFileSync(source+'/scripts/'+name))]))});passed=true;
 }catch(e){
  // Synthetic fixture only: neither this isolated HOME nor these two generated
