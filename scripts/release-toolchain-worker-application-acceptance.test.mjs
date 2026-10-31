@@ -1,0 +1,14 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {spawnSync} from 'node:child_process';import path from 'node:path';import {fileURLToPath} from 'node:url';
+import fs from 'node:fs';import os from 'node:os';import {assertWorkerApplicationInputs} from './release-toolchain-worker-application-acceptance.mjs';
+test('the complete isolated application copy must match every committed source/config input',()=>{
+ const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'faolla-app-inputs-')),source=path.join(temporary,'source'),application=path.join(temporary,'application');
+ try{for(const root of [source,application]){fs.mkdirSync(path.join(root,'src'),{recursive:true});for(const file of ['package.json','tsconfig.json','src/example.ts'])fs.writeFileSync(path.join(root,file),'synthetic-'+file);}
+  assert.deepEqual(assertWorkerApplicationInputs(source,application),{applicationSourceVerified:true,files:3});fs.writeFileSync(path.join(application,'src/example.ts'),'foreign');assert.throws(()=>assertWorkerApplicationInputs(source,application));fs.writeFileSync(path.join(application,'src/example.ts'),'synthetic-src/example.ts');fs.writeFileSync(path.join(application,'src/extra.ts'),'foreign');assert.throws(()=>assertWorkerApplicationInputs(source,application));
+ }finally{assert.equal(path.dirname(fs.realpathSync(temporary)),fs.realpathSync(os.tmpdir()));assert.ok(path.basename(temporary).startsWith('faolla-app-inputs-'));fs.rmSync(temporary,{recursive:true});}
+});
+test('actual TS application completes empty and two-merchant automation through dynamic imports and shared atomic context',()=>{
+ const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),url=new URL('./release-toolchain-worker-application-acceptance.mjs',import.meta.url).href;
+ const program=`const{createSyntheticWorkerApplication}=await import(${JSON.stringify(url)}),fixture=createSyntheticWorkerApplication(${JSON.stringify(source)});for(let i=0;i<3;i++)await fixture.tick();console.log(JSON.stringify(fixture.report()));`;
+ const env=Object.fromEntries(['PATH','SystemRoot','SYSTEMROOT','WINDIR','TEMP','TMP','HOME'].filter(key=>process.env[key]!==undefined).map(key=>[key,process.env[key]]));
+ const result=spawnSync(process.execPath,['--input-type=module','--eval',program],{env:{...env,NODE_ENV:'test'},cwd:source,encoding:'utf8',timeout:60000,windowsHide:true});assert.equal(result.status,0,result.stderr);assert.equal(result.signal,null);const proof=JSON.parse(result.stdout);assert.equal(proof.zeroSiteDynamicImport,true);assert.equal(proof.multiSiteCompleted,true);assert.equal(proof.sharedAtomicContext,true);assert.equal(proof.syntheticCommits,2);assert.equal(proof.claimCalls,4);assert.equal(proof.completedTicks,3);assert.equal(proof.realNetwork,false);assert.equal(proof.formalDatabaseLoaded,false);
+});

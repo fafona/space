@@ -1169,6 +1169,19 @@ export function assertBookingWorkerDatabaseHeld(token,window){
 }
 export async function archiveBookingWorkerDatabaseOperation(options){if(assertBookingWorkerDatabaseHeld(options.lock,options.window).toolRevision!==options.toolRevision)fail('worker_database_scope');const{verifyWorkerDatabaseClosure}=await import('./release-toolchain-worker-database.mjs'),closure=await verifyWorkerDatabaseClosure(options);return archiveOwnedExistingOperation(options.lock,closure.directory,closure.sha256);}
 export async function releaseBookingWorkerDatabaseOperation(options){if(assertBookingWorkerDatabaseHeld(options.lock,options.window).toolRevision!==options.toolRevision)fail('worker_database_scope');const{verifyWorkerDatabaseClosure}=await import('./release-toolchain-worker-database.mjs'),closure=await verifyWorkerDatabaseClosure(options);return releaseArchivedReplacement(options.lock,closure,'booking-worker-database-reconciled','booking-worker-database-replacement');}
+export async function withBookingWorkerApplicationLocks({toolRevision},work){
+ if(process.platform!=='linux'||process.getuid?.()!==0||typeof work!=='function')fail('worker_application_scope');
+ const{reviewedBookingExecution}=await import('./release-toolchain-authority.mjs'),{workerApplicationIncidentSha256}=await import('./release-toolchain-worker-application-contract.mjs'),{observeWorkerApplicationIncident}=await import('./release-toolchain-worker-application.mjs'),authority=reviewedBookingExecution(toolRevision);
+ if(authority?.prepared.workerReleaseAdmission?.databaseContinuation?.incidentSha256!==workerApplicationIncidentSha256())fail('worker_application_scope');
+ return withExistingOperationPreparation({deployLock:DEPLOY_LOCK,operation:OPERATION_LOCK,observe:()=>observeWorkerApplicationIncident()},async(token,context)=>{
+  const held=heldLocks.get(token);held.workerApplication=Object.freeze({toolRevision,incidentSha256:workerApplicationIncidentSha256()});const result=await work(token,context);if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return result;
+ });
+}
+export function assertBookingWorkerApplicationHeld(token,window){
+ assertExistingOperationScopeHeld(token);const held=heldLocks.get(token);if(held.deployLock!==DEPLOY_LOCK||held.operation!==OPERATION_LOCK||!held.workerApplication||window!==undefined&&!isDeepStrictEqual(held.activeWindow,window))fail('worker_application_scope');return Object.freeze({...held.workerApplication});
+}
+export async function archiveBookingWorkerApplicationOperation(options){if(assertBookingWorkerApplicationHeld(options.lock,options.window).toolRevision!==options.toolRevision)fail('worker_application_scope');const{verifyWorkerApplicationClosure}=await import('./release-toolchain-worker-application.mjs'),closure=await verifyWorkerApplicationClosure(options);return archiveOwnedExistingOperation(options.lock,closure.directory,closure.sha256);}
+export async function releaseBookingWorkerApplicationOperation(options){if(assertBookingWorkerApplicationHeld(options.lock,options.window).toolRevision!==options.toolRevision)fail('worker_application_scope');const{verifyWorkerApplicationClosure}=await import('./release-toolchain-worker-application.mjs'),closure=await verifyWorkerApplicationClosure(options);return releaseArchivedReplacement(options.lock,closure,'booking-worker-application-reconciled','booking-worker-application-replacement');}
 export async function acceptBookingWorkerDatabaseKernel(root){
  const anchors=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
  if(process.platform!=='linux'||process.getuid?.()!==0||process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted'||process.env.FAOLLA_RELEASE_PRODUCTION_EQ!=='1'||!/^\/var\/lib\/faolla-eq-[A-Za-z0-9]+$/.test(root)||anchors.some(file=>exists(file)))fail('ci_only');
