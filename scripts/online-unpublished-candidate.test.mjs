@@ -70,7 +70,8 @@ test('independent recursion confirms the complete actual reviewed static import 
   assert.ok(actual.includes('scripts/booking-handoff-policy.mjs'));
   assert.ok(actual.includes('scripts/booking-handoff-retention.mjs'));
   for(const name of ['booking-handoff-active-retention','production-maintenance-daemon-continuity','production-maintenance-pm2-adapter','production-maintenance-trusted-python','release-toolchain-active-generation-contract','release-toolchain-active-generation-readiness-contract','release-toolchain-contracts','release-toolchain-pm2-transition'])assert.ok(actual.includes('scripts/'+name+'.mjs'),name);
-  assert.equal(actual.length, 25);
+  assert.ok(actual.includes('scripts/release-toolchain-worker-release-contract.mjs'));
+  assert.equal(actual.length, 26);
   assert.ok(actual.includes('scripts/google-transition-unbuilt-close-policy.mjs'));
   assert.ok(actual.includes('scripts/contact-wechat-staged-tool-repair-policy.mjs'));
   for (const name of actual) assert.match(name, /^scripts\/[a-z0-9-]+\.mjs$/);
