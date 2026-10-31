@@ -1,0 +1,4622 @@
+{
+  "schemaVersion": 1,
+  "kind": "reviewed-application-code-only-v1",
+  "baseline": "f274ad615550c83717aa7af2ad32339608e6f8aa",
+  "purpose": "Repair enterprise cookie session renewal and hide only routine cashier settlement verification; retain deployed attendance inputs and booking worker application",
+  "database": "unchanged",
+  "dependencies": "unchanged",
+  "environment": "inherit-protected",
+  "mail": "unchanged-off",
+  "backgroundTasks": "retain-certified-worker",
+  "changes": [
+    {
+      "file": ".github/workflows/ci.yml",
+      "role": "verification",
+      "before": [
+        "100644",
+        "e8b68c997355620b58ca66002d6959d4a9e9523e"
+      ],
+      "after": [
+        "100644",
+        "51c2cbbacd5380b0884b9b18687aa1e795d23e88"
+      ]
+    },
+    {
+      "file": ".github/workflows/release-toolchain.yml",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "d389c0aafc51014c449c933005a793ea196136cb"
+      ]
+    },
+    {
+      "file": "docs/booking-interrupted-publication-recovery-5871-20261030.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "ab0abb6f4ed057d26e8ef4f46ac9c2330cf9aafc"
+      ]
+    },
+    {
+      "file": "docs/booking-worker-application-finalization-20261031.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "c5beb22a4096935fafa1790f443226139f90809a"
+      ]
+    },
+    {
+      "file": "docs/no-maintenance-release.md",
+      "role": "verification",
+      "before": [
+        "100644",
+        "3cbbbf4671d68aced9f2d4d36c32141a65baf335"
+      ],
+      "after": [
+        "100644",
+        "f9288920bc02060e3b8947a09d7ae24cc148acaa"
+      ]
+    },
+    {
+      "file": "docs/ordinary-application-release.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "7b1b85c4bdea026e8ca6112276488a84d18eef29"
+      ]
+    },
+    {
+      "file": "docs/recovered-publication-disposition-20261030.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "abd01cca7dc3aa49dbdfdb0804c9180154c39373"
+      ]
+    },
+    {
+      "file": "docs/release-finalization-continuity-20261030.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "8c31a04d5b49be2905280d0c73399bfd40b2139f"
+      ]
+    },
+    {
+      "file": "docs/release-pre-control-closure-binding-20261029.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "f82b9b38ee1150621504d1787be9ab80262338c9"
+      ]
+    },
+    {
+      "file": "docs/release-process-birth-continuation-20261029.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "2f44fd7a78f4ace511fa7e36b12c405895590086"
+      ]
+    },
+    {
+      "file": "docs/release-python36-preconnect-20261029.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "113fc3b7545d9a14f6df2fc75bc4e556ef2f245a"
+      ]
+    },
+    {
+      "file": "docs/release-toolchain-runbook.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "26ea0153080f7d4682963c3a0590f500365dfaf9"
+      ]
+    },
+    {
+      "file": "package.json",
+      "role": "test-scripts-only",
+      "before": [
+        "100644",
+        "31ed34d0ec8e72206ad074b68c5675d2e3872c9e"
+      ],
+      "after": [
+        "100644",
+        "8c339a132bf17f7cf07e2d2f82885a4ffd4f9fc8"
+      ]
+    },
+    {
+      "file": "scripts/application-release-audit.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "de3ec4347fd0d23fe8caf4968d1830d895f2b857"
+      ]
+    },
+    {
+      "file": "scripts/application-release-authority.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "94fa851f9f32786b403741221a49727b50acf38a"
+      ]
+    },
+    {
+      "file": "scripts/application-release-authority.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "2c4e5d3798e0b26f9d4767ca85c76becdd68e580"
+      ]
+    },
+    {
+      "file": "scripts/application-release-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a2fa4dd80b820f29e3158cb825537f69cc2d9c26"
+      ]
+    },
+    {
+      "file": "scripts/application-release-manifest.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "8b9e7f5ae7d07c020d16dcc8d24be6640792fb6c"
+      ]
+    },
+    {
+      "file": "scripts/application-release-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "4d71e317692e6921f5c87309e6feb30cfd736b17"
+      ]
+    },
+    {
+      "file": "scripts/application-release-policy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "04584576bff87b934f64922235fb0c81cf212711"
+      ]
+    },
+    {
+      "file": "scripts/application-release-probe.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e7b5a5a7882dd27c69b63f769a7906dd3f456934"
+      ]
+    },
+    {
+      "file": "scripts/application-release-probe.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "c9128512f1da012e3e45c4273184f59a7f1c6f5d"
+      ]
+    },
+    {
+      "file": "scripts/application-release-publish.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c56e8e741223bc63214e81c5296beb89ca29d7fc"
+      ]
+    },
+    {
+      "file": "scripts/application-release-publish.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "445ec46e22691f75c82f6716c1862133fc3b63b0"
+      ]
+    },
+    {
+      "file": "scripts/application-release-retention.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "db54346e06dc67b841649dc90ddb332943a9c2b2"
+      ]
+    },
+    {
+      "file": "scripts/application-release-retention.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "398eb6a61b7b3aac53e3448101b8ce4976e952cb"
+      ]
+    },
+    {
+      "file": "scripts/application-release-worker-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e952c5c4f64fe663181ab07cff7ff7686fe85b1a"
+      ]
+    },
+    {
+      "file": "scripts/attendance-records-ui-release-policy.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "71f435ccd5d603d700b96f6e41790ced8aba2deb"
+      ],
+      "after": [
+        "100644",
+        "0cd6842fbf5fc62bc47c1352559d0e2faf0e8fc9"
+      ]
+    },
+    {
+      "file": "scripts/attendance-scope-navigation-release-policy.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "be0568aec5c7b35b6d176be2a99753b594e5ac92"
+      ],
+      "after": [
+        "100644",
+        "0b5da87874ef7f80d6b1ef7d600dc47d8c25f288"
+      ]
+    },
+    {
+      "file": "scripts/attendance-staged-tool-repair.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "c50d452b7f47fc38e0310ef04b0d1648749e0416"
+      ],
+      "after": [
+        "100644",
+        "052ba1e5521d30c8482b12286ec6295a3aad5079"
+      ]
+    },
+    {
+      "file": "scripts/booking-atomic-worker.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5a8bb2a49d7cd00a48c36c2d7239dbd0eee51cf3"
+      ]
+    },
+    {
+      "file": "scripts/booking-atomic-worker.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "a409f58087d051744fec056c64872929760b0a83"
+      ]
+    },
+    {
+      "file": "scripts/booking-built-smoke-repair-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "0bfbe755c5e277202b2787f072d5c39682db260f"
+      ]
+    },
+    {
+      "file": "scripts/booking-built-smoke-repair-policy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "67e915abfe37492046e1b1cbf3b1dac67528c65e"
+      ]
+    },
+    {
+      "file": "scripts/booking-built-smoke-repair.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "0426e4ba41ea993ac1495ad7475a565a90022aa3"
+      ]
+    },
+    {
+      "file": "scripts/booking-built-smoke-repair.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "51479bac3b6f824404df690fc43de640e8b1924a"
+      ]
+    },
+    {
+      "file": "scripts/booking-ci-continuation-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c2bee1e4daf1d11ebdda92c3ab5b95ec12059be9"
+      ]
+    },
+    {
+      "file": "scripts/booking-ci-continuation-policy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "3d08da19db3f37ea4c471d0653bb62d6d59b1977"
+      ]
+    },
+    {
+      "file": "scripts/booking-ci-continuation-tool.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e271519d587b2f511de7dbedb0fc7a37ae9c3604"
+      ]
+    },
+    {
+      "file": "scripts/booking-ci-continuation-tool.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "5b0a126388fcd2e2484b3f9244e0493182bb6387"
+      ]
+    },
+    {
+      "file": "scripts/booking-ci-continuation.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "818a5b4a9b8c1e09c99132a5ddeb217b02bca63f"
+      ]
+    },
+    {
+      "file": "scripts/booking-ci-continuation.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "17cd8c12e89a4f44906587e3361ca8c947b414cf"
+      ]
+    },
+    {
+      "file": "scripts/booking-compatibility-extension.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "55f452cb3d407ff8f00e858daa5b7155cd335a5b"
+      ]
+    },
+    {
+      "file": "scripts/booking-compatibility-extension.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "c7da6f7aa2cce9620e7714725efe46ac666708a5"
+      ]
+    },
+    {
+      "file": "scripts/booking-compatibility-tool-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e98998b1d371959e096d3eead55c00e0784d085c"
+      ]
+    },
+    {
+      "file": "scripts/booking-compatibility-tool-policy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "7a57f08bea3f5e6c56a0a2cc2401d917a16911b5"
+      ]
+    },
+    {
+      "file": "scripts/booking-compatibility-tool.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "70a27e660f74ad6575a54e584097bdcf3026ccdb"
+      ]
+    },
+    {
+      "file": "scripts/booking-compatibility-tool.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "2989379c59da92674c44805ce24b086cbba9ca90"
+      ]
+    },
+    {
+      "file": "scripts/booking-dependency-backup.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5ea46858c8ffbb7437861127e17db4ceb0a4a0b9"
+      ]
+    },
+    {
+      "file": "scripts/booking-dependency-backup.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "46c5b24583abaf07d399ee79e6afddce756e73d9"
+      ]
+    },
+    {
+      "file": "scripts/booking-dependency-continuation-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f1247e85768f6ee00fd7a5cd1cad5113abd0997f"
+      ]
+    },
+    {
+      "file": "scripts/booking-dependency-continuation-policy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "01468ff28df626da2d92f9fd426cf7bcc53b0f7e"
+      ]
+    },
+    {
+      "file": "scripts/booking-dependency-continuation-tool.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "68fd1eca6e3c70b65673bdc169b26440cdd1ff55"
+      ]
+    },
+    {
+      "file": "scripts/booking-dependency-continuation-tool.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "91a0311f3c5eac696ae680cd4a06b44bdc190b9d"
+      ]
+    },
+    {
+      "file": "scripts/booking-dependency-fingerprint.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "7bd4b92a01cfa7120196fe051bf64c50cc3e1ca6"
+      ]
+    },
+    {
+      "file": "scripts/booking-dependency-fingerprint.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "3eaf2de0dad9c5a56ef59bc0160b5f32149f7ff3"
+      ]
+    },
+    {
+      "file": "scripts/booking-dependency-pending.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3430e353f75bd5bf8d8429045a28607a3ed89057"
+      ]
+    },
+    {
+      "file": "scripts/booking-dependency-pending.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "56dff58cc80f9b79aadfd5bf0542b0d0f0a8edd5"
+      ]
+    },
+    {
+      "file": "scripts/booking-formal-backup-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9323e3d3f00386dfa32f89ff717732ff33ca82e9"
+      ]
+    },
+    {
+      "file": "scripts/booking-formal-backup-policy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "d73a45a3e43cbdc613316bd83606d8abc22d49a2"
+      ]
+    },
+    {
+      "file": "scripts/booking-formal-backup-tool.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "86d0838d0d5065c46f9f416bab91ed7a7bc01d60"
+      ]
+    },
+    {
+      "file": "scripts/booking-formal-backup-tool.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "a00b9fecb000c9ebbd912f17d9f7ede7feef9fe6"
+      ]
+    },
+    {
+      "file": "scripts/booking-formal-backup.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3c6f14b700c82c33b0a8874e84c9f7e71d2c47d3"
+      ]
+    },
+    {
+      "file": "scripts/booking-formal-backup.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "229da463dad9a3a3949a8a9bdeb2d75de1ed75b8"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-activation.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a18bfd340be751c6ceff8681623df231d633672b"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-activation.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "a45789c349f72fa0adc8cabced12637f07d2e28e"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-active-retention.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3291dbd75d7ecb2059fa51dc4eab5f9aeade07c2"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-active-retention.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "d9becc76689fb0c20562d18a6327317624b9d399"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-build.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "760af4d05907ff83d141d4d3b81a3f5d5569e00e"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-build.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "5abd9641923702e3def6a063abed590ce24a17be"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-execution.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "0d430749838daa8907fdd6483ec00ca5115959a0"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-execution.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "106991e0f73cd5747c04385fb368f1cbd230066e"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-host-io.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "586d078c98d013184ac5b8212fc72f598b1c46c0"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "4e02b2a8f8211e49cc31d23d87ac3a29c79866b7"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-host.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "b58cc194a5b9f33e2d69524744062ed342454d6a"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-ingress-acceptance.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "757649c26cb26efa1aaaaa04a968e4b107cc1ad7"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-ingress.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "32c7755118ac8cba87099f3541658e79343f5626"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-ingress.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "64739f9863c36cd4edb727e73f9e6c59da2c3708"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-journal.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "7cc03a2a5387f53f513d9af97a3e6a99f6f5f7c6"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-journal.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "587369fade95c8cabda525f0e57eb9c9fb48c035"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-legacy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9692de21f400eae391983d8f68932c03913aae72"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-legacy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "3d4bfc5add33046a64f0e0be3d2c5a1b153fea82"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-native-acceptance.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e972e5d11db4e518ecd24a4ccaca08f97b8136bd"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-native-acceptance.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "12c67a874e2ef057ad66b6c0cc47e1274c060cd7"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-pending.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a9e37bca6cedf8ef2fe886693e706a3c57202c61"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-pm2-pause.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3316f1e904eddb8b04b29ee0a50fdc0c44b31eee"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-pm2-pause.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "bd35adb3749a271386ccd0dced39862f21f12adb"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "0a66289eacaff4bda395cedfb701f33957040735"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-policy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "f6b1f89568e848ef9821e63e963d042ce4fb54eb"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-postgres-acceptance.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "6c6b41ca35418cdc2294c4d121754e8390d52575"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-recovery.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a7bbd7e398b6b9298fec43aaf23b722b00805acd"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-recovery.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "c13de9a8e6495e35fddf7b5af3ac96fd4e76deb6"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-retention.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ea946993f1aa876bae2f4ac3dc175da9fc4072bd"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-retention.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "9e07c33aa299d009372ff6cd1babb060ab24ef6b"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-routing.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "d2036fa828bc77da6851912ea766a652170ea7a8"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-routing.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "0ec55262fba77ba635ad1f23445c5b75c24a9132"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-rule-backup.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "32bd81e1142b5a30c5074ee3cb4d3e614c45d28c"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-rule-backup.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "565b14b5e24864b25624bc6a48cd06da6f3633d2"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-rule-repair.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "142beba3528b5f2afc4c45e263cec86603de2038"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-rule-repair.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "6813fada965f390e86244b5ce812518236f062bd"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-runtime-acceptance.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "deb0045bfc9a36d672c9b8e93891e6f0a3b68350"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-runtime.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "1a479983128072055ca0ca5b09b1f43b4e2d7286"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-runtime.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "3852b6b3d70fd6b4d046a10e5b82f1f881ff048f"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-tool-preparation.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "0fd9e52f73a50410542dce2f4abaf09710fc0097"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-tool-preparation.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "5c2325060e7656ab9eebfcf76573b9e5cfd0fbdf"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-watchdog.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5840f027c5a981f68eb142886a605eecab30d44f"
+      ]
+    },
+    {
+      "file": "scripts/booking-handoff-watchdog.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "33d2097225db1e417226930b8acb533d27c35186"
+      ]
+    },
+    {
+      "file": "scripts/booking-publication-compatibility.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "c59f6cf6e29e0d268824f5cd4918ad31be8c8694"
+      ],
+      "after": [
+        "100644",
+        "a9cd9bad2f3d2b417594273c60700153c5d2aa73"
+      ]
+    },
+    {
+      "file": "scripts/booking-publication-compatibility.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "1c4d2c54c63ac5ea9822426823cb11b25e840f8c"
+      ],
+      "after": [
+        "100644",
+        "f3f34e8d452a35d1bbb6e437cf587737a902b081"
+      ]
+    },
+    {
+      "file": "scripts/booking-publication-database.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "f2b0b6655b2b722f7feb0d95ca8e04d18939a47e"
+      ],
+      "after": [
+        "100644",
+        "92164af46131d289ec06c556543ed55fccf41df8"
+      ]
+    },
+    {
+      "file": "scripts/booking-publication-database.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "0d1b0a1cbad9db23e45deb18efc17a44bc586bbc"
+      ],
+      "after": [
+        "100644",
+        "41b6cbf4830746100b5e4163812e7f9b040edd73"
+      ]
+    },
+    {
+      "file": "scripts/booking-publication-policy.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "dc86644232fa76bc38ae18af60c50ce25e33df69"
+      ],
+      "after": [
+        "100644",
+        "437a7652c6d801c9ce50b0cdf7ef7342f385865b"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-backup.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "8c406fea48bef8af99b913c1e931124742bb4761"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-backup.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "887ed4f62088fb03cd95a2aeb769ba339f007da1"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-evidence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "27d667aa00289d5ab5a68268a0189fef2100b1d5"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-pending.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3c3bd44a8a02e223a4180ad7cecc5e8a175d377a"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-pending.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "46186b9c5225f661f527a4c7ae9720ecfe0a7a84"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-pm2-replace.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "71790bc53c1af5cb40fc431886a91403a5597925"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "6980ab9cf553a4ae13af47683e15e1ed1bf9988c"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-policy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "73fc66e6443fe862b331bba1ac2ea3a292bdb9e0"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-runtime.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "86755374c115cc379c2c40673509ef987c58a604"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-runtime.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "5f30ef9dac1b3acb9f73ee1bfdefec4601fc87af"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-tool.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f126084d1eb5c0ad2659bfc512b64409ffbd4471"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-tool.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "477d7ac5797394a592a37438ddf9ace69b910782"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-worker.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3712620abb9262332899cb60150fae67b1eba332"
+      ]
+    },
+    {
+      "file": "scripts/booking-ready-worker.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "20143cfc542fa6c2b5a2f7a467b88afcfe611505"
+      ]
+    },
+    {
+      "file": "scripts/booking-registry-backup.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f581ec4b256619d8fca62033738d03dd7d4163d7"
+      ]
+    },
+    {
+      "file": "scripts/booking-registry-backup.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "4ae72eecd06846a47c4de690ce5ba063b1bec6a7"
+      ]
+    },
+    {
+      "file": "scripts/booking-registry-extension.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "301622c84d94bb9332f7e7c16173c3a459bce679"
+      ]
+    },
+    {
+      "file": "scripts/booking-registry-extension.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "039b82225428c6b0709258a20b1265d4dd466949"
+      ]
+    },
+    {
+      "file": "scripts/booking-registry-tool-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f253effa098ad1225f6be6a25274077ff6595df6"
+      ]
+    },
+    {
+      "file": "scripts/booking-registry-tool-policy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "81cb2d6944edbfae02d67a9f68e9141bca686dcf"
+      ]
+    },
+    {
+      "file": "scripts/booking-registry-tool.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3fc31d29489f0399a6c2f741111c810c8d01b35b"
+      ]
+    },
+    {
+      "file": "scripts/booking-registry-tool.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "437d27879190c2ccb1ed1c6ede0599cdf6689e52"
+      ]
+    },
+    {
+      "file": "scripts/booking-release-probe.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "d3af8ac152475541a3a6898cb180b0703a08edeb"
+      ]
+    },
+    {
+      "file": "scripts/booking-release-probe.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "e95a61151d7e249462ffd052a471a2aaba81db67"
+      ]
+    },
+    {
+      "file": "scripts/ci-workflow-contract.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "2d4dd34b54584642fec3c0e1cd55d8d99b3c4cab"
+      ],
+      "after": [
+        "100644",
+        "03be0a54640014e236e1aec46520cc55b47d4723"
+      ]
+    },
+    {
+      "file": "scripts/customer-code-release-policy.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "9f06f290926044aa104e65d258c19dcef38b84ab"
+      ],
+      "after": [
+        "100644",
+        "49e861091890228812657b4ffbd77e52903ea240"
+      ]
+    },
+    {
+      "file": "scripts/enterprise-session-renewal-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "50465f93e5ae9a69bd3b61bc6b34ca5c3230789d"
+      ]
+    },
+    {
+      "file": "scripts/enterprise-session-renewal-browser-contract.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "b1d0119ab3c7369fc7dc0f885580e42d1bc2e7c6"
+      ]
+    },
+    {
+      "file": "scripts/online-release-cache-cleanup.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "13543c911afa5428a8ed65105c8484c7b8f2b710"
+      ],
+      "after": [
+        "100644",
+        "9fefc45bd88d6cb43e37eae15a71365b3d233254"
+      ]
+    },
+    {
+      "file": "scripts/online-release-cache-cleanup.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "b4206027757393b1b201b30a8eb492fbefb8d807"
+      ],
+      "after": [
+        "100644",
+        "2cd983b2d6df361650b5c308905ad7d1fb0b73e6"
+      ]
+    },
+    {
+      "file": "scripts/online-release-retention-policy.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "be0afdfdd071fd92bf0ba92eb349b4c2585764bc"
+      ],
+      "after": [
+        "100644",
+        "7b77abd1e401a207f3482990a8bf9318db97fc32"
+      ]
+    },
+    {
+      "file": "scripts/online-release-retention-publication.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "80c66f75bd07cfcef019d2cf9c2a53882f399a29"
+      ],
+      "after": [
+        "100644",
+        "c15dd730a134dbd5dcea38600c0ae4e51ebdb025"
+      ]
+    },
+    {
+      "file": "scripts/online-release-retention-writer.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "4649abee7967c0372b2a99152100b7e3f43402a8"
+      ],
+      "after": [
+        "100644",
+        "cef4c1aecd037ec3ca84312e18e3b3a34803b6a1"
+      ]
+    },
+    {
+      "file": "scripts/online-release-retention.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "ab197efb8b60c48189d67daee52afc52034b3158"
+      ],
+      "after": [
+        "100644",
+        "24c4662a076d58ca7f55f66c95cd643ffa38f895"
+      ]
+    },
+    {
+      "file": "scripts/online-release-retention.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "36d4b8801b7705d713266aaedfe1d0f1491aea06"
+      ],
+      "after": [
+        "100644",
+        "fd28048930812db5b5b2c9816252d1370ecf7763"
+      ]
+    },
+    {
+      "file": "scripts/online-traffic-publication-policy.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "d774e47d5286808b034a01250d0fffc05f88307d"
+      ],
+      "after": [
+        "100644",
+        "42a712bbc3edf80ad856a01030ba762d81725eb0"
+      ]
+    },
+    {
+      "file": "scripts/online-traffic-release-policy.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "1ccecdbe51d9b1af18499632abc8df1192393cc5"
+      ],
+      "after": [
+        "100644",
+        "98847ca46e24334ff5f1af28151e05daf1b732f7"
+      ]
+    },
+    {
+      "file": "scripts/online-traffic-release.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "27f517990b14be55f8d08a476f4cf7c2ede7f6bd"
+      ],
+      "after": [
+        "100644",
+        "f426215b2b0220314d2632077b5c40ef09fc0a8d"
+      ]
+    },
+    {
+      "file": "scripts/online-traffic-release.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "540b72773a8bcb46f08a7a988dfd453dedbb8ebc"
+      ],
+      "after": [
+        "100644",
+        "ba99f5f71d6bfa8e3982b3673a1357518c008dbe"
+      ]
+    },
+    {
+      "file": "scripts/online-traffic-retention-integration.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "9999d63456c9c1d4bdf571de13ee2087cef44c79"
+      ],
+      "after": [
+        "100644",
+        "9709349a4590ad9bfed1c20f490cbdc37bca3259"
+      ]
+    },
+    {
+      "file": "scripts/online-unpublished-candidate.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "2673962f07d28d3e8c5423e62b6ddaac22eb4fc6"
+      ],
+      "after": [
+        "100644",
+        "751688c5023cddd2c54668bc2e8374c4ea9ad6b5"
+      ]
+    },
+    {
+      "file": "scripts/production-maintenance-ingress-acceptance.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "50307b20b1422c4b35230fd94a771b7df2483f8e"
+      ],
+      "after": [
+        "100644",
+        "3680291922ad6d42afeae371cd5d42076762854a"
+      ]
+    },
+    {
+      "file": "scripts/production-maintenance-ingress-acceptance.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "7b47c6ca321b8a0dd636bf92e0f882da87e98b34"
+      ],
+      "after": [
+        "100644",
+        "f7546fa92eb29379d9741889c253773dd119907f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-error-evidence.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "9614eee72099f25a168b03ce1e713345c0d9c40a"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-fixture-ports.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c303bceae1c97eca38b2ba2f7ba5747ac78e5212"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-fixture-ports.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "a8cefb915d08c3dac1a236fc941fa96e6979175d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-certificate.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "20dc35bb1dcfd68def129f69530333b52b141b75"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-certificate.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "e79a9d5eb6677debb098e12ea2730e55d7c30fb5"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-close-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c05083f3632d7c8da51b0749fa196a969def0a71"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-closed-incident.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f016918265eb9bbbd0d6f5888ed9855095444e5e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-closed-incident.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "7f4fe09148e60c5e1666cf83cdd1047998e3b1cd"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-closure.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "451367f2e9a421fd6d6a857f710f29ff4cdb7393"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-closure.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "177eb3d6652fa7d84464534b09f8657f1dbf1c64"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "38fc5ce7e519245479fc73bb6617db8ba9968dcc"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-contract.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "abda82343afc46d1f894b3ab8626cacc5e80fb31"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-incident.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "003eddbba1122e137d3dfb8f7f8e2bba39b5e852"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-incident.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "9f64b3e251d515886937763bc9803a8e0d2a806d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-ingress-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "7506e94afb5ff04aeb5771215c4dd499eae17c9c"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-ingress-host.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "4a94e83ae1dec0e611504a5c1929eb98881db77f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-ingress.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "25f0b2a16af121e8474422aabf606fe3244ef357"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-ingress.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "1c6c4c8b91a56c0b918a69c83cb0ebb6cbcb5eab"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "29897b7c218780dbe876f61b33344125160bbf5a"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-install.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "f949cbf8c64fb54ec70dba597815c4121ba0350e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-lock-acceptance.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "07b0292ff856e9dcc8eb5840deb3721279424b92"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-lock.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "2c253947a6c8beb57b740ee899312b332b17c74e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-metadata-preflight.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "93a5e356e023bd3478cfbe8fc9dbcc2c3098d83b"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-metadata.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "aa8ea3869bc167e102470c5db9552fca0d1cdee9"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-metadata.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "5b38c0f6dd640a18b42e8dd124af326d50a38a13"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-owned-lab.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "25dd6584a47d41f0fd75a98926122954ae82627f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-persistence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "bf033b483ad7666ebfe73b5c4cc4e97a94392c1e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-persistence.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "521b135fa49cc7a8094ba6041c5c646fe547cdd1"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-pm2-worker.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "08aca0b1df5c4e5814c1d99380001ce79ee8bd3f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-pm2-worker.test.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "7b14cb5544687a7b22c6cb941987c8a755f44354"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-preservation.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "388d7e2341770fdba13b8227a6a86729e46b646c"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-preservation.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "bf35b941ee5ca51d67a8689c10ed961b56ae80e6"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-profile.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f23e1c6872d7e320135b7fef79a758eee7bdd0a9"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-profile.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "92abce10528c7706245325528848d2b384ae47c9"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication-metadata-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "dddda4c78b83ac6e034888df6a7ddd96e0f46e19"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication-metadata-host.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "0222d81b650dd9bb8a0943f3774b10af01525cad"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication-metadata.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "22c6f17dbdf07d749d4c3c239cc7f0cddb088c01"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication-metadata.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "0f0739fd4fbc34711ffcb1a655dd1c795c3b9872"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication-native-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "2bd62800718c5697cc5de989f31a8c8c28941c19"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "83d62ef3af1194effb9f07205995a7d1ee60a394"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication-native.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "15cf1b4b661739238f89b97d464d24140f1922a5"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication-observation.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "fee1111364e0e7a2216e299766498161e60d4aef"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication-observation.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "8be79ff7a46c5f66cda9d846517bd3eefec8f521"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication-scope.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9b71b9bb4ba7b3dedf2541c5e255501d06b529ed"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication-scope.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "f58be6add34029770f0bb96fc1c92fd09fc9fced"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "fa468ca00627bf5e7d693922741df4c1318cca37"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publication.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "e23c0d6917573c635b7240e7ed9da5c744ca910c"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-publish-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e2b5b68cf2fe4fd9a21f4977626b413dc64a2549"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-qualification.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ab15c55350c46fb65efb51481c09fbe2bdb6538c"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-qualification.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "4a5c17ce3ff1a981e9b5f9c8687716aea7c1d861"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-readiness-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "11ebaa4f16dd22e0e8c607856954326901f9b386"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-readiness-contract.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "899331b414decf5f49cc34610b1e9eece724a203"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-readiness.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "1663b8220e02999ca9841d5f53c6e7102ee3f772"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-readiness.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "84605aa14f22eb45ca2f949f06dd0f1d2f75349a"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-reconciliation-case.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "67346c1044518d7ea802ea924864cee5d3faac6e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-reconciliation.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "36d3cdcd4df9e42775f0682e8ff65839446f772a"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-reconciliation.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "82ba13480708794283404f5e41190ba57d6fd827"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-recovery-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "fcbacd020f5a0b0e168f66c635efefbd9018e33b"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-routing-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ffd3a7875bc67ebc80be1daa6b012ea741602631"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-routing-host.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "10a0a525b86512728302900433839795f2515219"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-routing-native-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9262401132fc3f1edfbcc8486fe8f0226a447fee"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-routing-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e3da379db4a6a5848cf199b41d5ba53ceaca3e89"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-routing-native.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "11ee59c21e66fbecc9eeda4fb3faad4b48f907c1"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-routing.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "49cf0136c7f0412bd5917267d70707ebc343b915"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-routing.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "4dfb2aa4422a3aa7078d88b21e6d459d418b82b7"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-supervisor-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5b59d41f56e9cba6abe47e9c1573df6427ac63d8"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-supervisor-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5ad8f57ff7ce189582b4342961fdacd46076ebdf"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-supervisor-lease.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "546c595fbf34157f08e06224f345e5f17a81694e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-supervisor-lease.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "9aa8057cd7f982fb40e9aae1712a869c14a0a3a9"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-supervisor.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "fcb482990b1ca41f4279b26c2c3366ce6f630e4d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-supervisor.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "76df4bebaed24801d772fa57092c51bd7c3b1e4c"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-worker-settlement.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "24beee05160e87c699a105b22c64ea4b9340cce9"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-worker-settlement.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "26ea500b95327dce86c164474fc58887fecde173"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-worker.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "8a66ba4c00a35e33cffd8822b96fe9b510689f20"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-generation-worker.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "09316996165f9b52a4829bc99366585c24b101a4"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-active-startup-diagnostics.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "1b42b9d10266d43d009ffbb9b66a2b34d93c1a88"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-admission-context.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f91bbf39b0478d2b9f6ee1963b838cefcaf79daa"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-admission-context.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "724a1a659fa67166598a465879f237496c5fa886"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-application-attestation.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "11f20797b78b9fd63a8c6afe837f614c37c2e389"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-approved-network-admission.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9bec76c714f46e2cad3fa0e3599c8a8f28d99cef"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-approved-network-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "0362a4ab0398f1cbbf370cefbed01898e00db773"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-approved-network-policy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "221bf37a6f19cb96b46fa8179e6865a28e2cd2b0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-authority.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5f6e10f3c0d45c77beef678fbbfd5e2b83cbd5ba"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-backup-producer.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3ce54971d11a2281d8832942d57757cd757f8a04"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-backup-producer.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "52a782d9d9aac460ccc45cc1e5d6244760b22ef6"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-booking-admission.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ff9a5f72c850a03c8c973b7f575465a50cf16e57"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-booking-compatibility.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "7ca1ef6a647cd98baeddcdda050ea2e143e7d0f3"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-booking-compatibility.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "5dd4cbe66e3c4e41414a748f6b1dcff29ce12814"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-booking-profile.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e598e856f338f0d922ea7ea31872645528522ac3"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-bundle.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "b183748ea050f0ff6d02b4c5a2f1297c31c06d0f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-bundle.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "f1e832c390f7c42a9404204756aa2eb0b902b52c"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-cli.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "b076a730b524bfa0c88c6272843be9db12edf4d5"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-contracts.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e7c3041684753de1d4255a2a72a8ddbd1ffc13e2"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-contracts.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "7193699f58346b681675492de38e0a55457b6376"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-daemon-identity.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "324c89d9c115b4818f87ae8ea5d2231490c13467"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-daemon-identity.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "b6d59de1e88ba8953fe48526890c4f43ff888a67"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-diagnostics.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "63383937cbc7ea8bea72a936099d995beafc8fe1"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-diagnostics.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "de6498540a1276a55b3355b6811936f4ec0874b1"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-doctor.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "674d9eb5746a29f222f5d0c6e7297579e1824c79"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-doctor.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "34aad3383679e5cde90d08650084e907e255d9c5"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-file-continuity.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "711dd4927eeed8ec52fe12f890a558a86d5c4eec"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-finalization-continuity.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "c46c5a0944129ad9207db3c3734baa2f23efa5e6"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-full-active-rehearsal.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "4b5eb10f937d3ec9d1dabcbc0ad8486d7635cb89"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-full-interrupt.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5912bb0789dbe6d699892561d412542675daafcd"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-full-interrupt.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "b952a7e1c95646e3633e60b4a7d62eb8c9520cb4"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-full-rehearsal.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "decc91f2b640d788fb56cf6496e84702ad4702e9"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-full-rehearsal.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "e8bfb88415b3abf757a9651c64816aad83974856"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-historical-fixture.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "6fce9984276c0e4df1cd962d31e0029ee374ce17"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-historical-native-provenance.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "10f7e2d8a54d761e2d3f7c70fb9aebebf1a206ef"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-historical-native-provenance.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "56b256a5d0b9a1facfb23fd247bfe8406d3fdb9c"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-historical-origin-provenance.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "04ff1faedae9acb8c0ab5f07a846cd9cbcab0bff"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-ingress.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "122a64a4d9926509b32e672a3765246684de39f7"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-ingress.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "70436675d3297707e0d30aec5f3d094572825bf5"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "06ca604cfb1889939d28848872aa5c5625c35c5f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-interrupt-acceptance.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9d3ab7a0f0d175ea4530141b69e4812b6d8fc352"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-interrupt.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "ee4604ef8a207987a7558ccdbff001bc898d8dbd"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-interrupted-recovery-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5d706a37f9be0f34e7563b3d727a0c77587c2846"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-interrupted-recovery-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c26ff4ea56c0127de656fa84644ccfe5bd015c45"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-interrupted-recovery-evidence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e39e3f11538bcc9daede957dd232f594d0910384"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-interrupted-recovery-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ae5d826c129c45e28a9427aed8c6d07b39e3d270"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-interrupted-recovery-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "51d7127e64d38932ba5520bdc79dd72968d7cc68"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-interrupted-recovery-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e8281120309865f4617fb84eb6666b59fafd30eb"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-interrupted-recovery.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "da19ee35d21d63c8a347da8923b4fd43873a6bb4"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-isolation.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "7977bcaaf9be565cf891cfcff4930f628b628084"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-isolation.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "1eaeaf29552362ac56bb77748177ebc2d5076ab9"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-journal.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "df336c859339588a1ad56abaa6e035d117041fe1"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-journal.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "7b8da98d0b789157c3961ccef2f9de4003227c75"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-legacy-runtime.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c026cab236f9889a3026538d663bb494d0fccd7b"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-legacy-runtime.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "61187e326b99d6278a7ee0871f47ee249d59faa1"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-managed-pause.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "6e143de3753b5a9192909341b6ef1f964d9cdf18"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-metadata-freshness.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "f2905df8755072731932b3a6c6492f38b5030270"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-metadata-recovery-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "1f61df3e655de6a78c36a3a4c0b311bca9c748b2"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-metadata-recovery-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c9940162f7ca0cb10c3d575e56e12bff07f2fd04"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-metadata-recovery-evidence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ca9f6c74e901b53fff3577660af548338425671e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-metadata-recovery-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f0b44baaabe88178b0a07314dfeb13bee29724c6"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-metadata-recovery-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ced13e26065456d1fca6caaa4b4e43b800e135f5"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-metadata-recovery-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "8579c6ae4c9f07df5b37142fd3841d9b56edab2f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-metadata-recovery-pm2-worker.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "cf2d784c0c39451459f1052a674be83670d8b8cc"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-metadata-recovery-pm2-worker.test.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "0dc090e8a44a68339086ee0b05c25de24cbf0634"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-metadata-recovery-selector.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "716e37a4154f845e07815bef31fe846ff7e66aa9"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-metadata-recovery.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "e0f1f325fb94924c986e2a15e6c3fb699d7ce0ca"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-native-inventory.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "4a412609dffae1d1da43b961268fa300662af0f0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-once-visible.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "213295d92a8411258b50d130325d7792f28411c3"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-once-visible.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "801e594c61fffdbe1709f33d826fa88f1d88dd6d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-gate-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a4411e52f13f1bbc93d5f827b265e596ab82e505"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-gate-probe.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ce11a7cead1b506d10cbd7897cf666300361ddd2"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-gate-probe.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "13150260f069539238f0fd7e32d0d5fe9031b147"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-probe-ingress.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "40a652b57f6587a54de543a761a33b852e64d67a"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-probe-ingress.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "6dd83b8a136b8ac2e8a35d117874a5944f4bc8c4"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-probe-listener-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "49ed92f77d0992e40234533b6924fc505cbe2c61"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-recovery-closure.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e5c209383c8adffa13d378f24f1d00756e73b750"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-recovery-closure.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "eb352deee8febebb027a57ac382b6bd24abeebd7"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-recovery-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "891cf30a79b19c98c5ba884917d5c5567f0b0134"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-recovery-contract.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "4d704dfd213025904805a60d25dac8e0bf0de03b"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-recovery-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "6e4db2ce87ef9b2e94f06c75122ea6e14900a89e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-recovery-evidence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ad58f2de50fbffc1838989789f73bf8bc6560d93"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-recovery-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "47284aea1a3d72e7c6e0dbb2c3e7af5cb23ef593"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-recovery-install.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "3be9dd65e99c4281ddfe262f24cbd97f2ac55a4d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-recovery-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "60d84812a5341a2b2ff6202819b23dabc1a3670c"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-recovery-pm2-worker.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a14c63f0b954f7769c6381a93bfb60d016198de9"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-origin-recovery-pm2-worker.test.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "d922ea29ea6f3eec9de71ee92da60423d7bb4159"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-owned-child-close.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "b9a96c97dc743b507b1c1a89e9ba3979cec8f405"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-owned-child-close.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "466ca13abb41c1d21aee9112d75689321ba55fc3"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-owned-exit-diagnostics.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "fc584d69956f8dc4e82a68e04fa9fbda68c88003"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-owned-exit-diagnostics.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "743db1c94845889d0f262860e76b98c500682085"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pack.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "062f876ad5202dd6497d8f8e529cb2e07a682bce"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pm2-observation.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "b1287dbc8707105bd583292bf9dca6eb383827f4"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pm2-observation.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "959fb112d3968ebe27b4cb73613d64d4e29a6ab3"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pm2-readonly-diagnostic.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "b3e7415dc5cd862c0316db865fea9feed1c730f4"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pm2-readonly-diagnostic.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "550bad62f04ddac0fd71a5454341fabef0ec0492"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pm2-real-acceptance.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "28424663996491b66b726fe8f8a846dd23430c38"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pm2-transition.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f3ed88918928281b4c2720033c6fcb7601cd7a7b"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pm2-transition.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "0de5b15ad7ddb6aff0bb7991adbc00add2003275"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pm2-worker.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "bf5a05eaf5f0d311ac69584ef47df8c5577fc195"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pm2-worker.test.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9e46c65552c7b4765ef8ac4204544751fe64ebbb"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-post-save-closed.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "39204087067b91de6719b543e82733a24e25eab7"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-post-save-closure.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "1d1d869ef0719e332266dc9aeabde3b5d0baeba3"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-post-save-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "4cda3994ae4b649718f82c0ccf1d7a2203170ca0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-post-save-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e5c171032cffc376b889e7a704575b5de72e50d7"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-post-save-evidence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e12d63d3b13bba7408aca0421ab8d5bffacdac97"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-post-save-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "40088d169bbbd61bbcf9fd34e381eb9cb433f0c0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-post-save-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9a48d2316ba5d885e28c033bb9735074be99ea4d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-post-save-pins.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a242313cf093868ee902983838a10969c41dc661"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-post-save-profile.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "cafc4fd09419f4c2fe3474f69c68c53689ebf511"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-post-save.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "28d4cca5a289814fe051843a3dc302b9cb558a3f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-control-closure.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "68e5d53e70def070c16393912b4c1ddc52b0e444"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-control-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "7fb548624dfdef01b4d8090bc7482f06fe8492f0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-control-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "8386ac5429c7db0df1f3b90978eeb30ded4860d3"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-control-evidence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "8e3b2c7511f71279d07980b6a1fdb31874f62bef"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-control-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a3df0ca4a6012abd8773e035b9689083200aabd4"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-control-pins.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c4b58cf329e551b5f20fcf18885cc610eedc48b6"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-control-profile.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "b35fb27145348a7e33a62aa522f4b3ea7d2285c0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-control.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "fb3a0c88c14ea306538a654933c1d4ee85d802f8"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-intent-closure.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "b11494bbc3f01d2620fbb4fc021be2472135a8f6"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-intent-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "2090fb2bd4e516d65f99af8fe7adb8f5116eec51"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-intent-contract.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "c377b98d18fc84c80d2e1789d258a3ed3ee4235b"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-intent-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e45832c0ef5ca71726acbd9b92269aa434f9ed46"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-intent-evidence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "0c7acb260e343096b10d96ec40ef6e1a503b0494"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-intent-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e758578070c1a055ddd6b2e5eb8934ec695c0408"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-intent-orchestrator.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "833e0ab83b53c3a0937508b31400d1f2b5c7b765"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-intent-pins.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ce675ca8fd8b28ce34d1d8e76969dc694593a705"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-intent-preservation.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "611c64b2abfb4446bcfff6a17e055ec81e8c9ca5"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-intent-preservation.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "6386f182499e167839fb4cc2c92c477daa0bf970"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-intent-profile.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "35cdda3cd4d40c4c80b92248754f03e8331c2d25"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-intent.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "31d68b4f16e14fffe283368b12243c52a012b2b0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-route-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "983799777084a2e6b79d8a82d6d56e79df67dc06"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-route-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a8a4bee4de76f826151d4227ce86836e52e9047e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-route-evidence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5d5a41450a64568cea77753123d7217d1680e0e1"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-route-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "8c5885e593d2b6ba189054b050f87dc0bd36baf0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-route-pins.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9aa6658def82053b82dd06cacf553b777d521075"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-route.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "17e0ab26e90c62911f6f51b7489e8a71b2c170a3"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-supervisor-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "57647a52ae38fb87096fa15009fa39e0ab50cd2b"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-supervisor-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3ba9075e36ad3fe3af021e53065c9a95886762ff"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-supervisor-evidence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "77a7dd7747d3663cd694115971a08f41fc080d35"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-supervisor-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a216cc77db3c9fb1d5684f2d6877e26258b1b59a"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-supervisor-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c334e0cb8742533fd908e7a1d982bd264a900c2e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-supervisor-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c180af694b888cdc9cf5e01410380b1cc6039f6e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-supervisor-pm2-worker.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c7890978eceb1ef917f645b17985b87458a2f06d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-supervisor-pm2-worker.test.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "56762610d000e45bc2eaedee06cd285f726a6e25"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-supervisor-selector.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "b42e5b41040fca98c7eb64d9862ce817d688b38b"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pre-supervisor.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "efe05ceabc3423d5057177934b87c5113a12c457"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-preconnect-closure.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "2e23dac7497d2b1e3811ad9e93c86e062f20cdef"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-preconnect-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "7a351f090b1baa420b18beb56a31882af8cb67e4"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-preconnect-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9a69aba141b67bae862643ebc1da6ba9703db3cc"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-preconnect-evidence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "1c084ad8366d2b3ac9406a77abf84da236017cae"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-preconnect-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ac35fea0fbd933dac43c2e5a1ebdf71536ac7e70"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-preconnect-pins.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "10f1d59d49720d4e661bc1ce2fbc19d86be7565b"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-preconnect-profile.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "094cea9ca8accf183ec401dc5e04869974319a65"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-preconnect.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "7aae94e06957fc29c67ca20078a26082b7629fc2"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-proc-witness-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5552a239ae1fbf8c4e58ca54e998e88556cc96be"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-proc-witness-contract.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "01565a7ca46cfc89d7d0a1e6ee997506af6c9d89"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-proc-witness-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a03a72fafe1a86a004893f3cf68eb845c8091e3b"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-proc-witness-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "55a01976640bcf7a5defd9b657648b62ca22c73e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-proc-witness-install.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "f3a4f0af02fb05d4353a3308ffd4e832051b6289"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-proc-witness-profile.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "02a9981d7794c3db7c2e8eb5f6c980de61bf4f78"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-proc-witness.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "750d213ccfccd524c0a85ff795b151e69746b2e5"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-proc-witness.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "41b723e10d4128fc4590a70f1c6fb1d81377c82e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-process-birth.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c2f008a9a6bd55a28ae779ca8de5406ac66b6b28"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-process-birth.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "315cfc45cd23fda41ba53019b2abfcbfa5049f07"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-process-cwd-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9260274be59ed48f1bf1228b0427056ed5988036"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-process-cwd-native.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "efedcae0c26b96fa32926316040a69202522daef"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-process-identity.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "1e69a0eb10e32da1929313c9465fd25877aeec47"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-process-identity.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "19c327f57fecafc4e2cdfe0478890bab4c7f68a0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-process-reparent-capture.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "2adc870f6b40a8302569d619a1ce4ba8ff896e0d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-profiles.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "d8eae1b0c69e85cc2e217aee244607fa27a7b607"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-profiles.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "37ac0064e23a7b87718fbf58b544a19425d40547"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-publication-state.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "b58c6ca3a20ceea67c550be84c8fa849a874fdb8"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-publication-state.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "0e1ae1dc678aaa29305c124d7102ebdae3f27779"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-python-runtime.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "6f986aa74231caaf6c53b7724c3e1e2a349d857a"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-python-runtime.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "2ffe742597b1264d66b0e2b525c0b09e589f9d66"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-attempt.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5684bc96cbfe393e10e7b24c542e58776551c522"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-attempt.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "23915259e4bacca534d4ca711cfb975776ca05d9"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "4b7b4f2d9674eee031fbfc175bc962c1f0b77848"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-publication-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e1cb6a2165032a124d9f5add3755ad2aeb59e99d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-publication-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5ca99ce7eb58ea72fd1a0f188f7dfb96678ffee0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-publication-evidence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5402f6a182cd27a9571b310c540d374d68e25523"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-publication-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "bfdc60e4dac5ed167c0478548ba505b13ee713b8"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-publication-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "d87ccfb4dee1e165f6c9eaf6fd77cb1d26a57288"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-publication-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c9acdda42393b3d07447756d0e2aad7b47e82ba8"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-publication-pm2-worker.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a054f9002c66993eac4efaa6e2c5c6103cf15a0f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-publication-pm2-worker.test.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "1f8e48f75a183aaea8d40db04870ef753a2c2c7d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-publication-selector.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3b7b357c71adce34c79eda31e243ed01c4d74295"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovered-publication.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "de9885528244836558ebacb68be413b8be87b467"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovery-diagnostics.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "d7f8b0466f6e18f8d7c3c8be5885521dbfcdf8c8"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovery-diagnostics.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "c9aff1ed1f904f30dea46f10815e4a5c830752f0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovery-probe.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ff913fa6505604ddcfa3fb2236b49f316d84801d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-recovery-probe.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "a24d5992df3a93208554e7bb6debc60e712ab0de"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-rehearsal.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "4d74dee21ade8ab235fa921d7b05cf4ac5a4c0a9"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-release.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "b2a2c411c3e3f57f9377cd3b7f85a8da9f692a24"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-release.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "804f6ec6a786ed04abe1dcde394b127058971e88"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-restored-network-admission.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "cc389a2e2784136a1211a341568b96f5b9e50178"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-restored-network-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "cfab8f48e416de7355a51c2aeb9c403896793407"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-restored-network-policy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "8650e62d8188cb6330ba27aed0c1826ae2ad56c8"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-retained-booking-source.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3230228ad26190217cf1558cfe735283b905db4d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-retained-booking-source.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "11da347efd75d4ae2b10084a8847cfcdaf67bb46"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-selector-boundary.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "9251ccfe87a7f7a7338f37f7aeae3e364d4bfab8"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-settled-pre-ingress-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "46c6bb1dd3b75643e28d25783e845fea91a2dce8"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-settled-pre-ingress-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "4b559e75831a4765be598fdaad3d9b10cbaaa92a"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-settled-pre-ingress-evidence.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "1b5a9786c3cc2f9d5220b147dac91efe7e9d4bfa"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-settled-pre-ingress-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e634cdf48e483a86ce659380885a22106bf4b967"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-settled-pre-ingress-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "5a5d522d4abf96de6ff47d2d31876ad0fa53ea8f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-settled-pre-ingress-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ab1ba6cc45b39e34ca40996797151392b064080a"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-settled-pre-ingress-pm2-worker.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e123f7acdaf60290c39598a79d53886779eb1241"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-settled-pre-ingress-pm2-worker.test.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "b2e957d9e96c5044886c164041245bafe3121577"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-settled-pre-ingress-selector.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "54714868f3cf45abc75976756515e0d0daec97fb"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-settled-pre-ingress.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "983b84fa9384cf7821726598ad1eb8912bd75380"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-source.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "71712f26c4927030452f457b5f9474242db66840"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-source.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "ceef71c3c53005ce6959d45b4817b6ffd9fc4953"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-supervisor-profile-preflight.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "71fceb07b7c0aad396bb24d5772f89d63f9314d0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-application-acceptance.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e27df6b8c055cc6f9b8b00136d2d8d87ea5e68d3"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-application-acceptance.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "6240d25a14b29fb31c2ecf4317817b3a3a2edad7"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-application-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "01a23517c7536abc046e65082bf215c360ba748a"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-application-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "16fa34b5cb7d9a79801bb727b07d00a17528d00e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-application.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "970c2ee45bb7b6f010815f5439912ef6d1ee4244"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-application.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "14ac3c6140dea402644fa8f012440f65ee7c0a07"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "545340f0d6632566267de4cc54c7c63e32ff2c4e"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-contract.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "64508b97a4058497d2ff99c3ec9b5133d799855d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-current-preflight.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "0f262e418d11500441a16f681d85f114e60256b5"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-current-preflight.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "b946215f4fbb877dea205675811c04e21372ecfc"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-database-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "881e6247e84730e94322e45e12e93bfe6eed71f0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-database-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c3ffe0b74edc7d65c199cf7835c4157a3cc1d6e2"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-database.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ef76691303720baa1597afd5cd485557d2e49f04"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-database.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "5b2e10ecf2dece43081840cdd8294d90be29edd4"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "4685b71b753defda7ce343637459d86986a893b9"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-entry.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "d32ac8fec14ef628c731b9ba80a1c10c8d68aec0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-python.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "f327ebd71bd8150f3f871d5b56008131adb7e7e0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-release-ci.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f4d87eb1afbb5fb8f326dfae5c892978cca41da1"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-release-ci.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "1943e8e6ad05c0ff6c8e5b01768343dcca524b33"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-release-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ed6bf358b399db4ae38e53572ded8c9fbd67915f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-release-entry.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c497e9b1ff14ec5184b62c9d30cdb61be52d9a18"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-release-host.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f926829714e008690ae96ddce8b27bdf8c7c5335"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-release-install.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "40de1edde596c0eccd2c76e997f968843986cdca"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-release-pm2.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ebb5e69e57cbc409782fead3df4580694cc92f21"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-release-pm2.test.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "7e87f0e3b7a568e843f7600f27f0398768cb30ff"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-release.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "9f30783fced07d38c7689f34c7d7f86db13c787f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ff0c81882a05ea4c3b0b6a714152903157aaba8d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-workflow.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "e1bd4f1301bbed56d4298ea39cdb6272a88609d6"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "2c6f39d18ffea82851f1dfa82e5577d651dc00ae"
+      ]
+    },
+    {
+      "file": "scripts/test-support/application-release-retention-fixture.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "4538e0b547d4128567d38fe80f5a2cb61f36a9e4"
+      ]
+    },
+    {
+      "file": "scripts/test-support/booking-ci-source-base.json",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a652dca88943bb411e0c719a92f48a35d7dc1e27"
+      ]
+    },
+    {
+      "file": "scripts/test-support/booking-handoff-active-fixture.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "bc7db211498aaa62a699a65a0b0b1c2f63ef45dd"
+      ]
+    },
+    {
+      "file": "scripts/test-support/booking-handoff-retention-fixture.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "649ca6a80e291d6511faeba11820161b04392205"
+      ]
+    },
+    {
+      "file": "scripts/test-support/booking-handoff-routing-fixture.json",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3513c7d504074ccdad4d61a5768b3e3e56b223e0"
+      ]
+    },
+    {
+      "file": "scripts/test-support/release-toolchain-historical-bootstrap.json",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3272836414733db64255c0e0f6bd29d9d8e68dad"
+      ]
+    },
+    {
+      "file": "scripts/test-support/release-toolchain-historical-ci.json",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "7ea2b2c0160ae2869e1843048f3a5c438a72bc5c"
+      ]
+    },
+    {
+      "file": "scripts/test-support/release-toolchain-historical-fixture.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "afac6292a4dc2b5b33ed591284d595328fbb76ac"
+      ]
+    },
+    {
+      "file": "scripts/test-support/release-toolchain-historical-tree.json",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "2e5933fe76512e3aa6a649f605fdfbca07e7f1c4"
+      ]
+    },
+    {
+      "file": "scripts/test-support/release-toolchain-pause-fixture.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "430307cdd1efc9a4cb01ec1b6d5ae49f5c37b0af"
+      ]
+    },
+    {
+      "file": "scripts/test-support/release-toolchain-pre-route-closed.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "0ce052547d20afaea3015e214866fe6faf5c3aa8"
+      ]
+    },
+    {
+      "file": "scripts/test-support/release-toolchain-reparent-child.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c5441375a49eb749fb004eb93cb0eabf016dae7b"
+      ]
+    },
+    {
+      "file": "scripts/test-support/release-toolchain-self-import-fixture.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9f59e53ca255045de78f4a892ca5c20c5b543e25"
+      ]
+    },
+    {
+      "file": "scripts/test-support/reviewed-application-fixture.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "3c80af6892bf06f1e1a99930912e21683c037b85"
+      ]
+    },
+    {
+      "file": "scripts/test-support/reviewed-application-fixtures.json",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "8f3a7e972736949031d4e535b5fde942fdee8b4e"
+      ]
+    },
+    {
+      "file": "scripts/test_booking_handoff_pm2_pause.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "d1f170523d22627be19b7a133ac89e9a9e1ea4e7"
+      ]
+    },
+    {
+      "file": "scripts/test_booking_ready_pm2_replace.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "2a1cf98332d84d673124d237971ac32b7f129001"
+      ]
+    },
+    {
+      "file": "src/app/api/auth/merchant-session/reauth.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "1959ed0666178f05fb0d1cd8cabc0cf04f744dc1"
+      ]
+    },
+    {
+      "file": "src/app/api/auth/merchant-session/route.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "877af2574391fd3ebb7acc85b85fc82a6d205d44"
+      ],
+      "after": [
+        "100644",
+        "6cf17841e2487bf45bdd174741b35b2a46b5b4a5"
+      ]
+    },
+    {
+      "file": "src/components/admin/MerchantEnterpriseManager.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "17128ab3c6ac361b41f0511b96be2bfc47a1411e"
+      ],
+      "after": [
+        "100644",
+        "6d6eb1b3b4668304d99780ca6b1cd958b2378171"
+      ]
+    },
+    {
+      "file": "src/components/admin/MerchantPointRedemptionCashier.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "86413c869c313b8a3ba61571daab0784cd9d30a5"
+      ],
+      "after": [
+        "100644",
+        "4fc8faab0147c11438b7f309691c581380b7de9a"
+      ]
+    },
+    {
+      "file": "src/lib/merchantEnterpriseAuth.server.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "e6e34bf7800bc30a0d1163f1ec9a8957e299ab09"
+      ],
+      "after": [
+        "100644",
+        "d95eecc1b7d10dcc5a67d96f5761e57e924025fd"
+      ]
+    },
+    {
+      "file": "src/lib/merchantEnterpriseAuthAvailability.server.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "29f5aac831db909338bd604f442b6a7b132e84d2"
+      ]
+    },
+    {
+      "file": "src/lib/merchantEnterpriseSessionRecovery.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "c53d8cc83cfc6da792b7be0b9a657b8dc92b7e03"
+      ]
+    },
+    {
+      "file": "src/lib/merchantEnterpriseSessionRecovery.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "c6d289ccc4005bb946f62b0724f17d4e75c85548"
+      ]
+    },
+    {
+      "file": "src/lib/merchantRedemptionCheckoutRecovery.test.ts",
+      "role": "verification",
+      "before": [
+        "100644",
+        "74a0d1488cd1f8282e2c76bf33dc9c9dde212c61"
+      ],
+      "after": [
+        "100644",
+        "5fc60553a190fcb42a1a92ae2dee004b1f31f704"
+      ]
+    },
+    {
+      "file": "src/lib/merchantRedemptionCheckoutRecovery.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "70234c69e0ed351c524779454a5bdc3abdbc7162"
+      ],
+      "after": [
+        "100644",
+        "50407e388386514675acebad38cd7161d22f4a83"
+      ]
+    }
+  ],
+  "focusedTests": [
+    "src/lib/merchantEnterpriseSessionRecovery.test.ts",
+    "src/lib/merchantEnterpriseAuthAvailability.server.test.ts",
+    "src/app/api/auth/merchant-session/reauth.test.ts",
+    "src/lib/merchantRedemptionCheckoutRecovery.test.ts",
+    "scripts/enterprise-session-renewal-browser-contract.test.mjs"
+  ]
+}
