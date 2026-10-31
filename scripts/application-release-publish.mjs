@@ -24,6 +24,15 @@ export function applicationPublicationServicePlan(target,baseline){
    'ExecStopPost=/usr/bin/node '+entry+' recover '+target+' '+baseline],
   command:['/usr/bin/node',entry,'run',target,baseline]};
 }
+export function ordinaryPublicationSteps(target,baseline,current){
+ applicationPublicationServicePlan(target,baseline);
+ if(current===null)return{stage:['stage-application',target,baseline],activate:['activate',target]};
+ need(current?.target===target&&current.baseline===baseline,'continuation_identity');
+ if(current.status==='preparing')return{stage:['finish-stage',target],activate:['activate',target]};
+ if(current.status==='ready-no-database')return{stage:null,activate:['activate',target]};
+ if(current.status==='active')return{stage:null,activate:current.applicationCompletion?.status==='completed'?null:['finish-application',target]};
+ throw Error('application_publication_continuation_requires_review');
+}
 function invocation(action,target,baseline){
  const plan=applicationPublicationServicePlan(target,baseline);
  need(process.platform==='linux'&&process.getuid?.()===0&&process.execPath==='/usr/bin/node'&&
@@ -107,34 +116,37 @@ export async function recoverOrdinaryApplicationPublication(target,baseline){
 
 export async function runOrdinaryApplicationPublication(target,baseline){
  const plan=invocation('run',target,baseline),root=directory(target),readState=()=>state(target);
- need(!fs.existsSync(root+'/admission.json'),'attempt_exists');
- return jobLock(root,()=>executeOrdinaryApplicationPublication({target,
-  admit:async()=>{const review=await collectRemoteReleaseReview(target);assertReviewFresh(review,target);seal(root,'admission.json',{kind:'ordinary-application-publication-admitted',target,baseline,review,inventorySha256:plan.inventorySha256,mailEnabled:false,at:new Date().toISOString()});},
+ return jobLock(root,()=>{
+ const selected=ordinaryPublicationSteps(target,baseline,readState()),attemptId=randomUUID(),attempt=root+'/attempt-'+attemptId;
+ fs.mkdirSync(attempt,{mode:0o700});bookingHostSync(root);
+ return executeOrdinaryApplicationPublication({target,
+  admit:async()=>{const review=await collectRemoteReleaseReview(target);assertReviewFresh(review,target);seal(attempt,'admission.json',{kind:'ordinary-application-publication-admitted',target,baseline,attemptId,selected,review,inventorySha256:plan.inventorySha256,mailEnabled:false,at:new Date().toISOString()});},
   stage:async()=>{
-   await child(plan.source,['stage-application',target,baseline],root+'/stage.log',1500000);
-   need(readState()?.status==='ready-no-database','stage_incomplete');
+   const args=ordinaryPublicationSteps(target,baseline,readState()).stage;
+   if(args)await child(plan.source,args,attempt+'/stage.log',1500000);
+   need(['ready-no-database','active'].includes(readState()?.status),'stage_incomplete');
   },
-  activate:()=>child(plan.source,['activate',target],root+'/activate.log',600000),
+  activate:async()=>{const args=ordinaryPublicationSteps(target,baseline,readState()).activate;if(args)await child(plan.source,args,attempt+'/activate.log',600000);},
   audit:()=>observeApplicationRelease(target),
   complete:async proof=>{
    if(fs.existsSync(root+'/completed.json')){const completed=JSON.parse(bookingHostRead(root+'/completed.json'));need(completed.target===target&&completed.proof.certificateSha256===proof.certificateSha256,'completion_changed');return;}
    seal(root,'completed.json',{kind:'ordinary-application-publication-completed',target,baseline,proof,mailEnabled:false,at:new Date().toISOString()});
   },
-  failed:async error=>seal(root,'controller-failure.json',{kind:'ordinary-application-controller-failed',target,errorSha256:digest(String(error?.message)),originalFailureRetained:true,at:new Date().toISOString()}),
+  failed:async error=>seal(attempt,'controller-failure.json',{kind:'ordinary-application-controller-failed',target,attemptId,errorSha256:digest(String(error?.message)),originalFailureRetained:true,at:new Date().toISOString()}),
   recover:async()=>{
    // A fresh node has the immutable recovery invocation, independent of this
    // controller's event loop, argv and failed child's operation token.
-   const log=root+'/controller-recovery.log',fd=fs.openSync(log,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);
+   const log=attempt+'/controller-recovery.log',fd=fs.openSync(log,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);
    try{const result=spawnSync('/usr/bin/node',[plan.entry,'recover',target,baseline],{cwd:plan.source,env:bookingHostEnvironment(),stdio:['ignore',fd,fd],timeout:1500000});need(result.status===0&&!result.signal&&!result.error,'independent_recovery_unconfirmed');}
    finally{fs.fsyncSync(fd);fs.closeSync(fd);}
    const current=JSON.parse(bookingHostRead(RELEASE+'/active.json'));return{actualTarget:current.target};
   },
- }));
+ });});
 }
 
 export async function startOrdinaryApplicationPublication(target,baseline){
  const plan=invocation('start',target,baseline),review=await collectRemoteReleaseReview(target);assertReviewFresh(review,target);
- need(!fs.existsSync(ROOT+'/'+target+'/admission.json'),'attempt_exists');
+ ordinaryPublicationSteps(target,baseline,state(target));
  const args=['--unit',plan.unit,'--collect',...plan.properties.flatMap(value=>['--property',value]),
   '--setenv=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin','--setenv=HOME=/root','--setenv=PM2_HOME=/root/.pm2','--',...plan.command];
  const result=spawnSync('systemd-run',args,{cwd:plan.source,env:bookingHostEnvironment(),encoding:'utf8',timeout:20000,maxBuffer:65536});
