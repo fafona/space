@@ -1143,3 +1143,42 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.error(/^online_(retention|tool)_[a-z0-9_]+$/.test(error.message) ? error.message : 'online_retention_writer_failed'); process.exitCode = 1;
   });
 }
+
+// Separate exact recovered metadata failure; existing factories stay unchanged.
+export async function withMetadataRecoveryLocks({toolRevision},work){
+ if(process.platform!=='linux'||process.getuid?.()!==0||typeof work!=='function')fail('metadata_recovery_scope');
+ const{reviewedBookingExecution}=await import('./release-toolchain-authority.mjs'),{metadataRecoveryBindingSha256}=await import('./release-toolchain-metadata-recovery-contract.mjs'),{observeMetadataRecovery}=await import('./release-toolchain-metadata-recovery-evidence.mjs'),authority=reviewedBookingExecution(toolRevision);
+ if(authority?.prepared.metadataRecovery?.bindingSha256!==metadataRecoveryBindingSha256())fail('active_incident_review_required');
+ return withExistingOperationPreparation({deployLock:DEPLOY_LOCK,operation:OPERATION_LOCK,observe:async()=>{if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return observeMetadataRecovery();}},async(token,context)=>{const held=heldLocks.get(token);held.metadataRecovery=Object.freeze({toolRevision,bindingSha256:metadataRecoveryBindingSha256()});assertMetadataRecoveryHeld(token,context.window);const result=await work(token,context);if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return result;});
+}
+export function assertMetadataRecoveryHeld(token,window){assertExistingOperationScopeHeld(token);const held=heldLocks.get(token);if(held.deployLock!==DEPLOY_LOCK||held.operation!==OPERATION_LOCK||!held.metadataRecovery||window!==undefined&&!isDeepStrictEqual(held.activeWindow,window))fail('metadata_recovery_scope_required');return Object.freeze({...held.metadataRecovery});}
+export function metadataRecoveryArchiveWitness(token){assertMetadataRecoveryHeld(token);const held=heldLocks.get(token);if(!held.activeArchive)return null;const a=held.activeArchive;if(a.vault!=='/var/lib/faolla-booking-metadata-recovery/24db70cd-c4ed-4aeb-b55a-a05bdc6b6eb6/'+held.activeWindow.id||a.original.ino!==2624971)fail('active_archive_not_authorized');equal(dirIdentity(privateDirectory(a.destination)),a.original,'active_archive_original_changed');return Object.freeze(structuredClone({...a,released:held.activeScopeReleased===true}));}
+
+export async function archiveMetadataRecoveryOperation(options){assertMetadataRecoveryHeld(options.lock,options.window);const{verifyMetadataRecoveryDisposition}=await import('./release-toolchain-metadata-recovery-host.mjs'),closure=await verifyMetadataRecoveryDisposition(options);return archiveOwnedExistingOperation(options.lock,closure.directory,closure.sha256);}
+export async function releaseMetadataRecoveryOperation(options){assertMetadataRecoveryHeld(options.lock,options.window);const{verifyMetadataRecoveryDisposition}=await import('./release-toolchain-metadata-recovery-host.mjs'),closure=await verifyMetadataRecoveryDisposition(options);return releaseArchivedReplacement(options.lock,closure,'metadata-recovery-disposition-reconciled','metadata-recovery-replacement');}
+export async function acceptMetadataRecoveryKernel(){
+ if(process.platform!=='linux'||process.getuid?.()!==0)fail('native_linux_root_required');
+ const{executeMetadataRecoveryDisposition}=await import('./release-toolchain-metadata-recovery-contract.mjs'),{bookingHostReplace,bookingHostWriteOnce}=await import('./booking-handoff-host-io.mjs');
+ const root=fs.mkdtempSync('/var/lib/faolla-metadata-recovery-native-');fs.chmodSync(root,0o700);const cases=[];
+ for(const outcome of ['normal','wrong-state','unknown-after-metadata','unknown-after-publication','unknown-after-archive','operation-drift','wrong-completion']){
+  const directory=root+'/'+outcome;fs.mkdirSync(directory,{mode:0o700});const deploy=directory+'/deploy.lock',operation=directory+'/operation.lock',vault=directory+'/vault',publication=directory+'/publication';privateWrite(deploy,'owned-disposition-lock\n');for(const file of[operation,vault,publication])fs.mkdirSync(file,{mode:0o700});privateWrite(directory+'/state.json','recovered\n');privateWrite(publication+'/failure.json','original-failure\n');
+  const original=dirIdentity(fs.lstatSync(operation)),publicationId=dirIdentity(fs.lstatSync(publication));let completed=false,cause,archived=false;
+  try{await withExistingOperationPreparation({deployLock:deploy,operation,observe:()=>({ownedOnly:true})},async token=>{
+   const checked=()=>assertExistingOperationScopeHeld(token),busy=spawnSync('flock',['--nonblock',deploy,'true'],{timeout:2000});if(busy.status!==1||busy.signal||busy.error)fail('ci_real_lock_not_held');let refused=false;try{assertMetadataRecoveryHeld(token);}catch{refused=true;}if(!refused)fail('ci_token_production_leak');
+   await executeMetadataRecoveryDisposition({assertHeld:checked,inspect:()=>bookingHostWriteOnce(vault+'/intent.json','one-owned-intent\n'),preserve:()=>{if(outcome==='operation-drift'){fs.renameSync(operation,directory+'/displaced-operation');fs.mkdirSync(operation,{mode:0o700});}},
+    resetMetadata:()=>{bookingHostReplace(directory+'/state.json',outcome==='wrong-state'?'foreign\n':'recovered\n','staged\n','owned-disposition');if(outcome==='unknown-after-metadata')throw Error('ci_unknown_after_metadata');},
+    preservePublication:()=>{fs.renameSync(publication,vault+'/publication');syncDirectory(directory);syncDirectory(vault);if(outcome==='unknown-after-publication')throw Error('ci_unknown_after_publication');},
+    sealClosure:()=>privateWrite(vault+'/closure-sealed.json','owned-sealed\n'),
+    archiveOperation:()=>{archiveOwnedExistingOperation(token,vault,digest(readOwned(vault+'/closure-sealed.json')),()=>{if(outcome==='unknown-after-archive')throw Error('ci_unknown_after_archive');});archived=true;},
+    complete:()=>{const closure={directory:vault,sha256:digest(readOwned(vault+'/closure-sealed.json'))};privateWrite(vault+'/reconciliation-completed.json',retentionCanonicalText({kind:outcome==='wrong-completion'?'foreign':'owned-disposition-completed',closureSha256:closure.sha256,archiveSha256:digest(readOwned(vault+'/operation-archived.json')),publicationAuthority:false}));releaseArchivedReplacement(token,closure,'owned-disposition-completed','owned-disposition-replacement');privateWrite(vault+'/closed.json','owned-completed\n');completed=true;},
+    failure:(error,stage)=>privateWrite(vault+'/unconfirmed.json',retentionCanonicalText({stage,errorSha256:digest(String(error.message)),automaticRetryAllowed:false,publicationAuthority:false}))
+   });
+  });}catch(error){cause=error;}
+  if(outcome==='normal'){if(cause||!completed||exists(operation))fail('ci_disposition_unconfirmed');}
+  else if(!cause||completed||!exists(vault+'/unconfirmed.json')||exists(vault+'/closed.json'))fail('ci_unknown_not_retained');
+  const retainedPublication=exists(vault+'/publication')?vault+'/publication':publication,retainedOperation=exists(vault+'/operation.lock')?vault+'/operation.lock':outcome==='operation-drift'?directory+'/displaced-operation':operation;
+  equal(dirIdentity(fs.lstatSync(retainedPublication)),publicationId,'ci_publication_inode_changed');equal(dirIdentity(fs.lstatSync(retainedOperation)),original,'ci_operation_inode_changed');equal(readOwned(retainedPublication+'/failure.json'),Buffer.from('original-failure\n'),'ci_failure_bytes_changed');
+  cases.push({outcome,completed,archived,allOriginalInodesRetained:true,allOriginalBytesRetained:true,oldCertificateFabricated:false,productionAuthority:false});
+ }
+ const proof={kind:'metadata-recovery-kernel-accepted',cases,actualFlock:true,actualCas:true,actualInodePreservingRenames:true,productionTokensRejected:true,formalHostTouched:false,publicationAuthority:false};privateWrite(root+'/verified.json',retentionCanonicalText(proof));return{root,sha256:digest(readOwned(root+'/verified.json')),proof};
+}
