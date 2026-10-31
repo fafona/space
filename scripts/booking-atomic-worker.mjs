@@ -14,8 +14,6 @@ import {assertOnlineToolOwnedPath,createOnlineReleaseToolPlan,readOnlineToolInve
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {bookingWorkerEntryMode} from './release-toolchain-worker-entry.mjs';
 import {assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
-import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
-import {withPinnedFormalPm2Process} from './release-toolchain-proc-witness.mjs';
 
 const ROOT='/var/lib/faolla-booking-handoff/'+CANDIDATE;
 const SOURCE='/www/wwwroot/merchant-space.web-releases/'+CANDIDATE.slice(0,12)+'-online';
@@ -125,7 +123,12 @@ async function productionWorker(){
   const stop=()=>{stopped=true;wake?.();};process.once('SIGINT',stop);process.once('SIGTERM',stop);
   try{
     await runBookingAtomicWorkerLoop({stopped:()=>stopped,probe,tick,
-      gate:()=>withPinnedFormalPm2Process(()=>{
+      gate:async()=>{
+       // Host observation depends on the publication graph. Load it only after
+       // module initialization, never from the pure application's import graph.
+       const {withPinnedFormalPm2Process}=await import('./release-toolchain-proc-witness.mjs');
+       const {collectFormalBookingPm2Registry}=await import('./release-toolchain-pm2-observation.mjs');
+       return withPinnedFormalPm2Process(()=>{
         // Missing is deliberately paused. Malformed/partial evidence is an
         // error, never an alternative permission to fall back to legacy.
         try{fs.lstatSync(ROOT+'/worker-enabled.json');}catch(e){if(e.code==='ENOENT')return null;throw e;}
@@ -140,7 +143,8 @@ async function productionWorker(){
         const history=readOnlineRetentionHistory();
         assertBookingWorkerExecutionRevision({gate,history,toolRevision});
         return assertBookingAtomicWorkerGate({gate,history,actualActive,current,toolRevision:gate.toolRevision});
-      }),
+       });
+      },
       status:value=>{console.info(JSON.stringify({kind:'booking-atomic-worker',status:value,at:new Date().toISOString()}));},
       wait:ms=>new Promise(resolve=>{let timer;wake=()=>{clearTimeout(timer);wake=undefined;resolve();};timer=setTimeout(wake,ms);}),
     });
