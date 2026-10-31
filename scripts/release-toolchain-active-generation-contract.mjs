@@ -30,7 +30,7 @@ export function assertActiveBookingWindow(window,{nowMs=Date.now()}={}){
 // Keep one check before worker intent AND at supervisor arming so a newly
 // advertised closure cannot be discovered unsupported only after control.
 export function assertActiveBookingSupervisorClosureProfile(closed){
- requireToolchain(Boolean(closed&&(closed.originRecoveryClosed||closed.recoveredPublicationClosed||closed.settledPreIngressClosed||closed.preSupervisorClosed)),'evidence_invalid');return true;
+ requireToolchain(Boolean(closed&&(closed.originRecoveryClosed||closed.recoveredPublicationClosed||closed.settledPreIngressClosed||closed.preSupervisorClosed||closed.metadataRecoveryClosed)),'evidence_invalid');return true;
 }
 export function assertActiveBookingDatabase(database,{systemIdentifier,databaseOid,generation=ACTIVE_BOOKING_INCIDENT.generation}={}){
  keys(database,['systemIdentifier','databaseOid','serverVersionNum','generation','revision','protocol','active','savedBookingRowsSha256','commands','mailJobs']);
