@@ -6,6 +6,9 @@ import {assertBookingAtomicWorkerGate} from './booking-atomic-worker.mjs';
 import {assertBookingWorkerReleasePlan,assertBookingWorkerReleaseCompletion,assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
+import path from 'node:path';
+import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY,WEB_RELEASE_MARKER} from './web-presentation-release-policy.mjs';
+import {assertOnlineToolOwnedPath} from './prepare-online-release-tool.mjs';
 const clone=structuredClone,sha=s=>s.repeat(40),hash=s=>s.repeat(64),digest=s=>createHash('sha256').update(s).digest('hex');
 function fixture(){
  const f=bookingHandoffFixture(),name='merchant-space-booking-atomic-f274ad615550';
@@ -20,6 +23,18 @@ function fixture(){
  const after={...clone(before),processes:before.processes.map(p=>p.name===name?{...p,pid:77777,restartCount:p.restartCount+1,executable:'/var/lib/faolla-online-code/'+sha('e')+'/scripts/booking-atomic-worker.mjs'}:clone(p)),workerIdentity:{pid:77777,uid:0,startTicks:'200'},persistenceSha256:hash('d')};
  return{history,gate,before,after,old,name,websiteState:clone(f.before.activeState)};
 }
+test('worker protected-file observation resolves policy basenames and includes the existing routing marker, without weakening owned-path checks',async()=>{
+ const {bookingWorkerProtectedFilePlan}=await import('./release-toolchain-worker-release-host.mjs'),plan=bookingWorkerProtectedFilePlan();
+ assert.equal(plan.length,9);assert.equal(new Set(plan.map(v=>v.file)).size,9);
+ for(const row of plan){assert.equal(path.posix.isAbsolute(row.file),true);assert.equal(path.posix.normalize(row.file),row.file);assert.equal(row.file.includes('\\'),false);}
+ assert.deepEqual(plan.filter(v=>!v.privateMode).map(v=>v.file),[...WEB_RELEASE_FILES.map(name=>WEB_RELEASE_PROXY+'/'+name),WEB_RELEASE_MARKER]);
+ assert.equal(plan.filter(v=>v.privateMode).length,5);
+ for(const name of WEB_RELEASE_FILES)assert.throws(()=>assertOnlineToolOwnedPath(name,'file'),/online_tool_path_invalid/);
+ if(process.platform==='linux'){
+  let checked=0;const io={lstatSync:file=>({uid:0,mode:0o100600,nlink:1,isSymbolicLink:()=>false,isFile:()=>plan.some(v=>v.file===file),isDirectory:()=>!plan.some(v=>v.file===file)}),realpathSync:file=>{checked++;return file;}};
+  for(const {file}of plan)assertOnlineToolOwnedPath(file,'file',io);assert.ok(checked>plan.length);
+ }
+});
 test('a worker-only receipt preserves website, rollback, original gate and every other process',()=>{
  const f=fixture();assertBookingWorkerReleasePlan(f.before,f.history);assertBookingWorkerReleaseCompletion(f.before,f.after,f.history);
  const bytes=retentionCanonicalText(f.history),receipt=buildOnlineRetentionReceipt(f.before,f.after,{version:2,process:null},f.history,{preparedAt:'2026-10-31T14:00:00.000Z',completedAt:'2026-10-31T14:01:00.000Z'}),history={...clone(f.history),entries:[...clone(f.history.entries),receipt.certificate],headSha256:retentionHash(receipt.certificate)};

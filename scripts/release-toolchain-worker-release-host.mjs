@@ -20,7 +20,7 @@ import {assertBookingAtomicWorkerEnvironment,assertBookingAtomicWorkerGate} from
 import {captureTrustedPython,verifyTrustedPython} from './production-maintenance-trusted-python.mjs';
 import {capturePm2DumpTarget,persistPm2Dump,verifyPm2Dump,inspectPm2Registry} from './production-maintenance-pm2-adapter.mjs';
 import {observeBookingReadyApplication} from './booking-ready-backup.mjs';
-import {WEB_RELEASE_FILES} from './web-presentation-release-policy.mjs';
+import {WEB_RELEASE_FILES,WEB_RELEASE_PROXY,WEB_RELEASE_MARKER} from './web-presentation-release-policy.mjs';
 import {bookingHostRead,bookingHostWriteOnce,bookingHostSync} from './booking-handoff-host-io.mjs';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
@@ -34,10 +34,13 @@ function invocation(){need(process.platform==='linux'&&process.getuid?.()===0&&p
 function raw(pid){return Object.fromEntries(fs.readFileSync('/proc/'+pid+'/environ','utf8').split('\0').filter(Boolean).map(row=>{const i=row.indexOf('=');need(i>0,'evidence_invalid');return[row.slice(0,i),row.slice(i+1)];}));}
 function identity(pid){const p='/proc/'+pid,text=fs.readFileSync(p+'/stat','utf8'),parts=text.slice(text.lastIndexOf(')')+2).trim().split(/\s+/);need(fs.lstatSync(p).uid===0&&parts[0]!=='Z','owned_resource_changed');return{pid,uid:0,startTicks:parts[19],parentPid:Number(parts[1]),cwd:fs.realpathSync(p+'/cwd'),executable:fs.realpathSync(p+'/exe'),commandSha256:sha256(fs.readFileSync(p+'/cmdline')),environmentSha256:sha256(fs.readFileSync(p+'/environ'))};}
 function peer(pid){const p=identity(pid),st=fs.statSync('/proc/'+pid+'/exe',{bigint:true});return{pid,uid:0,startTicks:p.startTicks,bootId:fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim(),executable:p.executable,executableIdentity:['dev','ino','size','mtimeNs','ctimeNs','nlink','uid','mode'].map(k=>String(st[k])).join(':')};}
+export function bookingWorkerProtectedFilePlan(){
+ return [...[RELEASE+'/active.json',RELEASE+'/'+C+'/state.json',HANDOFF+'/worker-enabled.json',HANDOFF+'/worker-runtime.json',PUB+'/publication-completed.json'].map(file=>({file,privateMode:true})),
+  ...[...WEB_RELEASE_FILES.map(name=>WEB_RELEASE_PROXY+'/'+name),WEB_RELEASE_MARKER].map(file=>({file,privateMode:false}))];
+}
 function physical(){
  const snapshot=collectFormalBookingPm2Registry(),worker=snapshot.rows.find(v=>v.name===NAME);need(worker?.pm_id===27&&worker.pid>0&&worker.pm2_env.status==='online','operation_unconfirmed');assertBookingAtomicWorkerEnvironment(worker.pm2_env.env);assertBookingAtomicWorkerEnvironment(raw(worker.pid));
- const files=[RELEASE+'/active.json',RELEASE+'/'+C+'/state.json',HANDOFF+'/worker-enabled.json',HANDOFF+'/worker-runtime.json',PUB+'/publication-completed.json',...WEB_RELEASE_FILES];
- const protectedHost={files:Object.fromEntries(files.map(file=>[file,sha256(bookingHostRead(file,{privateMode:!WEB_RELEASE_FILES.includes(file)}))])),application:observeBookingReadyApplication(),daemon:snapshot.daemonPeer,others:snapshot.rows.filter(v=>v.name!==NAME).map(v=>({row:stablePm2RegistryRow(v),...(v.pid>0?{identity:identity(v.pid)}:{})}))};
+ const protectedHost={files:Object.fromEntries(bookingWorkerProtectedFilePlan().map(({file,privateMode})=>[file,sha256(bookingHostRead(file,{privateMode}))])),application:observeBookingReadyApplication(),daemon:snapshot.daemonPeer,others:snapshot.rows.filter(v=>v.name!==NAME).map(v=>({row:stablePm2RegistryRow(v),...(v.pid>0?{identity:identity(v.pid)}:{})}))};
  return{snapshot,worker,processes:snapshot.rows.map(normalizeRetirementProcess).sort((a,b)=>a.pmId-b.pmId),workerIdentity:identity(worker.pid),protectedHost,protectedHostSha256:sha256(canonicalJson(protectedHost)),raw:raw(worker.pid),configured:bookingReadyWorkerConfiguration(worker.pm2_env)};
 }
 async function verifyBefore(){
