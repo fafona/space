@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
 import {RECORDS_UI_RELEASE_LANE as lane,RECORDS_UI_RELEASE_BASELINE as baseline,RECORDS_UI_APPLICATION_FILES as app,
  RECORDS_UI_TOOL_FILES as tools,RECORDS_UI_FOCUSED_TESTS,assertRecordsUiReleaseScope,assertRecordsUiReleaseClosure,buildRecordsUiReleaseCandidate} from './attendance-records-ui-release-policy.mjs';
 import {assertGoogleTransitionReleaseScope} from './google-oauth-transition-release-policy.mjs';
 import {onlinePublicationLane} from './online-traffic-publication-policy.mjs';
 import {onlineReleaseLane,onlineReleaseStageStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations} from './online-traffic-release-policy.mjs';
 import {ATTENDANCE_BUILD_LIMITS} from './attendance-online-build.mjs';
-const files=[...app,...tools],readBlob=f=>readFileSync(new URL('../'+f,import.meta.url),'utf8').replace(/\r\n/g,'\n');
+import {readReviewedApplicationFixture} from './test-support/reviewed-application-fixture.mjs';
+const files=[...app,...tools],readBlob=readReviewedApplicationFixture;
 test('approved presentation repair and test-only synchronization have an independent exact lane, with every database path forbidden',()=>{
  assert.equal(app.length,7);assert.equal(new Set(files).size,files.length);
  assert.ok(app.includes('src/lib/merchantAttendanceDayReviewRecovery.test.ts'));

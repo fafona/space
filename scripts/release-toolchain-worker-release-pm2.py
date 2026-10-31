@@ -37,7 +37,11 @@ def _witness(value):
     fields = open(root + '/stat', 'r').read().rsplit(')', 1)[1].strip().split()
     command = open(root + '/cmdline', 'rb').read()
     parent = attempt['controller']
-    if parent['pid'] != os.getppid() or parent['uid'] != 0 or parent['startTicks'] != fields[19] or parent['commandLineDigest'] != hashlib.sha256(command).hexdigest() or os.path.realpath(root + '/cwd') != os.path.dirname(_SOURCE) or os.path.realpath(root + '/exe') != '/usr/bin/node' or command.rstrip(b'\0').split(b'\0') != [b'/usr/bin/node', (_SOURCE + '/release-toolchain-worker-release-entry.mjs').encode(), b'publish']:
+    allowed_controllers = [
+        [b'/usr/bin/node', (_SOURCE + '/release-toolchain-worker-release-entry.mjs').encode(), b'publish'],
+        [b'/usr/bin/node', (_SOURCE + '/application-release-worker-entry.mjs').encode(), b'publish'],
+    ]
+    if parent['pid'] != os.getppid() or parent['uid'] != 0 or parent['startTicks'] != fields[19] or parent['commandLineDigest'] != hashlib.sha256(command).hexdigest() or os.path.realpath(root + '/cwd') != os.path.dirname(_SOURCE) or os.path.realpath(root + '/exe') != '/usr/bin/node' or command.rstrip(b'\0').split(b'\0') not in allowed_controllers:
         raise ValueError('worker_release_controller')
     actual, disk = os.fstat(3), os.lstat('/www/wwwroot/merchant-space.deploy.lock')
     if not stat.S_ISREG(actual.st_mode) or actual.st_uid != 0 or stat.S_IMODE(actual.st_mode) != 0o600 or actual.st_nlink != 1 or (actual.st_dev, actual.st_ino) != (disk.st_dev, disk.st_ino):

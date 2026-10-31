@@ -1,3 +1,11 @@
+import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertApplicationReleasePackage} from './application-release-policy.mjs';
+import {parseSourceTree,sourceGit,assertReviewFresh,inspectPinnedExecutionSource} from './release-toolchain-source.mjs';
+import {commitApplicationRetention} from './application-release-retention.mjs';
+import {applicationReleaseProbeFetch} from './application-release-probe.mjs';
+import {observeApplicationRelease} from './application-release-audit.mjs';
+import {readNaturalWorkerCycle} from './release-toolchain-worker-release-host.mjs';
+import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
+import {withReviewedApplicationExecution,reviewedApplicationExecution} from './application-release-authority.mjs';
 import {assertBookingReadyClosure as assertBookingHandoffToolClosure} from './booking-ready-policy.mjs';
 import {BOOKING_RELEASE_LANE,BOOKING_RELEASE_BASELINE,BOOKING_FOCUSED_TESTS,assertBookingReleaseClosure,bookingProtectedEnvironment,assertBookingCompatibilityEnvironment,bookingCandidateOverrides,buildBookingReleaseCandidate} from './booking-publication-policy.mjs';
 import {installInactiveBookingSchema,verifyInactiveBookingSchema} from './booking-publication-database.mjs';
@@ -13,9 +21,9 @@ import {LOGIN_RELEASE_LANE,LOGIN_RELEASE_BASELINE,LOGIN_FOCUSED_TESTS,assertLogi
 import {merchantLoginReleaseProbeFetch} from './merchant-login-release-probe.mjs';
 import {LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment,resumeLoginUnbuiltCandidate,assertLoginUnbuiltRepairCandidate} from './merchant-login-unbuilt-repair.mjs';
 import {spawnSync} from 'node:child_process';
-import {createHash,randomBytes} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,realpathSync,lstatSync,readdirSync,readlinkSync,copyFileSync,constants,statfsSync} from 'node:fs';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {webReleaseRuntimeEnvironment,WEB_RELEASE_FILES,WEB_RELEASE_PROXY as proxy,WEB_RELEASE_MARKER as marker} from './web-presentation-release-policy.mjs';
 import {ONLINE_ROOT as root,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations,assertOrderAttentionReleaseProof,onlineProxy,hasExpectedCardWebsite,STATIC_RECOVERY_TOOL_FILES,assertStaticRecoveryToolScope,assertCatalogStaticRecoveryState} from './online-traffic-release-policy.mjs';
 import {onlinePublicationLane} from './online-traffic-publication-policy.mjs';
@@ -28,7 +36,7 @@ import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.
 import {readOnlineRollingRetentions,assertRollingRetainedProcesses,assertRollingStateHistory} from './online-release-rolling.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {snapshotOnlineRetentionPublication,assertOnlineRetentionPublication,inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
-import {withOnlineRetentionLocks,runOnlineRetentionUnderHeldLocks} from './online-release-retention-writer.mjs';
+import {withOnlineRetentionLocks,withApplicationPublicationLocks,runOnlineRetentionUnderHeldLocks} from './online-release-retention-writer.mjs';
 import {completePublicationRetention} from './online-release-retention-publication.mjs';
 import {reclaimPublicationArtifacts} from './online-release-artifact-cleanup.mjs';
 import {BOOKING_MERGE_CPU_FOCUSED_TESTS,BOOKING_STAGE_RESUME,BOOKING_STAGE_PROBE_RESUME,BOOKING_STAGE_RESUME_TOOL_FILES,assertBookingStageResumeToolScope,assertBookingStageResumeState} from './online-traffic-release-policy.mjs';
@@ -46,7 +54,7 @@ import {BACKUP_RELEASE_LANE,BACKUP_RELEASE_BASELINE,BACKUP_FOCUSED_TESTS,assertB
 const app='/www/wwwroot/merchant-space', nginx='/www/server/nginx/sbin/nginx';
 const controllerModuleUrl=import.meta.url;
 const [requestedAction,target,baseline]=process.argv.slice(2);
-const action=requestedAction==='stage-booking-reviewed-candidate'?'stage':requestedAction;
+const action=['stage-booking-reviewed-candidate','stage-application'].includes(requestedAction)?'stage':requestedAction;
 const envBase={...process.env,PM2_HOME:'/root/.pm2'};
 const read=p=>readFileSync(p,'utf8'),hash=v=>createHash('sha256').update(v).digest('hex');
 const fail=m=>{throw Error(m);};
@@ -122,6 +130,18 @@ function readRetentionRollbackProof(history,actualActive){
   proxyHashes:Object.fromEntries(WEB_RELEASE_FILES.map(file=>[file,hash(safeFile(`${proxy}/${file}`))]))};
 }
 async function settleOnlineRetention(s,heldLock){
+ if(s.lane===APPLICATION_RELEASE_LANE){
+  if(s.status!=='active')fail('application_release_not_active');
+  const toolDirectory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');
+  const toolRevision=run('git',['rev-parse','HEAD'],{cwd:toolDirectory}).trim();
+  await commitApplicationRetention({target:s.target,operation,toolRevision,lock:heldLock});
+  const history=readOnlineRetentionHistory();
+  const window=inspectOnlineRetentionWindow({history,actualActive:JSON.parse(safeFile(activeFile)),current:pm().map(normalizeRetirementProcess)});
+  if(window.phase!=='stable'||window.active.target!==s.target||history.entries.at(-1)?.applicationRelease?.manifestSha256!==s.applicationManifestSha256)fail('application_release_retention_incomplete');
+  // Preserve every previous process; retirement is a different authorized action.
+  s.applicationRetention={status:'completed',certificateSha256:history.headSha256,retired:null,at:new Date().toISOString()};save(s);
+  return s.applicationRetention;
+ }
  if(s.lane===BOOKING_RELEASE_LANE){
   if(s.status!=='active')fail('booking_publication_bookkeeping_not_active');
   const prior=readOnlineRetentionHistory().entries.at(-1);
@@ -271,7 +291,7 @@ function readRuntimePerformanceSavedConfigs(s,includeAfter){
   const saved=new Map();for(const file of WEB_RELEASE_FILES){const before=safeFile(`${operation}/before-${file}`),after=includeAfter?safeFile(`${operation}/after-${file}`):null;
    if(hash(before)!==s.configs[file]?.oldHash||(includeAfter&&hash(after)!==s.configs[file]?.newHash))fail('booking_publication_saved_proxy_changed');saved.set(file,{before,after});}return saved;
  }
- if((s.lane!==GOOGLE_TRANSITION_RELEASE_LANE&&s.lane!==RECORDS_UI_RELEASE_LANE)&&s.lane!==SCOPE_NAV_RELEASE_LANE&&s.lane!==GOOGLE_LOGIN_RELEASE_LANE&&s.lane!==LOGIN_RELEASE_LANE&&s.lane!==BACKUP_RELEASE_LANE&&s.lane!=='runtime-performance'&&s.lane!=='booking-merge-cpu'&&s.lane!=='customer-code-performance'&&s.lane!=='contact-wechat-code-only')return null;
+ if(s.lane!==APPLICATION_RELEASE_LANE&&(s.lane!==GOOGLE_TRANSITION_RELEASE_LANE&&s.lane!==RECORDS_UI_RELEASE_LANE)&&s.lane!==SCOPE_NAV_RELEASE_LANE&&s.lane!==GOOGLE_LOGIN_RELEASE_LANE&&s.lane!==LOGIN_RELEASE_LANE&&s.lane!==BACKUP_RELEASE_LANE&&s.lane!=='runtime-performance'&&s.lane!=='booking-merge-cpu'&&s.lane!=='customer-code-performance'&&s.lane!=='contact-wechat-code-only')return null;
  const error=s.lane===LOGIN_RELEASE_LANE?'merchant_login_saved_proxy_changed':s.lane==='contact-wechat-code-only'?'contact_wechat_saved_proxy_changed':s.lane==='customer-code-performance'?'customer_code_performance_saved_proxy_changed':s.lane==='booking-merge-cpu'?'booking_merge_cpu_saved_proxy_changed':'runtime_performance_saved_proxy_changed';
  const saved=new Map();
  for(const file of WEB_RELEASE_FILES){
@@ -284,6 +304,7 @@ function readRuntimePerformanceSavedConfigs(s,includeAfter){
  return saved;
 }
 function verifyCandidate(s){
+ if(s.lane===APPLICATION_RELEASE_LANE)verifyApplicationRelease(s,true);
  if(s.lane===BOOKING_RELEASE_LANE)verifyBookingPublication(s,true);
  if((s.lane===GOOGLE_TRANSITION_RELEASE_LANE||s.lane===RECORDS_UI_RELEASE_LANE))verifyGoogleTransitionRelease(s,true);
  if(s.lane===SCOPE_NAV_RELEASE_LANE)verifyScopeNavigationRelease(s,true);
@@ -294,6 +315,7 @@ function verifyCandidate(s){
  if(s.lane==='attendance')verifyAttendanceSource(s);
  if(s.lane==='contact-wechat-code-only')verifyContactWechatSource(s,true);
  const p=pm().find(p=>p.name===s.name);if(!p||p.pm2_env.status!=='online'||p.pm2_env.pm_cwd!==s.directory||p.pm2_env.FAOLLA_BACKGROUND_JOBS_PAUSED!=='1'||p.pm2_env.FAOLLA_SUPER_ADMIN_ORIGIN!=='https://console.faolla.com')fail('candidate_identity_invalid');
+ if(s.lane===APPLICATION_RELEASE_LANE)verifyApplicationRelease(s,true,p);
  if(s.lane===BOOKING_RELEASE_LANE)verifyBookingPublication(s,true,p);
  if((s.lane===GOOGLE_TRANSITION_RELEASE_LANE||s.lane===RECORDS_UI_RELEASE_LANE))verifyGoogleTransitionRelease(s,true,p);
  if(s.lane===SCOPE_NAV_RELEASE_LANE)verifyScopeNavigationRelease(s,true,p);
@@ -406,6 +428,23 @@ async function smoke(s,publicMode=false){
    assertContactWechatResponse(s,await(await request('https://faolla.com/card/luis-gpyv6u')).text(),response,await response.text());
   }
  }
+ if(s.lane===APPLICATION_RELEASE_LANE){
+  const probe=async(path,status,host='launch.faolla.com')=>{
+   const response=publicMode?await request(`https://${host}${path}`,[status],host):await applicationReleaseProbeFetch(origin+path,{redirect:'manual',headers:{Host:host,Connection:'close'},signal:AbortSignal.timeout(5000)});
+   if(response.status!==status)fail('application_release_smoke_status');return response;
+  };
+  for(const path of ['/login','/admin'])await probe(path,200);
+  for(const path of ['/api/auth/merchant-session','/api/auth/merchant-session?reauth=1']){
+   const response=await probe(path,401);if((await response.json()).authenticated!==false)fail('application_release_session_smoke');
+  }
+  for(const path of ['/api/merchant-enterprise/overview?siteId=10000000','/api/merchant-enterprise/attendance/records?siteId=10000000','/api/bookings?siteId=10000000'])await probe(path,401);
+  for(const path of ['/test-harness/enterprise','/test-harness/employee-workspace'])await probe(path,404);
+  await probe('/api/super-admin/data-backups',401,'console.faolla.com');
+  if(publicMode)for(const host of ['faolla.com','launch.faolla.com']){
+   const response=await probe('/api/app-web-version',200,host);
+   if((await response.json()).buildId!==s.target)fail('application_release_public_build');
+  }
+ }
  if(s.lane===BACKUP_RELEASE_LANE){
   assertContactWechatResponse(s,card,contactResponse,contact);
   await request(`${publicMode?'https://console.faolla.com':origin}/api/super-admin/data-backups`,[401],'console.faolla.com');
@@ -436,7 +475,7 @@ async function smoke(s,publicMode=false){
 }
 function restoreConfigs(s){
  for(const file of WEB_RELEASE_FILES){const h=hash(safeFile(`${proxy}/${file}`));if(h!==s.configs[file].oldHash&&h!==s.configs[file].newHash)fail('rollback_proxy_not_owned');}
- const saved=s.lane===BOOKING_RELEASE_LANE?readRuntimePerformanceSavedConfigs(s,false):(s.lane===GOOGLE_TRANSITION_RELEASE_LANE||s.lane===RECORDS_UI_RELEASE_LANE)||s.lane===SCOPE_NAV_RELEASE_LANE||s.lane===GOOGLE_LOGIN_RELEASE_LANE||s.lane===LOGIN_RELEASE_LANE||s.lane===BACKUP_RELEASE_LANE||s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'||s.lane==='contact-wechat-code-only'?readRuntimePerformanceSavedConfigs(s,false):null;
+ const saved=s.lane===APPLICATION_RELEASE_LANE?readRuntimePerformanceSavedConfigs(s,false):s.lane===BOOKING_RELEASE_LANE?readRuntimePerformanceSavedConfigs(s,false):(s.lane===GOOGLE_TRANSITION_RELEASE_LANE||s.lane===RECORDS_UI_RELEASE_LANE)||s.lane===SCOPE_NAV_RELEASE_LANE||s.lane===GOOGLE_LOGIN_RELEASE_LANE||s.lane===LOGIN_RELEASE_LANE||s.lane===BACKUP_RELEASE_LANE||s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'||s.lane==='contact-wechat-code-only'?readRuntimePerformanceSavedConfigs(s,false):null;
  const retention=readOnlineRetentionHistory();
  if(retention.entries.at(-1)?.active.target===s.target)s.retentionRollbackHeadSha256=retention.headSha256;
  for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,saved?saved.get(file).before:safeFile(`${operation}/before-${file}`));
@@ -606,6 +645,74 @@ function verifyLoginRelease(s,buildRequired=false,p){
   const text=safeFile(`${operation}/attendance-build-proof.json`),proof=JSON.parse(text);
   if(hash(text)!==s.loginBuildProofSha256||proof.target!==s.target||proof.buildId!==safeFile(`${s.directory}/.next/BUILD_ID`).trim()||proof.guardedCommand!=='npm run build'||proof.memoryBytes!==4*1024**3||proof.heapMiB!==3072||proof.cpuQuotaPercent!==100||proof.tasks!==128||proof.seconds!==1200||proof.privateNetworkVerified!==true||proof.swapBytes!==0)fail('merchant_login_build_proof_changed');
  }
+}
+function applicationReleaseClosure(releaseTarget,releaseBaseline){
+ const rows=revision=>parseSourceTree(sourceGit(app,['ls-tree','-r','-z',revision]));
+ const manifest=JSON.parse(sourceGit(app,['show',`${releaseTarget}:${APPLICATION_RELEASE_MANIFEST}`]).toString());
+ const proof=assertApplicationReleaseManifest(manifest,{baseline:releaseBaseline,baselineRows:rows(releaseBaseline),targetRows:rows(releaseTarget)});
+ assertApplicationReleasePackage(JSON.parse(sourceGit(app,['show',`${releaseBaseline}:package.json`])),JSON.parse(sourceGit(app,['show',`${releaseTarget}:package.json`])));
+ return {...proof,manifest};
+}
+function assertApplicationExecutionSource(){
+ const directory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');
+ if(directory!==`/var/lib/faolla-online-code/${target}`)fail('application_release_execution_source');
+ return inspectPinnedExecutionSource({revision:target,directory});
+}
+function verifyApplicationRelease(s,buildRequired=false,p){
+ assertApplicationExecutionSource();
+ if(s.target!==target||s.directory!==`${app}.web-releases/${target.slice(0,12)}-online`||s.name!==`merchant-space-online-${target.slice(0,12)}`||s.oldDirectory!==`${app}.web-releases/${s.baseline.slice(0,12)}-online`||s.previousActive?.target!==s.baseline)fail('application_release_state_identity');
+ for(const directory of [s.directory,s.oldDirectory]){bookingResumeOwnedPath(directory);bookingResumeOwnedPath(`${directory}/node_modules`);}
+ const closure=applicationReleaseClosure(s.target,s.baseline);
+ if(closure.manifestSha256!==s.applicationManifestSha256||run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail('application_release_source_changed');
+ for(const directory of [s.directory,s.oldDirectory])if(hash(safeFile(`${directory}/package-lock.json`))!==s.applicationDependencyLockSha256)fail('application_release_dependencies_changed');
+ const env=candidateEnvironment(s),prior=pm().find(item=>item.name===s.oldName);
+ if(!prior||prior.pid!==s.applicationBaselinePid||prior.pm2_env.status!=='online'||prior.pm2_env.pm_cwd!==s.oldDirectory||realpathSync(`/proc/${prior.pid}/cwd`)!==s.oldDirectory)fail('application_release_baseline_changed');
+ if(hash(safeFile(`${operation}/runtime.json`))!==s.applicationRuntimeSha256||hash(safeFile(`${s.oldDirectory}/.env.local`))!==s.applicationBaselineEnvironmentFileSha256||hash(safeFile(`${s.directory}/.env.local`))!==s.applicationEnvironmentFileSha256)fail('application_release_environment_file_changed');
+ if(safeFile(`${s.directory}/.env.local`)!==loginCandidateEnvironmentText(safeFile(`${s.oldDirectory}/.env.local`),loginCandidateOverrides(s,env.FAOLLA_WEB_RELEASED_AT)))fail('application_release_environment_delta');
+ if(hash(JSON.stringify(loginProtectedEnvironment(env)))!==s.applicationInheritedEnvironmentSha256)fail('application_release_environment_changed');
+ const actualBaseline=webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`));
+ assertLoginEnvironment(actualBaseline,env);assertLoginEnvironment(prior.pm2_env,env,false);
+ const fixed={...loginCandidateOverrides(s,env.FAOLLA_WEB_RELEASED_AT),PWD:s.directory,PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'};
+ for(const values of [actualBaseline,env,...(p?[p.pm2_env,webReleaseRuntimeEnvironment(read(`/proc/${p.pid}/environ`))]:[])]){
+  assertAttendanceCandidateEnvironment(values,'database-ready');
+  if(values.RESEND_API_KEY||values.BOOKING_CONFIRMATION_EMAIL_FROM)fail('application_release_mail_must_remain_off');
+  if(values!==actualBaseline){assertLoginEnvironment(values,env,values!==p?.pm2_env);for(const [key,value]of Object.entries(fixed))if(values[key]!==value)fail('application_release_candidate_environment');}
+ }
+ if(p&&realpathSync(`/proc/${p.pid}/cwd`)!==s.directory)fail('application_release_candidate_directory');
+ if(buildRequired){
+  const text=safeFile(`${operation}/attendance-build-proof.json`),proof=JSON.parse(text);
+  if(hash(text)!==s.applicationBuildProofSha256||proof.target!==s.target||proof.buildId!==safeFile(`${s.directory}/.next/BUILD_ID`).trim()||proof.guardedCommand!=='npm run build'||proof.memoryBytes!==4*1024**3||proof.heapMiB!==3072||proof.cpuQuotaPercent!==100||proof.tasks!==128||proof.seconds!==1200||proof.privateNetworkVerified!==true||proof.swapBytes!==0)fail('application_release_build_proof');
+ }
+}
+function assertApplicationWorkerReady(all){
+ const history=readOnlineRetentionHistory(),certificate=history.entries.filter(entry=>entry.kind==='booking-worker').at(-1);
+ const worker=certificate&&all.find(item=>item.name===certificate.workerRelease.priorWorker.name);
+ if(!worker||worker.pm2_env.status!=='online'||worker.pm2_env.pm_exec_path!==`/var/lib/faolla-online-code/${certificate.toolRevision}/scripts/booking-atomic-worker.mjs`)fail('application_release_worker_upgrade_required');
+ const directory=`/var/lib/faolla-online-code/${certificate.toolRevision}`;
+ for(const file of ['scripts/booking-atomic-worker.mjs','scripts/application-release-policy.mjs']){
+  bookingResumeOwnedPath(`${directory}/${file}`,true);
+  if(hash(safeFile(`${directory}/${file}`))!==hash(sourceGit(app,['show',`${target}:${file}`])))fail('application_release_worker_upgrade_required');
+ }
+}
+async function finishApplicationRelease(s,heldLock){
+ if(s.lane!==APPLICATION_RELEASE_LANE||s.status!=='active')fail('application_release_finish_phase');
+ verifyApplicationRelease(s,true);verifyCandidate(s);configUnchanged(s,true);
+ await settleOnlineRetention(s,heldLock);await verifyBase(s);
+ const history=readOnlineRetentionHistory(),certificate=history.entries.at(-1),workerCertificate=history.entries.filter(entry=>entry.kind==='booking-worker').at(-1);
+ const worker=pm().find(item=>item.name===workerCertificate?.workerRelease.priorWorker.name);
+ if(!worker)fail('application_release_worker_missing');
+ const started=Date.now();let cycle=null;
+ while(Date.now()-started<160000){
+  const current=pm().find(item=>item.name===worker.name);
+  if(current?.pid!==worker.pid||current.pm2_env.restart_time!==worker.pm2_env.restart_time)fail('application_release_worker_changed');
+  cycle=readNaturalWorkerCycle(current,Date.parse(certificate.completedAt),2);if(cycle)break;
+  await new Promise(resolve=>setTimeout(resolve,5000));
+ }
+ if(!cycle)fail('application_release_worker_cycles_unconfirmed');
+ const proof=await observeApplicationRelease(s.target,{requireCompletion:false});
+ s.applicationCompletion={status:'completed',certificateSha256:proof.certificateSha256,workerPid:proof.workerPid,
+  naturalCycle:proof.naturalCycle,publicProof:proof.publicProof,retired:null,mailEnabled:false,at:new Date().toISOString()};save(s);
+ return observeApplicationRelease(s.target);
 }
 function backupClosure(releaseTarget,releaseBaseline){
  const files=run('git',['diff','--name-only',releaseBaseline,releaseTarget],{cwd:app}).trim().split('\n');
@@ -868,8 +975,13 @@ async function recoverStaticPermissions(s){
  s.staticPermissionRetry={toolRevision:tool.revision,audit,previousRollback:s.rolledBackAt,acceptedAt:new Date().toISOString()};save(s);
 }
 async function activateCandidate(s){
+ if(s.lane===APPLICATION_RELEASE_LANE){
+  const authority=reviewedApplicationExecution(target,target);if(!authority)fail('application_release_review_required');assertReviewFresh(authority.review,s.target);
+  verifyApplicationRelease(s,true);assertApplicationWorkerReady(pm());
+  if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.applicationDependenciesSha256)fail('application_release_dependency_tree_changed');
+ }
  if(s.lane===BOOKING_RELEASE_LANE){verifyBookingPublication(s,true);await verifyBookingDatabaseProof(s);readRuntimePerformanceSavedConfigs(s,true);if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.bookingDependenciesSha256)fail('booking_publication_dependency_tree_changed');}
- const saved=(s.lane===GOOGLE_TRANSITION_RELEASE_LANE||s.lane===RECORDS_UI_RELEASE_LANE)||s.lane===SCOPE_NAV_RELEASE_LANE||s.lane===GOOGLE_LOGIN_RELEASE_LANE||s.lane===LOGIN_RELEASE_LANE||s.lane===BACKUP_RELEASE_LANE||s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'||s.lane==='contact-wechat-code-only'?readRuntimePerformanceSavedConfigs(s,true):null;
+ const saved=s.lane===APPLICATION_RELEASE_LANE?readRuntimePerformanceSavedConfigs(s,true):(s.lane===GOOGLE_TRANSITION_RELEASE_LANE||s.lane===RECORDS_UI_RELEASE_LANE)||s.lane===SCOPE_NAV_RELEASE_LANE||s.lane===GOOGLE_LOGIN_RELEASE_LANE||s.lane===LOGIN_RELEASE_LANE||s.lane===BACKUP_RELEASE_LANE||s.lane==='runtime-performance'||s.lane==='booking-merge-cpu'||s.lane==='customer-code-performance'||s.lane==='contact-wechat-code-only'?readRuntimePerformanceSavedConfigs(s,true):null;
  if((s.lane===GOOGLE_TRANSITION_RELEASE_LANE||s.lane===RECORDS_UI_RELEASE_LANE)&&bookingResumeDependencies(`${s.directory}/node_modules`)!==s.googleTransitionDependenciesSha256)fail('google_transition_dependency_tree_changed');
  if(s.lane===SCOPE_NAV_RELEASE_LANE&&bookingResumeDependencies(`${s.directory}/node_modules`)!==s.scopeNavigationDependenciesSha256)fail('scope_navigation_dependency_tree_changed');
  if(s.lane===GOOGLE_LOGIN_RELEASE_LANE&&bookingResumeDependencies(`${s.directory}/node_modules`)!==s.googleLoginDependenciesSha256)fail('google_login_dependency_tree_changed');
@@ -1003,7 +1115,44 @@ async function resumeBookingStage(s,probeRecovery=false){
   s.status=onlineReleaseStageStatus(s.lane);save(s);
  }catch(error){writeFileSync(`${audit}-failure.json`,JSON.stringify({toolRevision:tool.revision,error:error.message,failedAt:new Date().toISOString()}),{flag:'wx',mode:0o600});throw error;}
 }
-if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','finish-booking-built-smoke','resume-login-stage','resume-booking-stage','resume-booking-probe-stage','database','database-booking-compatibility-adapter','database-booking-registry-repair','database-booking-formal-backup','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
+export async function recoverApplicationPublicationUnderLock(lock){
+ if(process.platform!=='linux'||process.getuid?.()!==0||process.argv[1]!==`/var/lib/faolla-online-code/${target}/scripts/application-release-publish.mjs`||requestedAction!=='recover')fail('application_release_recovery_invocation');
+ assertApplicationExecutionSource();
+ const manifest=JSON.parse(sourceGit(app,['show',target+':'+APPLICATION_RELEASE_MANIFEST]));
+ const recoveryBaseline=manifest.baseline;
+ const confirmBaseline=async(s,kind)=>{
+  const active=JSON.parse(safeFile(activeFile));if(active.target!==recoveryBaseline)fail('application_release_recovery_baseline');
+  const verify=async()=>{if(s)await verifyBase(s);if(JSON.parse(safeFile(activeFile)).target!==recoveryBaseline)fail('application_release_recovery_drift');};
+  const publicProof=await proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target:recoveryBaseline,operationId:randomUUID(),verify,deadlineAtMs:Date.now()+30000});
+  const window=inspectOnlineRetentionWindow({history:readOnlineRetentionHistory(),actualActive:active,current:pm().map(normalizeRetirementProcess)});
+  if(window.active.target!==recoveryBaseline)fail('application_release_recovery_window');
+  return{kind,target,actualTarget:recoveryBaseline,publicProof,oldVersionsAndEvidenceRetained:true,mailEnabled:false};
+ };
+ if(!existsSync(stateFile))return confirmBaseline(null,'ordinary-application-baseline-preserved-before-stage');
+ const s=JSON.parse(safeFile(stateFile));if(s.lane!==APPLICATION_RELEASE_LANE||s.target!==target||s.baseline!==recoveryBaseline)fail('application_release_recovery_state');
+ if(s.status==='active'&&JSON.parse(safeFile(activeFile)).target===target){
+  if(s.applicationCompletion?.status==='completed')return{kind:'ordinary-application-completed-scope-recovered-without-replay',target,actualTarget:target,proof:await observeApplicationRelease(target),mailEnabled:false};
+  try{
+   const proof=await withReviewedApplicationExecution({target,baseline:s.baseline,lock},()=>finishApplicationRelease(s,lock));
+   return{kind:'ordinary-application-recovery-kept-completed-release',target,actualTarget:target,proof,mailEnabled:false};
+  }catch(error){
+   // Only a complete retained history can support fallback. A complete tail
+   // must first be reconciled by the reviewed finisher above; never discard it.
+   readOnlineRetentionHistory();await verifyBase(s);
+   if((await(await request(`http://127.0.0.1:${s.oldPort}/api/app-web-version`)).json()).buildId!==s.baseline)throw error;
+   restoreConfigs(s);return confirmBaseline(s,'ordinary-application-verified-rollback');
+  }
+ }
+ if(s.status==='activating'){
+  await verifyBase(s);restoreConfigs(s);return confirmBaseline(s,'ordinary-application-partial-route-restored');
+ }
+ if(['preparing','ready-no-database','rolled-back'].includes(s.status)){
+  await verifyBase(s);configUnchanged(s);return confirmBaseline(s,'ordinary-application-private-candidate-preserved');
+ }
+ fail('application_release_recovery_unknown_phase');
+}
+export async function runOnlineTrafficRelease(){
+if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','finish-application','finish-booking-built-smoke','resume-login-stage','resume-booking-stage','resume-booking-probe-stage','database','database-booking-compatibility-adapter','database-booking-registry-repair','database-booking-formal-backup','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
 if(target===BOOKING_HANDOFF_CANDIDATE&&['finish-stage','resume-booking-stage','resume-booking-probe-stage'].includes(action))fail('booking_built_smoke_use_reviewed_continuation');
 if(action==='finish-booking-built-smoke'&&(process.argv.slice(2).length!==2||target!==BOOKING_HANDOFF_CANDIDATE))fail('booking_built_smoke_invocation');
 if(action==='database-booking-compatibility-adapter'&&(process.argv.slice(2).length!==2||target!==BOOKING_HANDOFF_CANDIDATE))fail('booking_compatibility_adapter_invocation');
@@ -1011,7 +1160,10 @@ if(action==='database-booking-registry-repair'&&(process.argv.slice(2).length!==
 if(action==='database-booking-formal-backup'&&(process.argv.slice(2).length!==2||target!==BOOKING_HANDOFF_CANDIDATE))fail('booking_formal_backup_invocation');
 if(action==='resume-login-stage'&&process.argv.slice(2).length!==2)fail('invalid_online_invocation');
 if(target===LOGIN_UNBUILT_REPAIR.target&&['finish-stage','resume-booking-stage','resume-booking-probe-stage','retry-static'].includes(action))fail('merchant_login_unbuilt_use_reviewed_resume');
-try{await withOnlineRetentionLocks(async heldLock=>{
+const applicationProfileSelected=requestedAction==='stage-application'||existsSync(stateFile)&&JSON.parse(safeFile(stateFile)).lane===APPLICATION_RELEASE_LANE;
+const publicationLocks=applicationProfileSelected?work=>withApplicationPublicationLocks({target,action:requestedAction},work):withOnlineRetentionLocks;
+try{await publicationLocks(async heldLock=>{
+const execute=async()=>{
 privateDirectory(root);
 try{
  if(action==='database'&&target===CONTACT_WECHAT_STAGED_REPAIR.target)fail('contact_wechat_code_only_database_forbidden');
@@ -1020,7 +1172,9 @@ try{
   const bookingReviewedStage=requestedAction==='stage-booking-reviewed-candidate'?verifyBookingReviewedStage():null;
   if(!bookingReviewedStage&&run('git',['rev-parse','origin/main'],{cwd:app}).trim()!==target)fail('target_not_main');
   run('git',['merge-base','--is-ancestor',baseline,target],{cwd:app});
-  const lane=bookingReviewedStage?(bookingPublicationClosure(target,baseline),BOOKING_RELEASE_LANE):onlinePublicationLane(run('git',['diff','--name-only',baseline,target],{cwd:app}).trim().split('\n'));
+  const applicationClosure=requestedAction==='stage-application'?applicationReleaseClosure(target,baseline):null;
+  if(applicationClosure){assertApplicationExecutionSource();const authority=reviewedApplicationExecution(target,target);if(!authority)fail('application_release_review_required');assertReviewFresh(authority.review,target);}
+  const lane=applicationClosure?APPLICATION_RELEASE_LANE:bookingReviewedStage?(bookingPublicationClosure(target,baseline),BOOKING_RELEASE_LANE):onlinePublicationLane(run('git',['diff','--name-only',baseline,target],{cwd:app}).trim().split('\n'));
   const bookingClosureSha256=lane===BOOKING_RELEASE_LANE?bookingPublicationClosure(target,baseline):null;
   if(lane==='attendance'&&baseline!==ATTENDANCE_RELEASE_SCOPE.baseline)fail('attendance_live_baseline_invalid');
   const contactWechatClosureSha256=lane==='contact-wechat-code-only'?contactWechatClosure(target,baseline):null;
@@ -1034,6 +1188,22 @@ try{
   const old=previousActive??{...legacy,port:3102,name:'merchant-space-web-live'};
   if(old.target!==baseline||(!previousActive&&legacy.status!=='active'))fail('live_baseline_not_owned');
   const all=pm(),prior=all.find(p=>p.name===old.name);if(!prior||prior.pm2_env.pm_cwd!==old.directory)fail('live_process_mismatch');
+  let applicationBaseline;
+  if(lane===APPLICATION_RELEASE_LANE){
+   assertApplicationWorkerReady(all);
+   if(!previousActive||prior.pm2_env.status!=='online'||!Number.isSafeInteger(prior.pid)||prior.pid<=0||old.directory!==`${app}.web-releases/${baseline.slice(0,12)}-online`||old.name!==`merchant-space-online-${baseline.slice(0,12)}`)fail('application_release_live_baseline');
+   bookingResumeOwnedPath(old.directory);bookingResumeOwnedPath(`${old.directory}/node_modules`);
+   if(realpathSync(`/proc/${prior.pid}/cwd`)!==old.directory)fail('application_release_baseline_directory');
+   const inherited=webReleaseRuntimeEnvironment(read(`/proc/${prior.pid}/environ`));
+   assertContactWechatBuildEnvironmentKeys(inherited);assertAttendanceCandidateEnvironment(inherited,'database-ready');
+   if(inherited.RESEND_API_KEY||inherited.BOOKING_CONFIRMATION_EMAIL_FROM)fail('application_release_mail_must_remain_off');
+   for(const[key,value]of Object.entries(loginProtectedEnvironment(inherited)))if(prior.pm2_env[key]!==value)fail('application_release_baseline_environment');
+   const authority=reviewedApplicationExecution(target,target);if(!authority)fail('application_release_review_required');
+   applicationBaseline={applicationManifestSha256:applicationClosure.manifestSha256,applicationBaselinePid:prior.pid,applicationPriorStatesSha256:authority.priorStatesSha256,
+    applicationInheritedEnvironmentSha256:hash(JSON.stringify(loginProtectedEnvironment(inherited))),
+    applicationBaselineEnvironmentFileSha256:hash(safeFile(`${old.directory}/.env.local`)),
+    applicationDependencyLockSha256:hash(safeFile(`${old.directory}/package-lock.json`))};
+  }
   let contactWechatBaseline;
   let googleTransitionBaseline;
   let scopeNavigationBaseline;
@@ -1137,6 +1307,7 @@ try{
   }
   if(hash(run('git',['show',`${target}:package-lock.json`],{cwd:app}))!==hash(safeFile(`${old.directory}/package-lock.json`)))fail('dependencies_changed');
   const disk=statfsSync('/www');if(disk.bavail*disk.bsize<12*1024**3)fail('insufficient_disk_reserve');
+  if(lane===APPLICATION_RELEASE_LANE)assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
   if(lane===BOOKING_RELEASE_LANE)assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
   if(lane==='attendance'||lane==='contact-wechat-code-only')assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
   if((lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===RECORDS_UI_RELEASE_LANE))assertAttendanceBuildAdmission({meminfo:read('/proc/meminfo'),diskBytes:BigInt(disk.bavail)*BigInt(disk.bsize),swaps:read('/proc/swaps')});
@@ -1152,6 +1323,7 @@ try{
   await verifyBase(s);
   for(const file of WEB_RELEASE_FILES){const before=safeFile(`${proxy}/${file}`),after=onlineProxy(before,s.oldPort,port,target);s.configs[file]={oldHash:hash(before),newHash:hash(after)};writeFileSync(`${operation}/before-${file}`,before,{mode:0o600,flag:'wx'});writeFileSync(`${operation}/after-${file}`,after,{mode:0o600,flag:'wx'});}
   s.lane=lane;
+  if(lane===APPLICATION_RELEASE_LANE)Object.assign(s,applicationBaseline);
   if(bookingReviewedStage){if(lane!==BOOKING_RELEASE_LANE)fail('booking_handoff_wrong_lane');s.bookingReviewedStage=bookingReviewedStage;}
   if(bookingRollbackBuild)s.bookingRollbackBuild=bookingRollbackBuild;
   if(lane===BOOKING_RELEASE_LANE)Object.assign(s,bookingBaseline);
@@ -1164,6 +1336,7 @@ try{
   if(lane==='attendance'){s.attendanceEnabled=false;s.attendanceReleaseScopeSha256=hash(run('git',['show',`${target}:${ATTENDANCE_RELEASE_SCOPE_FILE}`],{cwd:app}));s.attendanceMigrationScopeSha256=hash(run('git',['show',`${target}:scripts/attendance-production-database-migrations.manifest.json`],{cwd:app}));}
   save(s);run('git',['worktree','add','--detach',s.directory,target],{cwd:app});
   run('cp',['-a','--reflink=auto',`${old.directory}/node_modules`,`${s.directory}/node_modules`],{timeout:180000});
+  if(lane===APPLICATION_RELEASE_LANE){s.applicationDependenciesSha256=bookingResumeDependencies(`${old.directory}/node_modules`);if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.applicationDependenciesSha256)fail('application_release_dependency_tree_changed');}
   if(lane===BOOKING_RELEASE_LANE){s.bookingDependenciesSha256=bookingResumeDependencies(`${old.directory}/node_modules`);if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.bookingDependenciesSha256)fail('booking_publication_dependency_tree_changed');}
   if((lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===RECORDS_UI_RELEASE_LANE)){
    s.googleTransitionDependenciesSha256=bookingResumeDependencies(`${old.directory}/node_modules`);
@@ -1210,6 +1383,10 @@ try{
   const envText=safeFile(`${old.directory}/.env.local`).split('\n').filter(line=>!Object.keys(changes).some(k=>line.startsWith(`${k}=`))).join('\n');
   writeFileSync(`${s.directory}/.env.local`,envText+'\n'+Object.entries(changes).map(([k,v])=>`${k}=${v}`).join('\n')+'\n',{mode:0o600,flag:'wx'});
   Object.assign(env,changes,{PM2_HOME:'/root/.pm2',NODE_OPTIONS:'--max-old-space-size=4096',NEXT_TELEMETRY_DISABLED:'1'});atomic(`${operation}/runtime.json`,JSON.stringify(env));
+  if(lane===APPLICATION_RELEASE_LANE){
+   env.PWD=s.directory;atomic(`${operation}/runtime.json`,JSON.stringify(env));
+   s.applicationRuntimeSha256=hash(safeFile(`${operation}/runtime.json`));s.applicationEnvironmentFileSha256=hash(safeFile(`${s.directory}/.env.local`));save(s);verifyApplicationRelease(s);
+  }
   if(lane===BOOKING_RELEASE_LANE){env.PWD=s.directory;atomic(`${operation}/runtime.json`,JSON.stringify(env));s.bookingRuntimeSha256=hash(safeFile(`${operation}/runtime.json`));s.bookingEnvironmentFileSha256=hash(safeFile(`${s.directory}/.env.local`));save(s);verifyBookingPublication(s);}
   if((lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===RECORDS_UI_RELEASE_LANE)){
    env.PWD=s.directory;atomic(`${operation}/runtime.json`,JSON.stringify(env));
@@ -1238,7 +1415,8 @@ try{
   console.log('online_focused_tests');
   verifyRuntimePerformanceSource(s);
   verifyCustomerCodeCandidateSettings(s);
-  if(lane===BOOKING_RELEASE_LANE)run('node',['--import','tsx','--test','--test-concurrency=1',...BOOKING_FOCUSED_TESTS,...(bookingReviewedStage?BOOKING_HANDOFF_ATTENDANCE_FIX_TESTS:[]),'scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env:loginUnitTestEnvironment(),timeout:180000,stdio:'inherit'});
+  if(lane===APPLICATION_RELEASE_LANE)run('node',['--import','tsx','--test','--test-concurrency=1',...applicationClosure.manifest.focusedTests,'scripts/application-release-policy.test.mjs'],{cwd:s.directory,env:loginUnitTestEnvironment(),timeout:180000,stdio:'inherit'});
+  else if(lane===BOOKING_RELEASE_LANE)run('node',['--import','tsx','--test','--test-concurrency=1',...BOOKING_FOCUSED_TESTS,...(bookingReviewedStage?BOOKING_HANDOFF_ATTENDANCE_FIX_TESTS:[]),'scripts/online-traffic-release.test.mjs'],{cwd:s.directory,env:loginUnitTestEnvironment(),timeout:180000,stdio:'inherit'});
   else {
   const tests=lane==='attendance'
    ? ATTENDANCE_RELEASE_FOCUSED_TESTS
@@ -1280,7 +1458,8 @@ try{
   if(lane==='customer-code-performance')run('node',['--test','--test-concurrency=1','scripts/online-release-retirement-policy.test.mjs','scripts/online-release-retirement.test.mjs','scripts/online-release-rolling-policy.test.mjs','scripts/online-release-rolling.test.mjs'],{cwd:s.directory,timeout:180000,stdio:'inherit'});
   verifyCustomerCodeCandidateSettings(s);
   console.log('online_build_started');const priorBuildUmask=process.umask(0o022);
-  if(lane===BOOKING_RELEASE_LANE){try{verifyBookingPublication(s);buildBookingReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}finally{process.umask(priorBuildUmask);}}
+  if(lane===APPLICATION_RELEASE_LANE){try{verifyApplicationRelease(s);buildAttendanceOnlineCandidate({directory:s.directory,target:s.target,operation});}finally{process.umask(priorBuildUmask);}}
+  else if(lane===BOOKING_RELEASE_LANE){try{verifyBookingPublication(s);buildBookingReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}finally{process.umask(priorBuildUmask);}}
   else
   try{if((lane===GOOGLE_TRANSITION_RELEASE_LANE||lane===RECORDS_UI_RELEASE_LANE)){verifyGoogleTransitionRelease(s);(lane===RECORDS_UI_RELEASE_LANE?buildRecordsUiReleaseCandidate:buildGoogleTransitionReleaseCandidate)({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane===SCOPE_NAV_RELEASE_LANE){verifyScopeNavigationRelease(s);buildScopeNavigationReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane===GOOGLE_LOGIN_RELEASE_LANE){verifyGoogleLoginRelease(s);buildGoogleLoginReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane===LOGIN_RELEASE_LANE){verifyLoginRelease(s);buildLoginReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane===BACKUP_RELEASE_LANE){verifyBackupRelease(s);buildBackupReleaseCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation,environment:env});}else if(lane==='attendance')buildAttendanceOnlineCandidate({directory:s.directory,target:s.target,operation});else if(lane==='contact-wechat-code-only'){verifyContactWechatSource(s);verifyContactWechatSavedSettings(s);buildContactWechatOnlineCandidate({lane,baseline:s.baseline,directory:s.directory,target:s.target,operation});}else run('nice',['-n','10','npm','run','build'],{cwd:s.directory,env,timeout:1200000,stdio:'inherit'});}finally{process.umask(priorBuildUmask);}
   if(lane===BOOKING_RELEASE_LANE){s.bookingBuildProofSha256=hash(safeFile(`${operation}/attendance-build-proof.json`));save(s);verifyBookingPublication(s,true);if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.bookingDependenciesSha256)fail('booking_publication_dependency_tree_changed');}
@@ -1310,13 +1489,19 @@ try{
    if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.contactWechatDependenciesSha256)fail('contact_wechat_dependency_tree_changed');
   }
   if(!existsSync(`${s.directory}/.next/BUILD_ID`))fail('build_missing');await verifyBase(s);configUnchanged(s);
+  if(lane===APPLICATION_RELEASE_LANE){s.applicationBuildProofSha256=hash(safeFile(`${operation}/attendance-build-proof.json`));save(s);verifyApplicationRelease(s,true);if(bookingResumeDependencies(`${s.directory}/node_modules`)!==s.applicationDependenciesSha256)fail('application_release_dependency_tree_changed');}
   verifyRuntimePerformanceSource(s);
   verifyCustomerCodeCandidateSettings(s);
   run('pm2',['start',`${s.directory}/node_modules/next/dist/bin/next`,'--name',s.name,'--cwd',s.directory,'--interpreter',process.execPath,'--','start','-H','127.0.0.1','-p',String(port)],{env});
   let ready=false;for(let i=0;i<25;i++){try{await smoke(s);ready=true;break;}catch{}await new Promise(r=>setTimeout(r,1000));}if(!ready)fail('candidate_not_ready');
   verifyCandidate(s);s.status=onlineReleaseStageStatus(lane);save(s);
  }else{
-  const s=JSON.parse(safeFile(stateFile));await verifyBase(s);
+  const s=JSON.parse(safeFile(stateFile));
+  if(action==='finish-application'){
+   await finishApplicationRelease(s,heldLock);
+   console.log(JSON.stringify({status:'completed',target:s.target,port:s.port,directory:s.directory}));return;
+  }
+  await verifyBase(s);
   if(action==='finish-booking-built-smoke'){
    const toolDirectory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');
    const toolRevision=run('git',['rev-parse','HEAD'],{cwd:toolDirectory}).trim();
@@ -1419,7 +1604,9 @@ try{
    if(s.lane==='attendance')await verifyAttendanceDatabaseProof(s);
    if(target===LOGIN_UNBUILT_REPAIR.target)assertLoginUnbuiltRepairCandidate({target,rootDir:fileURLToPath(new URL('..',controllerModuleUrl)),phase:'ready'});
    if(target===CONTACT_WECHAT_STAGED_REPAIR.target)assertContactWechatStagedRepairCandidate({target,phase:'ready-no-database'});
-   await activateCandidate(s);await settleOnlineRetention(s,heldLock);
+   await activateCandidate(s);
+   if(s.lane===APPLICATION_RELEASE_LANE)await finishApplicationRelease(s,heldLock);
+   else await settleOnlineRetention(s,heldLock);
   }else if(action==='retry-static'){
    await recoverStaticPermissions(s);await activateCandidate(s);await settleOnlineRetention(s,heldLock);
   }else if(action==='rollback'){
@@ -1428,4 +1615,10 @@ try{
  }
  const result=JSON.parse(safeFile(stateFile));console.log(JSON.stringify({status:result.status,target:result.target,port:result.port,directory:result.directory}));
 }catch(error){console.error(error.message);process.exitCode=1;}
+};
+const applicationProfile=requestedAction==='stage-application'||existsSync(stateFile)&&JSON.parse(safeFile(stateFile)).lane===APPLICATION_RELEASE_LANE;
+if(applicationProfile)return withReviewedApplicationExecution({target,baseline:action==='stage'?baseline:JSON.parse(safeFile(stateFile)).baseline,lock:heldLock},execute);
+return execute();
 });}catch(error){console.error(error.message);process.exitCode=1;}
+}
+if(process.argv[1]&&pathToFileURL(process.argv[1]).href===import.meta.url)await runOnlineTrafficRelease();

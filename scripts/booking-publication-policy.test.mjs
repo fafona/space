@@ -10,10 +10,11 @@ import {loginCandidateEnvironmentText} from './merchant-login-release-policy.mjs
 import {onlinePublicationLane} from './online-traffic-publication-policy.mjs';
 import {onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,onlineReleaseMigrationTarget} from './online-traffic-release-policy.mjs';
 import {attendanceOnlineBuildPlan} from './attendance-online-build.mjs';
+import {readReviewedApplicationFixture} from './test-support/reviewed-application-fixture.mjs';
 // Exercise the unchanged sealed application manifest against its historical
 // workflow. The CI successor independently pins the four CURRENT CI files.
 const sealed=JSON.parse(readFileSync(new URL('./test-support/booking-ci-source-base.json',import.meta.url),'utf8'));
-const files=[...app,...tooling],readBlob=file=>file==='.github/workflows/ci.yml'?sealed.workflow:readFileSync(new URL('../'+file,import.meta.url),'utf8').replace(/\r\n/g,'\n');
+const files=[...app,...tooling],readBlob=file=>file==='.github/workflows/ci.yml'?sealed.workflow:readReviewedApplicationFixture(file);
 test('the exact independently approved booking closure has its own inactive compatibility publication lane',()=>{
  assert.equal(onlinePublicationLane(files),lane);assert.equal(onlineReleaseLane(files),lane);
  assert.equal(onlineReleaseStageStatus(lane),'staged');assert.equal(onlineReleaseActivationStatus(lane),'database-ready');

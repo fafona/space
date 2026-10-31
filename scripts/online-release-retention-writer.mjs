@@ -4,6 +4,9 @@ import {spawnSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {fileURLToPath} from 'node:url';
+import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertApplicationReleasePackage} from './application-release-policy.mjs';
+import {parseSourceTree,sourceGit} from './release-toolchain-source.mjs';
+import {reviewedApplicationExecution} from './application-release-authority.mjs';
 import {readOnlineRetentionHistory, ONLINE_RETENTION_ROOT, ONLINE_RETENTION_FILES,
   buildOnlineRetentionPreparation, buildOnlineRetentionReceipt} from './online-release-retention.mjs';
 import {ONLINE_RETENTION_POLICY, assertOnlineRetentionPlan, assertOnlineRetentionCompletion,
@@ -273,7 +276,12 @@ function productionOperations({toolRevision, kind, activeTarget, victimTarget = 
       invitationEnabled: env.MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED, manualSignalHandle: env.NEXT_MANUAL_SIG_HANDLE ?? ''};
   };
   const observe = async frozen => {
-    const tool = validateTool(toolRevision); assertOnlineToolNoPending();
+    const tool = validateTool(toolRevision);
+    const selectedState=parse(stateText(activeTarget));
+    if(selectedState.lane===APPLICATION_RELEASE_LANE){
+      const authority=reviewedApplicationExecution(toolRevision,activeTarget);
+      if(!authority||authority.manifestSha256!==selectedState.applicationManifestSha256||authority.priorStatesSha256!==selectedState.applicationPriorStatesSha256)fail('application_release_review_required');
+    }else assertOnlineToolNoPending();
     const prior = history(), currentDaemon = verifyDaemon(), raw = parse(pm(['jlist'])), processes = take(raw);
     const activeText = readOwned(`${RELEASE}/active.json`).toString(), activeFile = parse(activeText);
     const current = parse(stateText(activeTarget)), active = anchorState(current, activeTarget, processes);
@@ -311,6 +319,15 @@ function productionOperations({toolRevision, kind, activeTarget, victimTarget = 
       resolvedInterpreter: victim ? releaseProofs.find(p => p.target === victim.target).resolvedInterpreter : null,
       victimChildren: victim ? frozen?.victimChildren ?? fs.readFileSync(`/proc/${victim.process.pid}/task/${victim.process.pid}/children`, 'utf8').trim() : null,
       victimRuntimeFlags: victim ? frozen?.victimRuntimeFlags ?? runtimeFlags(victim.process) : null};
+    if(current.lane===APPLICATION_RELEASE_LANE){
+      if(kind!=='converge'||victim!==null)fail('application_release_converge_only');
+      const rows=revision=>parseSourceTree(sourceGit(APP,['ls-tree','-r','-z',revision]));
+      const manifest=parse(sourceGit(APP,['show',`${active.target}:${APPLICATION_RELEASE_MANIFEST}`]));
+      const proof=assertApplicationReleaseManifest(manifest,{baseline:rollback.target,baselineRows:rows(rollback.target),targetRows:rows(active.target)});
+      assertApplicationReleasePackage(parse(sourceGit(APP,['show',`${rollback.target}:package.json`])),parse(sourceGit(APP,['show',`${active.target}:package.json`])));
+      if(proof.manifestSha256!==current.applicationManifestSha256)fail('application_release_manifest_changed');
+      result.applicationRelease={kind:APPLICATION_RELEASE_LANE,baseline:rollback.target,target:active.target,manifestSha256:proof.manifestSha256};
+    }
     if (kind === 'converge' && current.retentionRollbackProof !== undefined) {
       result.rollbackProof = current.retentionRollbackProof;
       const proof = result.rollbackProof;
@@ -393,6 +410,7 @@ function assertExistingOperationScopeHeld(token) {
     equal(dirIdentity(privateDirectory(held.activeArchive.destination)),held.activeArchive.original,'active_archive_original_changed');return;
   }
   privateDirectory(held.operation);
+  if(held.applicationOperationBirth)equal(applicationOperationBirth(),held.applicationOperationBirth,'operation_lock_birth_changed');
   equal(dirIdentity(fs.lstatSync(held.operation)), held.operationIdentity, 'operation_lock_changed');
   if (fs.readdirSync(held.operation).length) fail('operation_lock_changed');
 }
@@ -421,6 +439,101 @@ export async function withOnlineRetentionLocks(work, {io = fs, spawn = spawnSync
     if (token) heldLocks.delete(token);
     try {if (held) {checkPath(operation); equal(dirIdentity(io.lstatSync(operation)), captured, 'operation_lock_changed'); io.rmdirSync(operation);}}
     finally {io.closeSync(fd);}
+  }
+}
+
+// New ordinary-publication ownership journal. The historic lock entry above is
+// unchanged. Only an exact reviewed ordinary controller may create this witness;
+// it binds OUR fresh operation inode, not an arbitrary historical failed lock.
+const APPLICATION_OPERATIONS='/var/lib/faolla-application-operations';
+const applicationOperationBirth=()=>{const st=fs.lstatSync(OPERATION_LOCK,{bigint:true});return{createdNs:String(st.birthtimeNs),changedNs:String(st.ctimeNs)};};
+export function assertApplicationOperationOwner(owner,{target,operation,operationBirth,deploy,file}){
+  if(!owner||owner.kind!=='ordinary-application-operation-owner'||owner.target!==target||!SHA.test(target??'')||
+    !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(owner.id??'')||file!==owner.id+'.owner.json'||
+    !['stage-application','finish-stage','activate','finish-application','rollback','status','recover'].includes(owner.action))fail('application_owner_shape');
+  equal(Object.keys(owner).sort(),['kind','target','action','id','controller','operation','operationBirth','deploy','activeSha256','retentionHeadSha256','at'].sort(),'application_owner_shape');
+  equal(owner.operation,operation,'application_owner_operation');equal(owner.operationBirth,operationBirth,'application_owner_birth');equal(owner.deploy,deploy,'application_owner_deploy');
+  const p=owner.controller;
+  if(!p||!Number.isSafeInteger(p.pid)||p.pid<=0||p.uid!==0||!/^\d+$/.test(p.startTicks??'')||
+    p.executable!=='/usr/bin/node'||p.cwd!==`/var/lib/faolla-online-code/${target}`||
+    !/^[a-f0-9]{64}$/.test(p.commandSha256??'')||!Number.isSafeInteger(p.parentPid)||p.parentPid<=0||
+    !/^[a-f0-9]{64}$/.test(p.environmentSha256??'')||!['activeSha256','retentionHeadSha256'].every(key=>/^[a-f0-9]{64}$/.test(owner[key]??''))||
+    !Number.isFinite(Date.parse(owner.at))||new Date(owner.at).toISOString()!==owner.at)fail('application_owner_controller');
+  return true;
+}
+export async function withApplicationPublicationLocks({target,action},work){
+  if(process.platform!=='linux'||process.getuid?.()!==0||!SHA.test(target??'')||
+    !['stage-application','finish-stage','activate','finish-application','rollback','status','recover'].includes(action)||
+    path.dirname(path.dirname(fileURLToPath(import.meta.url)))!==`/var/lib/faolla-online-code/${target}`||
+    process.cwd()!==`/var/lib/faolla-online-code/${target}`||process.argv[1]!==`/var/lib/faolla-online-code/${target}/scripts/${action==='recover'?'application-release-publish.mjs':'online-traffic-release.mjs'}`||process.argv[2]!==action||process.argv[3]!==target)fail('application_operation_invocation');
+  return withOnlineRetentionLocks(async lock=>{
+    assertHeldLocks(lock);
+    if(!exists(APPLICATION_OPERATIONS)){ownedPath('/var/lib');fs.mkdirSync(APPLICATION_OPERATIONS,{mode:0o700});syncDirectory('/var/lib');}
+    privateDirectory(APPLICATION_OPERATIONS);
+    const directory=APPLICATION_OPERATIONS+'/'+target;
+    if(!exists(directory)){fs.mkdirSync(directory,{mode:0o700});syncDirectory(APPLICATION_OPERATIONS);}privateDirectory(directory);
+    const id=randomUUID(),controller=processFact(process.pid),operation=dirIdentity(privateDirectory(OPERATION_LOCK));
+    const before={kind:'ordinary-application-operation-owner',target,action,id,controller,operation,operationBirth:applicationOperationBirth(),
+      deploy:dirIdentity(fs.fstatSync(lock.deployFd)),activeSha256:digest(readOwned(RELEASE+'/active.json')),
+      retentionHeadSha256:digest(readOwned(ONLINE_RETENTION_ROOT+'.head.json')),at:new Date().toISOString()};
+    heldLocks.get(lock).applicationOperationBirth=before.operationBirth;
+    privateWrite(directory+'/'+id+'.owner.json',retentionCanonicalText(before));
+    return work(lock);
+  });
+}
+
+// A separate recovery authority for one of the operation inodes CREATED ABOVE.
+// It cannot adopt or clear any of the old feature-specific incident locks.
+export async function withApplicationOrphanRecoveryLocks({target},work){
+  if(process.platform!=='linux'||process.getuid?.()!==0||process.execPath!=='/usr/bin/node'||!SHA.test(target??'')||
+    path.dirname(path.dirname(fileURLToPath(import.meta.url)))!==`/var/lib/faolla-online-code/${target}`||
+    process.argv[1]!==`/var/lib/faolla-online-code/${target}/scripts/application-release-publish.mjs`||
+    process.argv[2]!=='recover'||process.argv[3]!==target||typeof work!=='function')fail('application_recovery_invocation');
+  ownedPath(DEPLOY_LOCK,'file');const fd=fs.openSync(DEPLOY_LOCK,fs.constants.O_RDWR|fs.constants.O_NOFOLLOW);let token,closed=false;
+  try{
+    const deploy=dirIdentity(fs.fstatSync(fd));equal(deploy,dirIdentity(fs.lstatSync(DEPLOY_LOCK)),'deploy_lock_changed');
+    const acquired=spawnSync('flock',['--nonblock','3'],{stdio:['ignore','pipe','pipe',fd],env:runtimeEnvironment(),timeout:10000});
+    if(acquired.status!==0||acquired.signal||acquired.error)fail('deploy_lock_busy');
+    const operation=dirIdentity(privateDirectory(OPERATION_LOCK)),operationBirth=applicationOperationBirth();if(fs.readdirSync(OPERATION_LOCK).length)fail('operation_lock_changed');
+    const directory=APPLICATION_OPERATIONS+'/'+target;privateDirectory(directory);
+    const matches=[];
+    for(const file of fs.readdirSync(directory)){
+      if(!/^[a-f0-9-]{36}\.owner\.json$/.test(file))continue;
+      const bytes=readOwned(directory+'/'+file),owner=parse(bytes);equal(bytes,Buffer.from(retentionCanonicalText(owner)),'application_owner_encoding');
+      if(owner.kind==='ordinary-application-operation-owner'&&owner.target===target&&isDeepStrictEqual(owner.operation,operation)&&isDeepStrictEqual(owner.operationBirth,operationBirth)&&isDeepStrictEqual(owner.deploy,deploy)){
+        assertApplicationOperationOwner(owner,{target,operation,operationBirth,deploy,file});matches.push(owner);
+      }
+    }
+    if(matches.length!==1)fail('application_recovery_not_owned');const owner=matches[0];
+    // A reused PID is not OUR controller and is never signalled. A live original
+    // controller, including a zombie not yet reaped, cannot lose its scope.
+    try{const current=processFact(owner.controller.pid),text=fs.readFileSync('/proc/'+owner.controller.pid+'/stat','utf8'),status=text.slice(text.lastIndexOf(')')+2).split(/\s+/)[0];if(current.startTicks===owner.controller.startTicks&&status!=='Z')fail('application_controller_still_present');}
+    catch(error){if(!['ENOENT','ESRCH'].includes(error.code))throw error;}
+    const started=Date.now();
+    while(true){
+      const unit=run('systemctl',['show',`faolla-attendance-build-${target}`,'--property=ActiveState','--value']).trim();
+      if(!['active','activating','deactivating'].includes(unit))break;
+      if(Date.now()-started>1250000)fail('application_owned_build_unsettled');
+      await new Promise(resolve=>setTimeout(resolve,5000));
+    }
+    equal(dirIdentity(privateDirectory(OPERATION_LOCK)),operation,'operation_lock_changed');
+    equal(applicationOperationBirth(),operationBirth,'operation_lock_birth_changed');
+    token=Object.freeze({deployFd:fd,operationDirectory:OPERATION_LOCK});
+    heldLocks.set(token,{deployLock:DEPLOY_LOCK,operation:OPERATION_LOCK,deployIdentity:deploy,operationIdentity:operation,applicationOperationBirth:operationBirth});
+    assertHeldLocks(token);
+    const result=await work(token,owner);assertHeldLocks(token);
+    const closure={kind:'ordinary-application-orphan-scope-recovered',target,ownerId:owner.id,operation,
+      result,oldIncidentAdopted:false,at:new Date().toISOString()};
+    privateWrite(directory+'/'+owner.id+'.recovery.json',retentionCanonicalText(closure));
+    const destination=directory+'/'+owner.id+'.operation';if(exists(destination))fail('application_archive_exists');
+    fs.renameSync(OPERATION_LOCK,destination);syncDirectory(path.dirname(OPERATION_LOCK));syncDirectory(directory);
+    equal(dirIdentity(privateDirectory(destination)),operation,'application_archive_changed');closed=true;
+    return closure;
+  }finally{
+    if(token)heldLocks.delete(token);fs.closeSync(fd);
+    // On any uncertainty the original owned operation stays in place. A
+    // recovery never deletes/replaces it or touches somebody else's process.
+    if(!closed){ /* Intentionally retain the original inode and all evidence. */ }
   }
 }
 

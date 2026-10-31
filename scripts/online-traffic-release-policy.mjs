@@ -368,6 +368,7 @@ export function onlineReleaseLane(files) {
   return 'traffic';
 }
 function isNoDatabaseLane(lane) {
+  if(lane==='reviewed-application-code-only-v1')return true;
   if(lane===BOOKING_RELEASE_LANE)return false;
   if(lane===RECORDS_UI_RELEASE_LANE)return true;
   if(lane===GOOGLE_TRANSITION_RELEASE_LANE)return true;
@@ -392,6 +393,7 @@ export function onlineReleaseActivationStatus(lane) {
   return isNoDatabaseLane(lane) ? 'ready-no-database' : 'database-ready';
 }
 export function assertOnlineReleaseDatabaseAllowed(lane) {
+  if(lane==='reviewed-application-code-only-v1')throw Error('application_release_database_forbidden');
   if(lane===BOOKING_RELEASE_LANE)return;
   if(lane===RECORDS_UI_RELEASE_LANE)throw Error('records_ui_release_database_forbidden');
   if(lane===GOOGLE_TRANSITION_RELEASE_LANE)throw Error('google_transition_release_database_forbidden');

@@ -15,14 +15,14 @@ spec.loader.exec_module(m)
 
 
 class Tests(unittest.TestCase):
-    def exercise(self, change=lambda value: None, fd_flags='FLOCK WRITE'):
+    def exercise(self, change=lambda value: None, fd_flags='FLOCK WRITE', entry='release-toolchain-worker-release-entry.mjs'):
         revision, old = 'a' * 40, 'b' * 40
         directory = '/var/lib/faolla-online-code/' + revision
         row = {'name': m._active._transport._NAME, 'pid': 4124781, 'pm_id': 27, 'pm2_env': {'status': 'online', 'pm_cwd': m._active._transport._DIRECTORY, 'pm_exec_path': '/var/lib/faolla-online-code/' + old + '/scripts/booking-atomic-worker.mjs', 'exec_interpreter': '/usr/bin/node', 'exec_mode': 'fork_mode', 'args': [], 'node_args': [], 'restart_time': 11, 'watch': False, 'cron_restart': None, 'autorestart': True, 'FAOLLA_BACKGROUND_JOBS_PAUSED': '0', 'env': {'FAOLLA_BACKGROUND_JOBS_PAUSED': '0', 'MERCHANT_BOOKING_STORAGE_MODE': 'atomic-v2', 'MERCHANT_BOOKING_NOTIFICATION_WORKER_ENABLED': '1', 'MERCHANT_ENTERPRISE_AUTOMATION_WORKER_ENABLED': '0', 'MERCHANT_ENTERPRISE_INVITATION_WORKER_ENABLED': '0'}}}
         expected = m._active._worker.snapshot(row)
         gate = {'enabled': True, 'certificateSha256': 'c' * 64}
         gate_raw = (json.dumps(gate) + '\n').encode()
-        argv = b'\0'.join([b'/usr/bin/node', (directory + '/scripts/release-toolchain-worker-release-entry.mjs').encode(), b'publish']) + b'\0'
+        argv = b'\0'.join([b'/usr/bin/node', (directory + '/scripts/' + entry).encode(), b'publish']) + b'\0'
         attempt = {'kind': 'booking-worker-source-restart-attempt', 'toolRevision': revision, 'workerRelease': {'window': {'startedAt': '2026-10-31T14:00:00.000Z', 'deadlineAt': '2026-10-31T14:10:00.000Z'}, 'mailEnabled': False, 'toolRevision': revision, 'gateSha256': hashlib.sha256(gate_raw).hexdigest(), 'publicationCertificateSha256': 'c' * 64, 'priorToolRevision': old, 'priorWorker': {'pid': row['pid'], 'restartCount': 11}}, 'before': {'rpcExpected': expected}, 'controller': {'pid': 4242, 'uid': 0, 'startTicks': '123', 'commandLineDigest': hashlib.sha256(argv).hexdigest()}}
         change(attempt)
         raw = (json.dumps(attempt) + '\n').encode()
@@ -49,6 +49,8 @@ class Tests(unittest.TestCase):
 
     def test_real_parent_fd_gate_and_predecessor_are_all_required_before_transport(self):
         self.assertEqual(self.exercise()['kind'], 'booking-worker-source-restart-attempt')
+        self.assertEqual(self.exercise(entry='application-release-worker-entry.mjs')['kind'], 'booking-worker-source-restart-attempt')
+        with self.assertRaises(ValueError): self.exercise(entry='arbitrary-entry.mjs')
 
     def test_hash_consistent_foreign_contexts_do_not_grant_control(self):
         changes = [lambda a: a.update(kind='foreign'), lambda a: a['workerRelease'].update(mailEnabled=True), lambda a: a['workerRelease'].update(priorToolRevision='d' * 40), lambda a: a['workerRelease']['priorWorker'].update(pid=1), lambda a: a['workerRelease'].update(gateSha256='d' * 64), lambda a: a['controller'].update(startTicks='999'), lambda a: a['workerRelease']['window'].update(deadlineAt='2026-10-31T15:00:00.000Z')]
