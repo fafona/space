@@ -14,6 +14,7 @@ import {assertOnlineToolOwnedPath,createOnlineReleaseToolPlan,readOnlineToolInve
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {bookingWorkerEntryMode} from './release-toolchain-worker-entry.mjs';
 import {assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
+import {assertApplicationWorkerSuccessor} from './application-release-policy.mjs';
 
 const ROOT='/var/lib/faolla-booking-handoff/'+CANDIDATE;
 const SOURCE='/www/wwwroot/merchant-space.web-releases/'+CANDIDATE.slice(0,12)+'-online';
@@ -88,7 +89,8 @@ export function assertBookingAtomicWorkerGate({gate,history,actualActive,current
   const certificate=history.entries.find(c=>c.kind===BOOKING_RETENTION_KIND&&retentionHash(c)===gate.certificateSha256);
   need(certificate&&certificate.toolRevision===toolRevision&&certificate.active.target===CANDIDATE&&
     certificate.rollback.target===APPLICATION&&gate.generation===certificate.bookingHandoff.databaseAfter.generation,'gate_certificate');
-  need([CANDIDATE,APPLICATION].includes(actualActive?.target),'gate_active');
+  if (![CANDIDATE,APPLICATION].includes(actualActive?.target))
+    assertApplicationWorkerSuccessor({history,publication:certificate,actualActive});
   inspectOnlineRetentionWindow({history,actualActive,current});
   return {generation:gate.generation,certificateSha256:gate.certificateSha256};
 }

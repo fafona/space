@@ -32,7 +32,7 @@ const C='f274ad615550c83717aa7af2ad32339608e6f8aa',OLD='09f1c93c6d0fdf7eb78da128
 const PUB='/var/lib/faolla-booking-active-publications/'+C+'/4ed45a51-f484-4fc5-8dfc-45495389de12';
 const same=(a,b)=>need(isDeepStrictEqual(a,b),'observation_mismatch'),read=p=>JSON.parse(bookingHostRead(p)),seal=(d,n,v)=>bookingHostWriteOnce(d+'/'+n,canonicalJson(v)+'\n'),pause=ms=>new Promise(r=>setTimeout(r,ms));
 const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),revision=path.basename(source);
-function invocation(){need(process.platform==='linux'&&process.getuid?.()===0&&process.execPath==='/usr/bin/node'&&source==='/var/lib/faolla-online-code/'+revision&&/^[a-f0-9]{40}$/.test(revision)&&process.cwd()===source&&process.argv.length===3&&process.argv[2]==='publish','unsupported_runtime');same(captureProcessFact(process.pid).commandLine,['/usr/bin/node',source+'/scripts/release-toolchain-worker-release-entry.mjs','publish']);}
+function invocation(ordinary=false){need(process.platform==='linux'&&process.getuid?.()===0&&process.execPath==='/usr/bin/node'&&source==='/var/lib/faolla-online-code/'+revision&&/^[a-f0-9]{40}$/.test(revision)&&process.cwd()===source&&process.argv.length===3&&process.argv[2]==='publish','unsupported_runtime');same(captureProcessFact(process.pid).commandLine,['/usr/bin/node',source+'/scripts/'+(ordinary?'application-release-worker-entry.mjs':'release-toolchain-worker-release-entry.mjs'),'publish']);}
 function raw(pid){return Object.fromEntries(fs.readFileSync('/proc/'+pid+'/environ','utf8').split('\0').filter(Boolean).map(row=>{const i=row.indexOf('=');need(i>0,'evidence_invalid');return[row.slice(0,i),row.slice(i+1)];}));}
 function identity(pid){const p='/proc/'+pid,text=fs.readFileSync(p+'/stat','utf8'),parts=text.slice(text.lastIndexOf(')')+2).trim().split(/\s+/);need(fs.lstatSync(p).uid===0&&parts[0]!=='Z','owned_resource_changed');return{pid,uid:0,startTicks:parts[19],parentPid:Number(parts[1]),cwd:fs.realpathSync(p+'/cwd'),executable:fs.realpathSync(p+'/exe'),commandSha256:sha256(fs.readFileSync(p+'/cmdline')),environmentSha256:sha256(fs.readFileSync(p+'/environ'))};}
 function peer(pid){const p=identity(pid),st=fs.statSync('/proc/'+pid+'/exe',{bigint:true});return{pid,uid:0,startTicks:p.startTicks,bootId:fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim(),executable:p.executable,executableIdentity:['dev','ino','size','mtimeNs','ctimeNs','nlink','uid','mode'].map(k=>String(st[k])).join(':')};}
@@ -65,10 +65,29 @@ function withWorkerReleaseLocks(authority,work){
  if(continuation){need(continuation.incidentSha256===workerDatabaseIncidentSha256(),'scope_changed');return withBookingWorkerDatabaseLocks({toolRevision:revision},work);}
  return withOnlineRetentionLocks(work);
 }
+async function verifyApplicationWorkerPreparation(){
+ const history=readOnlineRetentionHistory(),prior=history.entries.at(-1),actual=physical();
+ need(prior?.kind==='booking-worker'&&prior.active.target===C&&prior.toolRevision!==revision,'scope_changed');
+ same(actual.processes,prior.processes);same(actual.protectedHostSha256,prior.workerRelease.protectedHostSha256);
+ const gate=read(HANDOFF+'/worker-enabled.json');
+ assertBookingAtomicWorkerGate({gate,history,actualActive:read(RELEASE+'/active.json'),current:actual.processes,toolRevision:gate.toolRevision});
+ assertBookingWorkerExecutionRevision({gate,history,toolRevision:prior.toolRevision});
+ const priorSource=inspectPinnedExecutionSource({revision:prior.toolRevision,directory:'/var/lib/faolla-online-code/'+prior.toolRevision});
+ same(priorSource.inventorySha256,prior.workerRelease.inventorySha256);
+ const review=await collectRemoteReleaseReview(revision),ci=await verifyWorkerEntryCiArtifact({revision,review,file:'/var/lib/faolla-booking-worker-admissions/'+revision+'/ci-evidence.zip',source});
+ return{application:observeBookingReadyApplication(),workerReleaseAdmission:{receipt:read(PUB+'/publication-completed.json'),review,ci,priorHistoryHead:history.headSha256,
+  priorWorkerToolRevision:prior.toolRevision,ordinaryApplicationPreparation:true,databaseContinuation:null,databasePreflight:null}};
+}
 function held(lock,authority,window){assertOnlineRetentionHeldLocks(lock);need(reviewedBookingExecution(revision)===authority,'source_changed');if(window)need(Date.now()>=Date.parse(window.startedAt)&&Date.now()<Date.parse(window.deadlineAt),'evidence_stale');}
 export async function publishBookingWorkerSuccessor(){
- invocation();return withReviewedRetainedBookingExecution({applicationRevision:C,preparationRevision:OLD,verifyPreparation:verifyBefore},authority=>withRetainedApplicationAttestation(()=>withWorkerReleaseLocks(authority,async(lock,lockContext)=>{
-  held(lock,authority);const history=readOnlineRetentionHistory(),prior=history.entries.at(-1),databaseContinuation=authority.prepared.workerReleaseAdmission.databaseContinuation,applicationContinuation=databaseContinuation?.kind==='booking-worker-application-incident-observed',incident=applicationContinuation?APPLICATION_INCIDENT:DATABASE;same(history.headSha256,authority.prepared.workerReleaseAdmission.priorHistoryHead);need(prior.kind===(databaseContinuation?'booking-worker':'booking-handoff')&&prior.toolRevision===(databaseContinuation?incident.tool:OLD),'scope_changed');
+ return publishWorker(false);
+}
+export async function publishApplicationCompatibleBookingWorker(){return publishWorker(true);}
+async function publishWorker(ordinary){
+ invocation(ordinary);return withReviewedRetainedBookingExecution({applicationRevision:C,preparationRevision:OLD,verifyPreparation:ordinary?verifyApplicationWorkerPreparation:verifyBefore},authority=>withRetainedApplicationAttestation(()=>withWorkerReleaseLocks(authority,async(lock,lockContext)=>{
+  held(lock,authority);const history=readOnlineRetentionHistory(),prior=history.entries.at(-1),databaseContinuation=authority.prepared.workerReleaseAdmission.databaseContinuation,applicationContinuation=databaseContinuation?.kind==='booking-worker-application-incident-observed',incident=applicationContinuation?APPLICATION_INCIDENT:DATABASE;same(history.headSha256,authority.prepared.workerReleaseAdmission.priorHistoryHead);
+  if(ordinary)need(prior.kind==='booking-worker'&&prior.toolRevision===authority.prepared.workerReleaseAdmission.priorWorkerToolRevision,'scope_changed');
+  else need(prior.kind===(databaseContinuation?'booking-worker':'booking-handoff')&&prior.toolRevision===(databaseContinuation?incident.tool:OLD),'scope_changed');
   const original=physical();same(original.processes,prior.processes);const gateText=bookingHostRead(HANDOFF+'/worker-enabled.json'),gate=JSON.parse(gateText),startedAt=new Date().toISOString(),window=lockContext?.window??{id:randomUUID(),startedAt,deadlineAt:new Date(Date.parse(startedAt)+600000).toISOString()};
   const r={version:1,kind:'booking-worker-source-only',candidate:C,toolRevision:revision,priorToolRevision:prior.toolRevision,priorWorker:original.processes.find(p=>p.name===NAME),gateSha256:sha256(gateText),publicationCertificateSha256:gate.certificateSha256,inventorySha256:authority.tool.inventorySha256,nativeEvidenceSha256:sha256(canonicalJson(authority.prepared.workerReleaseAdmission.ci)),protectedHostSha256:original.protectedHostSha256,window,mailEnabled:false};
   const before={...Object.fromEntries(['version','policy','legacySha256','rollingHeadSha256','rollingHistorySha256','active','rollback','victim'].map(k=>[k,structuredClone(prior[k])])),kind:'booking-worker',sequence:history.entries.length+1,previousSha256:history.headSha256,toolRevision:revision,workerRelease:r,processes:original.processes,workerIdentity:original.workerIdentity,protectedHostSha256:original.protectedHostSha256,persistenceSha256:null};

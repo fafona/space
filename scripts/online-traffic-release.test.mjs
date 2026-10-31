@@ -57,9 +57,10 @@ test('fixed successor preserves genuine current-main DR source and separately bi
  }
 });
 import {BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS} from './super-admin-backup-release-policy.mjs';
+import {APPLICATION_RELEASE_LANE} from './application-release-policy.mjs';
 // The real controller imports these bindings; isolated source slices need the
 // same imports, without executing operational entrypoints in the tests.
-const runInNewContext=(source,context={},...options)=>vmRunInNewContext(source,Object.assign(context,{BOOKING_RELEASE_LANE,BOOKING_FOCUSED_TESTS,RECORDS_UI_RELEASE_LANE,RECORDS_UI_FOCUSED_TESTS,GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_FOCUSED_TESTS,SCOPE_NAV_RELEASE_LANE,SCOPE_NAV_FOCUSED_TESTS,GOOGLE_LOGIN_RELEASE_LANE,GOOGLE_LOGIN_FOCUSED_TESTS,LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS,LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment,BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS}),...options);
+const runInNewContext=(source,context={},...options)=>vmRunInNewContext(source,Object.assign(context,{APPLICATION_RELEASE_LANE,BOOKING_RELEASE_LANE,BOOKING_FOCUSED_TESTS,RECORDS_UI_RELEASE_LANE,RECORDS_UI_FOCUSED_TESTS,GOOGLE_TRANSITION_RELEASE_LANE,GOOGLE_TRANSITION_FOCUSED_TESTS,SCOPE_NAV_RELEASE_LANE,SCOPE_NAV_FOCUSED_TESTS,GOOGLE_LOGIN_RELEASE_LANE,GOOGLE_LOGIN_FOCUSED_TESTS,LOGIN_RELEASE_LANE,LOGIN_FOCUSED_TESTS,LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment,BACKUP_RELEASE_LANE,BACKUP_FOCUSED_TESTS}),...options);
 import {webReleaseRuntimeEnvironment} from './web-presentation-release-policy.mjs';
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
@@ -514,7 +515,7 @@ test('resume treats dangling artifact links as existing and never mistakes permi
 });
 
 test('actual resume runs all original suites serially, then the guarded real build/start/smoke; failures never fabricate ready',async()=>{
- const source=bookingResumeFunction('async function resumeBookingStage(', 'if(process.platform');
+ const source=bookingResumeFunction('async function resumeBookingStage(', 'export async function recoverApplicationPublicationUnderLock(');
  for(const failure of [null,'preflight','prior-attempt','focused','retirement','tooltests','recheck','build','postbuild','start','smoke','finalproof','candidate']){
   const s=bookingResumeIncident(),calls=[],writes=[],commands=[];let verified=0,privateReads=0,mask=0o077;
   const gate=name=>{calls.push(name);if(name===failure)throw Error(`failed_${name}`);};
@@ -609,7 +610,7 @@ test('probe continuation tool must descend from the failed tool as well as the o
 });
 
 test('authorized probe continuation has one separate audit and preserves all original gates and receipts across every failure phase',async()=>{
- const source=bookingResumeFunction('async function resumeBookingStage(', 'if(process.platform');
+ const source=bookingResumeFunction('async function resumeBookingStage(', 'export async function recoverApplicationPublicationUnderLock(');
  const prior={priorToolRevision:BOOKING_STAGE_PROBE_RESUME.priorToolRevision,priorBeforeSha256:BOOKING_STAGE_PROBE_RESUME.priorBeforeSha256,priorFailureSha256:BOOKING_STAGE_PROBE_RESUME.priorFailureSha256};
  for(const failure of [null,'preflight','proof-1','already-audit','create-audit','focused','retirement','tooltests','recheck','proof-2','build','postbuild','proof-3','start','smoke','finalproof','candidate','proof-4']){
   const s=bookingResumeIncident(),calls=[],writes=[],commands=[],toolModes=[];let verified=0,proofReads=0,privateReads=0,mask=0o077;
@@ -1172,7 +1173,7 @@ test('runtime public failure uses the verified all-file rollback and neither exp
  for(const file of h.names)assert.equal(h.reads.filter(path=>path===`/operation/before-${file}`).length,2,'activation and rollback each validate all targets');
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  const activation=code.slice(code.indexOf("}else if(action==='activate'){"),code.indexOf("}else if(action==='retry-static'){"));
- assert.match(activation,/await activateCandidate\(s\);await settleOnlineRetention\(s,heldLock\);/);
+ assert.match(activation,/await activateCandidate\(s\);\s+if\(s.lane===APPLICATION_RELEASE_LANE\)await finishApplicationRelease\(s,heldLock\);\s+else await settleOnlineRetention\(s,heldLock\);/);
  assert.match(code,/else if\(action==='rollback'\)\{[^}]*configUnchanged\(s,true\);if\(s.lane==='order-attention'\)restoreOrderAttentionConfigs\(s\);else restoreConfigs\(s\);/);
  assert.throws(()=>assertCatalogStaticRecoveryState({...staticIncident().s,lane:'runtime-performance'},staticIncident().active,staticIncident().target,staticIncident().baseline),/static_recovery_incident_not_owned/);
  for(const lane of ['traffic','performance','read-index','public-catalog-batch','order-attention']){
@@ -2197,7 +2198,9 @@ test('customer finish-stage cannot bless missing builds dirty source wrong statu
  const code=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
  const marker="if(action==='finish-stage'){",start=code.indexOf(marker)+marker.length,end=code.indexOf("}else if(action==='resume-booking-stage'){",start);
  assert.ok(start>marker.length&&end>start);
- assert.match(code.slice(code.lastIndexOf('const s=JSON.parse(safeFile(stateFile));',start),start),/const s=JSON.parse\(safeFile\(stateFile\)\);await verifyBase\(s\);/);
+ const beforeLegacyFinish=code.slice(code.lastIndexOf('const s=JSON.parse(safeFile(stateFile));',start),start);
+ assert.match(beforeLegacyFinish,/if\(action==='finish-application'\)\{[^}]*finishApplicationRelease\(s,heldLock\);/);
+ assert.ok(beforeLegacyFinish.indexOf('await verifyBase(s);')<beforeLegacyFinish.indexOf("if(action==='finish-booking-built-smoke')"));
  for(const failure of [null,'status','head','dirty','build','budget','config','actual-projection','smoke']){
   const h=customerCodeCandidateHarness(),calls=[];h.s.status=failure==='status'?'staged':'preparing';
   if(failure==='actual-projection')h.actual[customerProjectionEnabled]='1';
@@ -2631,13 +2634,13 @@ test('the reviewed booking stage executes exact tool/head/ancestry/source guards
 
 test('only the reviewed booking stage uses the pinned deadline-fix candidate; normal lane classification stays unchanged',()=>{
  const source=readFileSync(new URL('./online-traffic-release.mjs',import.meta.url),'utf8');
- const start=source.indexOf('  const lane=bookingReviewedStage?'),end=source.indexOf('\n',start);
+ const start=source.indexOf('  const lane=applicationClosure?APPLICATION_RELEASE_LANE:bookingReviewedStage?'),end=source.indexOf('\n',start);
  assert.ok(start>0&&end>start);
  const line=source.slice(start,end),events=[];
  for(const reviewed of [null,{toolRevision:'f'.repeat(40)}]){
   events.length=0;
   const lane=runInNewContext(line+'\nlane',{
-   bookingReviewedStage:reviewed,target:bookingHandoffPolicy.BOOKING_HANDOFF_CANDIDATE,baseline:bookingHandoffPolicy.BOOKING_HANDOFF_BASELINE,
+   applicationClosure:null,bookingReviewedStage:reviewed,target:bookingHandoffPolicy.BOOKING_HANDOFF_CANDIDATE,baseline:bookingHandoffPolicy.BOOKING_HANDOFF_BASELINE,
    BOOKING_RELEASE_LANE:'booking-runtime-compatibility-only',app:'/app',
    bookingPublicationClosure:(target,baseline)=>{assert.equal(target,bookingHandoffPolicy.BOOKING_HANDOFF_CANDIDATE);assert.equal(baseline,bookingHandoffPolicy.BOOKING_HANDOFF_BASELINE);events.push('pinned-closure');},
    onlinePublicationLane:files=>{assert.deepEqual(Array.from(files),['original-file']);events.push('original-lane');return 'original';},

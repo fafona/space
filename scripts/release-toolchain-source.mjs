@@ -8,6 +8,7 @@ export const RELEASE_REQUIRED_JOBS=Object.freeze(['Quality','Code, Tests and Bui
 export const RELEASE_SAFETY_JOB='Packaged Tools And Real Ingress Boundary';
 const revision=v=>typeof v==='string'&&/^[a-f0-9]{40}$/.test(v);
 export function toolOnlySourcePath(file){
+ if(file==='release/application-release.json'||/^scripts\/application-release[\w-]*\.mjs$/.test(file))return true;
  if(/\.(?:test|spec)\.(?:[cm]?[jt]s|[jt]sx)$/.test(file)||file.startsWith('scripts/test-support/')||file.startsWith('docs/')||file.startsWith('.github/'))return true;
  return /^scripts\/(?:release-toolchain[\w-]*(?:\.test)?\.(?:mjs|py)|(?:booking-(?:handoff|ready|dependency|ci|formal|registry|compatibility|publication|built-smoke)[\w-]*|online-(?:traffic|release)[\w-]*|prepare-online-release-tool|production-maintenance-ingress-acceptance|booking-(?:atomic-worker|release-probe)|test_booking_(?:handoff|ready)_pm2_[\w-]+)\.(?:mjs|py))$/.test(file);
 }

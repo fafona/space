@@ -8,10 +8,11 @@ import {loginProtectedEnvironment,assertLoginEnvironment,loginCandidateOverrides
 import {onlinePublicationLane} from './online-traffic-publication-policy.mjs';
 import {onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations} from './online-traffic-release-policy.mjs';
 import {attendanceOnlineBuildPlan,ATTENDANCE_BUILD_LIMITS} from './attendance-online-build.mjs';
+import {readReviewedApplicationFixture} from './test-support/reviewed-application-fixture.mjs';
 const files=[...app,...tooling],target='a'.repeat(40),root=new URL('../',import.meta.url);
 const readCurrentBlob=file=>readFileSync(new URL(file,root),'utf8').replace(/\r\n/g,'\n');
 const readBlob=file=>{
- let source=readCurrentBlob(file);
+ let source=readReviewedApplicationFixture(file);
  if(file==='src/components/admin/MerchantEnterpriseManager.tsx'){
   // Test-only reconstruction of the historical scope release. Its immutable
   // runtime content pin must NOT be widened to admit the later records repair.

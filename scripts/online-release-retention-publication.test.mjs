@@ -69,6 +69,7 @@ test('publisher housekeeping is outside the activation rollback boundary', () =>
   const activation = code.slice(code.indexOf('async function activateCandidate('), code.indexOf('function bookingResumeOwnedPath('));
   assert.doesNotMatch(activation, /completePublicationRetention|settleOnlineRetention/);
   assert.match(code, /await activateCandidate\(s\);await settleOnlineRetention\(s,heldLock\);/);
-  assert.match(code, /withOnlineRetentionLocks\(async heldLock=>/);
+  assert.match(code, /publicationLocks\(async heldLock=>/);
+  assert.match(code, /publicationLocks=applicationProfileSelected\?work=>withApplicationPublicationLocks\(\{target,action:requestedAction\},work\):withOnlineRetentionLocks/);
   assert.doesNotMatch(code, /FAOLLA_ONLINE_RELEASE_LOCKED/);
 });

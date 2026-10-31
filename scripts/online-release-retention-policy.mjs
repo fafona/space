@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {assertApplicationReleaseCertificate} from './application-release-policy.mjs';
 import {isDeepStrictEqual} from 'node:util';
 import {assertOnlineRollingHistory, assertRollingRetainedProcesses, ROLLING_BASE_NAMES,
   rollingHash, rollingCanonicalText, assertRollingExecutable} from './online-release-rolling-policy.mjs';
@@ -153,6 +154,7 @@ export function assertOnlineRetentionCertificate(c) {
       !['beforeSha256', 'afterSha256', 'preparedSha256', 'recoverySha256'].every(key => HASH.test(c[key] ?? '')) ||
       !SHA.test(c.toolRevision ?? '') || !iso(c.completedAt)) fail('certificate_invalid');
   pair(c.active, c.rollback); processList(c.processes);
+  assertApplicationReleaseCertificate(c.applicationRelease,{kind:c.kind,baseline:c.rollback.target,target:c.active.target});
   if(c.kind!==BOOKING_WORKER_RELEASE_KIND&&c.workerRelease!==undefined)fail('unexpected_worker_release');
   if (c.kind === BOOKING_RETENTION_KIND) {
     if (!object(c.bookingHandoff)) fail('booking_handoff_missing');
