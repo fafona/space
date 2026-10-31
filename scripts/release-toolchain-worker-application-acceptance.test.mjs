@@ -1,4 +1,11 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {spawnSync} from 'node:child_process';import path from 'node:path';import {fileURLToPath} from 'node:url';
+import fs from 'node:fs';import os from 'node:os';import {assertWorkerApplicationInputs} from './release-toolchain-worker-application-acceptance.mjs';
+test('the complete isolated application copy must match every committed source/config input',()=>{
+ const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'faolla-app-inputs-')),source=path.join(temporary,'source'),application=path.join(temporary,'application');
+ try{for(const root of [source,application]){fs.mkdirSync(path.join(root,'src'),{recursive:true});for(const file of ['package.json','tsconfig.json','src/example.ts'])fs.writeFileSync(path.join(root,file),'synthetic-'+file);}
+  assert.deepEqual(assertWorkerApplicationInputs(source,application),{applicationSourceVerified:true,files:3});fs.writeFileSync(path.join(application,'src/example.ts'),'foreign');assert.throws(()=>assertWorkerApplicationInputs(source,application));fs.writeFileSync(path.join(application,'src/example.ts'),'synthetic-src/example.ts');fs.writeFileSync(path.join(application,'src/extra.ts'),'foreign');assert.throws(()=>assertWorkerApplicationInputs(source,application));
+ }finally{assert.equal(path.dirname(fs.realpathSync(temporary)),fs.realpathSync(os.tmpdir()));assert.ok(path.basename(temporary).startsWith('faolla-app-inputs-'));fs.rmSync(temporary,{recursive:true});}
+});
 test('actual TS application completes empty and two-merchant automation through dynamic imports and shared atomic context',()=>{
  const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),url=new URL('./release-toolchain-worker-application-acceptance.mjs',import.meta.url).href;
  const program=`const{createSyntheticWorkerApplication}=await import(${JSON.stringify(url)}),fixture=createSyntheticWorkerApplication(${JSON.stringify(source)});for(let i=0;i<3;i++)await fixture.tick();console.log(JSON.stringify(fixture.report()));`;

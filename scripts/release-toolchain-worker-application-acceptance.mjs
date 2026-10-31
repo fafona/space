@@ -1,6 +1,12 @@
 // Owned child-process acceptance only: actual application, entirely fake HTTP.
-import assert from 'node:assert/strict';import fs from 'node:fs';
+import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';
 import {loadBookingAtomicWorkerApplication} from './booking-atomic-worker.mjs';
+export function assertWorkerApplicationInputs(source,application){
+ const walk=(root,directory='src')=>fs.readdirSync(root+'/'+directory,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name)).flatMap(entry=>{assert.equal(entry.isSymbolicLink(),false);const name=directory+'/'+entry.name;return entry.isDirectory()?walk(root,name):[name];});
+ const files=['package.json','tsconfig.json',...walk(source)];assert.deepEqual(walk(application),files.slice(2));
+ for(const name of files){for(const root of [source,application]){const file=root+'/'+name,st=fs.lstatSync(file);assert.equal(st.isFile(),true);assert.equal(st.isSymbolicLink(),false);assert.equal(fs.realpathSync(file),path.resolve(file));}assert.deepEqual(fs.readFileSync(application+'/'+name),fs.readFileSync(source+'/'+name));}
+ return {applicationSourceVerified:true,files:files.length};
+}
 export function createSyntheticWorkerApplication(source){
  assert.equal(process.env.NODE_ENV,'test');
  for(const file of ['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'])assert.equal(fs.existsSync(file),false);
