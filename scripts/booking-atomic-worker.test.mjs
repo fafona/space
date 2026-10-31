@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
-import {assertBookingAtomicWorkerEnvironment,assertBookingAtomicWorkerGate,runBookingAtomicWorkerLoop,selectBookingWorkerDatabaseCredential} from './booking-atomic-worker.mjs';
+import {assertBookingAtomicWorkerEnvironment,assertBookingAtomicWorkerGate,runBookingAtomicWorkerLoop,selectBookingWorkerDatabaseCredential,bookingWorkerSafeError} from './booking-atomic-worker.mjs';
 import {bookingHandoffFixture} from './test-support/booking-handoff-retention-fixture.mjs';
 import {buildOnlineRetentionReceipt} from './online-release-retention.mjs';
 import {retentionHash} from './online-release-retention-policy.mjs';
@@ -68,6 +68,11 @@ test('ticks are serial and a lost result waits a full interval without immediate
   assert.equal(max,1);assert.deepEqual(o.events.filter(Array.isArray),[['wait',60000]]);
   assert.equal(o.events.filter(v=>v==='unconfirmed').length,2);
   assert.ok(!JSON.stringify(o.events).includes('credential'));
+});
+test('worker diagnostics identify an allowed failure stage and code, never a message, path, customer data or key',async()=>{
+ assert.deepEqual(bookingWorkerSafeError(Object.assign(Error('private token and path'),{code:'ERR_MODULE_NOT_FOUND'}),'tick'),{phase:'tick',code:'ERR_MODULE_NOT_FOUND'});
+ assert.deepEqual(bookingWorkerSafeError(Error('private token and path'),'private-data'),{phase:'unknown',code:'unclassified'});
+ const o=operations(),errors=[];o.tick=async()=>{throw Error('private credential synthetic');};o.error=value=>errors.push(value);await runBookingAtomicWorkerLoop(o,{maxCycles:1});assert.deepEqual(errors,[{phase:'tick',code:'unclassified'}]);assert.equal(o.events.at(-1),'unconfirmed');
 });
 test('stop observed during probing prevents a new tick and the loop does not overlap an admitted tick',async()=>{
   const o=operations();let stopped=false;o.stopped=()=>stopped;

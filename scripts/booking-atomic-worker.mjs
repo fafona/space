@@ -99,22 +99,27 @@ export async function runBookingAtomicWorkerLoop(operations,{maxCycles=Infinity}
   need(maxCycles===Infinity||Number.isSafeInteger(maxCycles)&&maxCycles>=0,'cycle_limit');
   let cycles=0;
   while(cycles<maxCycles&&!operations.stopped()){
-    let status='paused';
+    let status='paused',phase='gate';
     try{
       const gate=await operations.gate();
       if(gate&&!operations.stopped()){
-        const snapshot=await operations.probe();
+        phase='probe';const snapshot=await operations.probe();
         need(snapshot?.protocol===2&&snapshot.generation===gate.generation,'database_generation');
         // Recheck the actual durable gate after the remote read. A closed or
         // replaced gate cannot admit a new tick based on an earlier snapshot.
-        const again=await operations.gate();equal(again,gate,'gate_changed');
-        if(!operations.stopped()){status='running';operations.status(status);await operations.tick();status='completed';}
+        phase='gate-recheck';const again=await operations.gate();equal(again,gate,'gate_changed');
+        if(!operations.stopped()){phase='tick';status='running';operations.status(status);await operations.tick();status='completed';}
       }
-    }catch{status=status==='running'?'unconfirmed':'paused';}
+    }catch(error){status=status==='running'?'unconfirmed':'paused';try{operations.error?.(bookingWorkerSafeError(error,phase));}catch{}}
     operations.status(status);cycles++;
     if(cycles<maxCycles&&!operations.stopped())await operations.wait(60000);
   }
   return {cycles,stopped:operations.stopped()};
+}
+export function bookingWorkerSafeError(error,phase){
+ const codes=new Set(['ERR_MODULE_NOT_FOUND','ERR_UNKNOWN_FILE_EXTENSION','MODULE_NOT_FOUND','booking_atomic_storage_unavailable','booking_atomic_storage_unconfirmed','booking_atomic_protocol_mismatch','booking_atomic_invalid_command','booking_atomic_invalid_mutation','booking_atomic_invalid_records','booking_atomic_scope_violation','booking_atomic_conflict','booking_notification_claim_failed']);
+ const code=codes.has(error?.code)?error.code:codes.has(error?.message)?error.message:'unclassified';
+ return {phase:['gate','probe','gate-recheck','tick'].includes(phase)?phase:'unknown',code};
 }
 
 function verifyPinnedSource(toolRevision){
@@ -135,10 +140,18 @@ function verifyPinnedSource(toolRevision){
     need(oid===item.oid,'tool_bytes');
   }
 }
+const applicationLoaders=new Map();
 export function loadBookingAtomicWorkerApplication(source=SOURCE){
-  const require=createRequire(source+'/package.json'),{require:tsxRequire}=require('tsx/cjs/api');
-  // The scoped CJS API resolves the application's extensionless TS imports
-  // and aliases on both Node 20 and Node 24. This loader does not load secrets.
+  const require=createRequire(source+'/package.json');
+  let tsxRequire=applicationLoaders.get(source);
+  if(!tsxRequire){
+    // Own worker process: both hooks use the same normal module cache. A
+    // namespaced CJS-only hook loses its namespace in nested import() calls.
+    require('tsx/cjs/api').register();
+    require('tsx/esm/api').register({tsconfig:source+'/tsconfig.json'});
+    tsxRequire=require;
+    applicationLoaders.set(source,tsxRequire);
+  }
   const atomic=tsxRequire(source+'/src/lib/merchantBookingAtomicRuntime.server.ts',source+'/package.json');
   const bookings=tsxRequire(source+'/src/lib/merchantBookings.server.ts',source+'/package.json');
   const probe=atomic.readAtomicBookingSnapshot??atomic.default?.readAtomicBookingSnapshot;
@@ -183,6 +196,7 @@ async function productionWorker(){
        });
       },
       status:value=>{console.info(JSON.stringify({kind:'booking-atomic-worker',status:value,at:new Date().toISOString()}));},
+      error:value=>{console.error(JSON.stringify({kind:'booking-worker-diagnostic',...value,at:new Date().toISOString()}));},
       wait:ms=>new Promise(resolve=>{let timer;wake=()=>{clearTimeout(timer);wake=undefined;resolve();};timer=setTimeout(wake,ms);}),
     });
   }finally{process.removeListener('SIGINT',stop);process.removeListener('SIGTERM',stop);}
