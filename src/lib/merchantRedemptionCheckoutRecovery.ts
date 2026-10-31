@@ -38,6 +38,16 @@ export function cashierCheckoutBlocksNewSale(phase: "checking" | "ready" | "erro
   return phase !== "ready" || Boolean(checkout && !checkout.acknowledgedAt);
 }
 
+/** Routine background checks stay quiet; only actionable recovery is shown.
+ * Presentation is independent of the original fail-closed checkout gate. */
+export function cashierCheckoutRecoveryNoticeVisible(
+  phase: "checking" | "ready" | "error" | null,
+  checkout: MerchantRedemptionCheckoutSummary | null,
+  busy: boolean,
+) {
+  return phase !== null && phase !== "checking" && (cashierCheckoutBlocksNewSale(phase, checkout) || busy);
+}
+
 /** A claim represents one voucher, even when that voucher contains several products. */
 export function cashierCheckoutRequestQuantity(row: { quantity: number; couponClaimId?: string }) {
   return row.couponClaimId?.trim() ? 1 : row.quantity;

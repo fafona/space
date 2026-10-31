@@ -23,6 +23,7 @@ import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import type { MerchantRedemptionCheckoutReceipt, MerchantRedemptionCheckoutSummary } from "@/lib/merchantRedemptionCheckout";
 import {
   cashierCheckoutBlocksNewSale,
+  cashierCheckoutRecoveryNoticeVisible,
   cashierCheckoutErrorAfterRecovery,
   cashierCheckoutPrintReceipt,
   cashierCheckoutRequestQuantity,
@@ -5532,11 +5533,10 @@ export default function MerchantPointRedemptionCashier({
         </div>
       </div>
 
-      {view === "cashier" && canCheckoutRedemptions && (checkoutRecoveryBlocksNewSale || checkoutRecoveryBusy) ? (
+      {view === "cashier" && canCheckoutRedemptions && cashierCheckoutRecoveryNoticeVisible(activeCheckoutRecovery?.phase ?? null, visibleCheckout, checkoutRecoveryBusy) ? (
         <section className="checkout-recovery" aria-label="原结算恢复" aria-busy={checkoutRecoveryBusy || activeCheckoutRecovery?.phase === "checking"}>
-          <h3>{activeCheckoutRecovery?.phase === "checking" ? "正在核对原结算" : activeCheckoutRecovery?.phase === "error" ? "新结算已暂停" :
+          <h3>{activeCheckoutRecovery?.phase === "error" ? "新结算已暂停" :
             visibleCheckout?.status === "pending" ? "有一笔原结算等待处理" : visibleCheckout?.status === "committed" ? "原结算已完成，等待确认" : "原结算已放弃，等待确认"}</h3>
-          {activeCheckoutRecovery?.phase === "checking" ? <p>请稍候，正在读取当前账号的未确认结算。核对完成前不会开始新单。</p> : null}
           {activeCheckoutRecovery?.message ? <p role="alert" className="recovery-error">{activeCheckoutRecovery.message}</p> : null}
           {visibleCheckout ? <p>结算编号：{visibleCheckout.operationId} · {new Date(visibleCheckout.createdAt).toLocaleString()}</p> : null}
           {visibleCheckout?.status === "pending" ? <p>仅使用服务器保存的原单，当前购物车为空也可核对；未完成的结算仍需通过余额、库存与权限检查。</p> : null}

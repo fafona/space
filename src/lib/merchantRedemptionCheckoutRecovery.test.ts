@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
   cashierCheckoutBlocksNewSale, cashierCheckoutErrorAfterRecovery, cashierCheckoutPrintReceipt, createCashierCheckoutRequestGuard,
+  cashierCheckoutRecoveryNoticeVisible,
   cashierCheckoutRequestQuantity, cashierCouponQuantityLabel,
   readCashierCheckoutReceipt, readCashierCheckoutSummary,
 } from "./merchantRedemptionCheckoutRecovery";
@@ -15,6 +16,26 @@ const receipt = {
     subtotalPoints: 90, couponDiscountLabel: "10 points", couponPointDiscount: 10 }],
 };
 const pending = { operationId: receipt.operationId, status: "pending", createdAt: receipt.createdAt, acknowledgedAt: null, result: null };
+
+test("ordinary background recovery checks show no notice while the original checkout gate stays closed", () => {
+  for (const busy of [false, true]) {
+    assert.equal(cashierCheckoutRecoveryNoticeVisible(null, null, busy), false);
+    assert.equal(cashierCheckoutRecoveryNoticeVisible("checking", null, busy), false);
+  }
+  assert.equal(cashierCheckoutBlocksNewSale("checking", null), true);
+  assert.equal(cashierCheckoutRecoveryNoticeVisible("ready", null, false), false);
+  assert.equal(cashierCheckoutBlocksNewSale("ready", null), false);
+});
+
+test("failed checks and unacknowledged original checkouts still show actionable recovery", () => {
+  assert.equal(cashierCheckoutRecoveryNoticeVisible("error", null, false), true);
+  assert.equal(cashierCheckoutBlocksNewSale("error", null), true);
+  for (const status of ["pending", "committed", "cancelled"]) {
+    const checkout = readCashierCheckoutSummary({ ok: true, checkout: { ...pending, status, result: status === "committed" ? receipt : null } }, receipt.siteId);
+    assert.equal(cashierCheckoutRecoveryNoticeVisible("ready", checkout, false), true);
+    assert.equal(cashierCheckoutBlocksNewSale("ready", checkout), true);
+  }
+});
 
 test("loading or failed recovery and all unacknowledged results block new checkout", () => {
   for (const phase of ["checking", "error"] as const) assert.equal(cashierCheckoutBlocksNewSale(phase, null), true);
@@ -101,6 +122,13 @@ test("recovery helper never persists financial requests or reads browser storage
 });
 
 const cashierSource = readFileSync(new URL("../components/admin/MerchantPointRedemptionCashier.tsx", import.meta.url), "utf8");
+
+test("cashier notice uses presentation-only visibility; routine checking no longer renders the large banner", () => {
+  assert.match(cashierSource, /cashierCheckoutRecoveryNoticeVisible\(activeCheckoutRecovery\?\.phase \?\? null, visibleCheckout, checkoutRecoveryBusy\)/);
+  assert.doesNotMatch(cashierSource, /正在核对原结算|请稍候，正在读取当前账号的未确认结算/);
+  assert.match(cashierSource, /const checkoutRecoveryBlocksNewSale = !activeCheckoutRecovery \|\| cashierCheckoutBlocksNewSale/);
+  assert.match(cashierSource, /!checkoutRecoveryBlocksNewSale &&\s*!checkoutRecoveryBusy/);
+});
 function section(start: string, end: string) {
   const startIndex = cashierSource.indexOf(start);
   const endIndex = cashierSource.indexOf(end, startIndex + start.length);
