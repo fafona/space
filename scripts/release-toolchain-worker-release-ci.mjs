@@ -2,13 +2,15 @@ import * as fs from 'node:fs';import {spawnSync} from 'node:child_process';
 import {canonicalJson,sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
 import {ownedReleasePath} from './release-toolchain-source.mjs';
 import {captureTrustedPython,verifyTrustedPython} from './production-maintenance-trusted-python.mjs';
-const SOURCES=['release-toolchain-worker-entry.mjs','booking-atomic-worker.mjs','release-toolchain-worker-release-contract.mjs'];
+const SOURCES=['release-toolchain-worker-entry.mjs','booking-atomic-worker.mjs','release-toolchain-worker-release-contract.mjs','release-toolchain-worker-application-acceptance.mjs'];
 export function assertWorkerEntryAcceptance(report,{revision,sourceHashes}){
  need(report?.kind==='real-pm2-esm-booking-worker-entry-acceptance'&&report.toolRevision===revision&&report.realPm2Version==='6.0.14'&&report.entryMode==='pm2'&&Number.isSafeInteger(report.openedGateCompletedCycles)&&report.openedGateCompletedCycles>=2,'evidence_invalid');
  for(const key of ['actualPm2Wrapper','argvUnchanged','closedGatePaused','closedAgainNoDispatch','syntheticTickOnly','missingDatabaseCredentialRefused','databaseClientConfigured','unrelatedSettingsNotImported'])need(report[key]===true,'evidence_invalid');
  const kernel=report.databaseContinuationKernel;need(kernel?.kind==='worker-database-continuation-kernel-verified'&&kernel.actualFlock===true&&kernel.productionTokensRejected===true&&kernel.originalOperationInodesRetained===true&&kernel.originalFailureBytesRetained===true&&kernel.unknownsNeverCompleted===true&&kernel.formalHostTouched===false&&kernel.publicationAuthority===false,'evidence_invalid');
  need(canonicalJson(kernel.cases)===canonicalJson([{outcome:'normal',completed:true,archived:true},{outcome:'unknown-before-archive',completed:false,archived:false},{outcome:'unknown-after-archive',completed:false,archived:true},{outcome:'wrong-completion',completed:false,archived:true}]),'evidence_invalid');
- for(const key of ['applicationOrDatabaseLoaded','formalHostTouched','publicationAuthority'])need(report[key]===false,'evidence_invalid');
+ need(report.applicationOrDatabaseLoaded===true&&report.formalDatabaseLoaded===false,'evidence_invalid');
+ const application=report.applicationProof;need(application?.kind==='actual-booking-application-synthetic-acceptance'&&application.actualApplicationInvoked===true&&application.zeroSiteDynamicImport===true&&application.multiSiteCompleted===true&&application.sharedAtomicContext===true&&application.syntheticCommits===2&&application.claimCalls>=2&&application.completedTicks>=2&&application.realNetwork===false&&application.formalDatabaseLoaded===false&&application.mailEnabled===false,'evidence_invalid');
+ for(const key of ['formalHostTouched','publicationAuthority'])need(report[key]===false,'evidence_invalid');
  need(JSON.stringify(Object.keys(report.sourceHashes??{}).sort())===JSON.stringify([...SOURCES].sort())&&SOURCES.every(name=>report.sourceHashes[name]===sourceHashes[name]),'source_changed');return true;
 }
 // The original official artifact ZIP is copied using normally configured local
