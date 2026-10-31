@@ -1156,6 +1156,37 @@ export function metadataRecoveryArchiveWitness(token){assertMetadataRecoveryHeld
 
 export async function archiveMetadataRecoveryOperation(options){assertMetadataRecoveryHeld(options.lock,options.window);const{verifyMetadataRecoveryDisposition}=await import('./release-toolchain-metadata-recovery-host.mjs'),closure=await verifyMetadataRecoveryDisposition(options);return archiveOwnedExistingOperation(options.lock,closure.directory,closure.sha256);}
 export async function releaseMetadataRecoveryOperation(options){assertMetadataRecoveryHeld(options.lock,options.window);const{verifyMetadataRecoveryDisposition}=await import('./release-toolchain-metadata-recovery-host.mjs'),closure=await verifyMetadataRecoveryDisposition(options);return releaseArchivedReplacement(options.lock,closure,'metadata-recovery-disposition-reconciled','metadata-recovery-replacement');}
+export async function withBookingWorkerDatabaseLocks({toolRevision},work){
+ if(process.platform!=='linux'||process.getuid?.()!==0||typeof work!=='function')fail('worker_database_scope');
+ const{reviewedBookingExecution}=await import('./release-toolchain-authority.mjs'),{workerDatabaseIncidentSha256}=await import('./release-toolchain-worker-database-contract.mjs'),{observeWorkerDatabaseIncident}=await import('./release-toolchain-worker-database.mjs'),authority=reviewedBookingExecution(toolRevision);
+ if(authority?.prepared.workerReleaseAdmission?.databaseContinuation?.incidentSha256!==workerDatabaseIncidentSha256())fail('worker_database_scope');
+ return withExistingOperationPreparation({deployLock:DEPLOY_LOCK,operation:OPERATION_LOCK,observe:()=>observeWorkerDatabaseIncident()},async(token,context)=>{
+  const held=heldLocks.get(token);held.workerDatabase=Object.freeze({toolRevision,incidentSha256:workerDatabaseIncidentSha256()});const result=await work(token,context);if(reviewedBookingExecution(toolRevision)!==authority)fail('active_incident_review_changed');return result;
+ });
+}
+export function assertBookingWorkerDatabaseHeld(token,window){
+ assertExistingOperationScopeHeld(token);const held=heldLocks.get(token);if(held.deployLock!==DEPLOY_LOCK||held.operation!==OPERATION_LOCK||!held.workerDatabase||window!==undefined&&!isDeepStrictEqual(held.activeWindow,window))fail('worker_database_scope');return Object.freeze({...held.workerDatabase});
+}
+export async function archiveBookingWorkerDatabaseOperation(options){if(assertBookingWorkerDatabaseHeld(options.lock,options.window).toolRevision!==options.toolRevision)fail('worker_database_scope');const{verifyWorkerDatabaseClosure}=await import('./release-toolchain-worker-database.mjs'),closure=await verifyWorkerDatabaseClosure(options);return archiveOwnedExistingOperation(options.lock,closure.directory,closure.sha256);}
+export async function releaseBookingWorkerDatabaseOperation(options){if(assertBookingWorkerDatabaseHeld(options.lock,options.window).toolRevision!==options.toolRevision)fail('worker_database_scope');const{verifyWorkerDatabaseClosure}=await import('./release-toolchain-worker-database.mjs'),closure=await verifyWorkerDatabaseClosure(options);return releaseArchivedReplacement(options.lock,closure,'booking-worker-database-reconciled','booking-worker-database-replacement');}
+export async function acceptBookingWorkerDatabaseKernel(root){
+ const anchors=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
+ if(process.platform!=='linux'||process.getuid?.()!==0||process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted'||process.env.FAOLLA_RELEASE_PRODUCTION_EQ!=='1'||!/^\/var\/lib\/faolla-eq-[A-Za-z0-9]+$/.test(root)||anchors.some(file=>exists(file)))fail('ci_only');
+ privateDirectory(root);const base=root+'/database-continuation';fs.mkdirSync(base,{mode:0o700});const cases=[];
+ for(const outcome of ['normal','unknown-before-archive','unknown-after-archive','wrong-completion']){
+  const directory=base+'/'+outcome;fs.mkdirSync(directory,{mode:0o700});const deploy=directory+'/deploy.lock',operation=directory+'/operation.lock',vault=directory+'/vault';privateWrite(deploy,'owned-deploy\n');fs.mkdirSync(operation,{mode:0o700});fs.mkdirSync(vault,{mode:0o700});privateWrite(directory+'/original-failure.json','original-failure\n');const original=dirIdentity(fs.lstatSync(operation));let cause,completed=false,archived=false;
+  try{await withExistingOperationPreparation({deployLock:deploy,operation,observe:()=>({syntheticOnly:true})},async token=>{
+   const busy=spawnSync('flock',['--nonblock',deploy,'true'],{env:runtimeEnvironment(),timeout:10000});if(busy.status!==1||busy.error||busy.signal)fail('ci_real_lock_not_held');let leaked=false;try{assertBookingWorkerDatabaseHeld(token);leaked=true;}catch{}if(leaked)fail('ci_token_production_leak');
+   privateWrite(vault+'/database-closure.json','synthetic-completed-cycles\n');const closure={directory:vault,sha256:digest(readOwned(vault+'/database-closure.json'))};if(outcome==='unknown-before-archive')throw Error('owned_unknown');
+   archiveOwnedExistingOperation(token,vault,closure.sha256,()=>{archived=true;if(outcome==='unknown-after-archive')throw Error('owned_unknown');});
+   privateWrite(vault+'/reconciliation-completed.json',retentionCanonicalText({kind:outcome==='wrong-completion'?'foreign':'owned-database-completed',closureSha256:closure.sha256,archiveSha256:digest(readOwned(vault+'/operation-archived.json')),publicationAuthority:false}));releaseArchivedReplacement(token,closure,'owned-database-completed','owned-database-replacement');completed=true;
+  });}catch(error){cause=error;privateWrite(vault+'/unconfirmed.json',retentionCanonicalText({automaticRetryAllowed:false,errorSha256:digest(String(error.message))}));}
+  if(outcome==='normal'){if(cause||!completed||exists(operation))fail('ci_database_closure_unconfirmed');}else if(!cause||completed||!exists(vault+'/unconfirmed.json'))fail('ci_unknown_not_retained');
+  equal(dirIdentity(privateDirectory(archived?vault+'/operation.lock':operation)),original,'ci_original_inode_changed');equal(readOwned(directory+'/original-failure.json'),Buffer.from('original-failure\n'),'ci_original_bytes_changed');cases.push({outcome,completed,archived});
+ }
+ if(anchors.some(file=>exists(file)))fail('ci_formal_anchor_created');return {kind:'worker-database-continuation-kernel-verified',cases,actualFlock:true,productionTokensRejected:true,originalOperationInodesRetained:true,originalFailureBytesRetained:true,unknownsNeverCompleted:true,formalHostTouched:false,publicationAuthority:false};
+}
+
 export async function acceptMetadataRecoveryKernel(){
  if(process.platform!=='linux'||process.getuid?.()!==0)fail('native_linux_root_required');
  const{executeMetadataRecoveryDisposition}=await import('./release-toolchain-metadata-recovery-contract.mjs'),{bookingHostReplace,bookingHostWriteOnce}=await import('./booking-handoff-host-io.mjs');
