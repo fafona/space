@@ -1,0 +1,2 @@
+import {publishBookingWorkerSuccessor,auditBookingWorkerSuccessor} from './release-toolchain-worker-release-host.mjs';
+try{console.log(JSON.stringify(await publishBookingWorkerSuccessor()));console.log(JSON.stringify(await auditBookingWorkerSuccessor()));}catch(error){console.error(JSON.stringify({kind:'booking-worker-release-refused',code:/^[a-z_]{1,160}$/.test(error?.message??'')?error.message:'operation_unconfirmed',mailEnabled:false,automaticRetryAllowed:false}));process.exitCode=1;}

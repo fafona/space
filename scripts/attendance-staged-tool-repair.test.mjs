@@ -67,7 +67,8 @@ test('real static closure includes every transitive local import according to th
   assert.ok(seen.has('scripts/booking-handoff-policy.mjs'));
   assert.ok(seen.has('scripts/booking-handoff-retention.mjs'));
   for(const name of ['booking-handoff-active-retention','production-maintenance-daemon-continuity','production-maintenance-pm2-adapter','production-maintenance-trusted-python','release-toolchain-active-generation-contract','release-toolchain-active-generation-readiness-contract','release-toolchain-contracts','release-toolchain-pm2-transition'])assert.ok(seen.has('scripts/'+name+'.mjs'),name);
-  assert.equal(seen.size,24);
+  assert.ok(seen.has('scripts/release-toolchain-worker-release-contract.mjs'));
+  assert.equal(seen.size,25);
 });
 
 test('closure follows inline/multiline static imports, reexports and cycles but refuses escapes', () => {

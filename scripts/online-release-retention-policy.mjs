@@ -6,6 +6,7 @@ import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.
 import {WEB_RELEASE_FILES} from './web-presentation-release-policy.mjs';
 import {BOOKING_RETENTION_KIND, assertBookingRetentionHandoff, bookingHandoffReplacements,
   assertBookingReadyReleaseProof} from './booking-handoff-retention.mjs';
+import {BOOKING_WORKER_RELEASE_KIND,assertBookingWorkerReleaseTransition,assertBookingWorkerPublicationBinding,assertBookingWorkerReleasePlan,assertBookingWorkerReleaseCompletion,bookingWorkerReleaseReplacements} from './release-toolchain-worker-release-contract.mjs';
 
 // Inactive, pure evidence contract. No stop, publication, cleanup or authorization
 // is performed here. The eventual host adapter must collect these facts itself.
@@ -23,6 +24,7 @@ const nameOf = target => `merchant-space-online-${target.slice(0, 12)}`;
 const directoryOf = target => `${APP}.web-releases/${target.slice(0, 12)}-online`;
 const locationOf = a => Object.fromEntries(['target', 'name', 'directory', 'port'].map(key => [key, a[key]]));
 const rawHash = text => createHash('sha256').update(text).digest('hex');
+const certifiedProcessReplacements=history=>[...bookingHandoffReplacements(history),...bookingWorkerReleaseReplacements(history)];
 const iso = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) &&
   Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 const PROCESS_KEYS = ['name', 'pmId', 'pid', 'cwd', 'status', 'port', 'executable', 'interpreter', 'args', 'nodeArgs',
@@ -145,12 +147,13 @@ export function assertOnlineRetentionRollbackProof({history, proof, actualActive
 }
 export function assertOnlineRetentionCertificate(c) {
   if (!object(c) || c.version !== 2 || c.policy !== ONLINE_RETENTION_POLICY || c.status !== 'completed' ||
-      !['initialize', 'converge', 'retire', BOOKING_RETENTION_KIND].includes(c.kind) || !positive(c.sequence) || c.sequence > 999999 ||
+      !['initialize', 'converge', 'retire', BOOKING_RETENTION_KIND, BOOKING_WORKER_RELEASE_KIND].includes(c.kind) || !positive(c.sequence) || c.sequence > 999999 ||
       !(c.previousSha256 === null || HASH.test(c.previousSha256 ?? '')) || !HASH.test(c.legacySha256 ?? '') ||
       !(c.rollingHeadSha256 === null || HASH.test(c.rollingHeadSha256 ?? '')) || !HASH.test(c.rollingHistorySha256 ?? '') ||
       !['beforeSha256', 'afterSha256', 'preparedSha256', 'recoverySha256'].every(key => HASH.test(c[key] ?? '')) ||
       !SHA.test(c.toolRevision ?? '') || !iso(c.completedAt)) fail('certificate_invalid');
   pair(c.active, c.rollback); processList(c.processes);
+  if(c.kind!==BOOKING_WORKER_RELEASE_KIND&&c.workerRelease!==undefined)fail('unexpected_worker_release');
   if (c.kind === BOOKING_RETENTION_KIND) {
     if (!object(c.bookingHandoff)) fail('booking_handoff_missing');
   } else if (c.bookingHandoff !== undefined) fail('unexpected_booking_handoff');
@@ -181,6 +184,9 @@ function checkTransition(c, history, {planning = false} = {}) {
       assertBookingRetentionHandoff({handoff:c.bookingHandoff,prior,previousSha256:history.headSha256,
         active:c.active,rollback:c.rollback,processes:c.processes,toolRevision:c.toolRevision,
         completedAt:planning ? undefined : c.completedAt});
+    } else if(c.kind===BOOKING_WORKER_RELEASE_KIND){
+      assertBookingWorkerPublicationBinding(c.workerRelease,history);
+      assertBookingWorkerReleaseTransition(planning?{...c,completedAt:undefined}:c,prior,history.headSha256);
     } else if (c.kind === 'converge') {
       if (history.entries.some(entry => [entry.active.target, entry.rollback.target].includes(c.active.target)))
         fail('publication_transition_invalid');
@@ -210,8 +216,8 @@ export function assertOnlineRetentionHistory(history) {
     if (previous && Date.parse(c.completedAt) < Date.parse(previous.completedAt)) fail('history_time_reversed');
     const certificates = retirementCertificates(prefix);
     if (c.kind === 'retire') certificates.push({process: c.victim.process, stopped: c.stoppedProcess});
-    if (c.kind !== BOOKING_RETENTION_KIND) preserve(previous?.processes ?? history.rollingHistory.legacyProcesses,
-      c.processes, certificates, bookingHandoffReplacements(prefix));
+    if (![BOOKING_RETENTION_KIND,BOOKING_WORKER_RELEASE_KIND].includes(c.kind)) preserve(previous?.processes ?? history.rollingHistory.legacyProcesses,
+      c.processes, certificates, certifiedProcessReplacements(prefix));
     if (previous && c.kind !== BOOKING_RETENTION_KIND) {
       const added = c.processes.filter(p => !previous.processes.some(old => old.name === p.name));
       equal(added, c.kind === 'converge' ? [c.active.process] : [], 'unexpected_process_added');
@@ -296,12 +302,12 @@ function observation(value, history) {
 }
 
 export function assertOnlineRetentionPlan(before, history) {
-  assertOnlineRetentionHistory(history); observation(before, history);
+  assertOnlineRetentionHistory(history);if(before?.kind===BOOKING_WORKER_RELEASE_KIND)return assertBookingWorkerReleasePlan(before,history);observation(before, history);
   const c = {...before, status: 'completed', completedAt: '2000-01-01T00:00:00.000Z'};
   checkTransition(c, history, {planning: true});
   const previous = history.entries.at(-1), certificates = retirementCertificates(history);
   if (before.kind !== BOOKING_RETENTION_KIND) preserve(previous?.processes ?? history.rollingHistory.legacyProcesses,
-    before.processes, certificates, bookingHandoffReplacements(history));
+    before.processes, certificates, certifiedProcessReplacements(history));
   if (previous && before.kind !== BOOKING_RETENTION_KIND) {
     const added = before.processes.filter(p => !previous.processes.some(old => old.name === p.name));
     equal(added, before.kind === 'converge' ? [before.active.process] : [], 'unexpected_process_added');
@@ -352,6 +358,7 @@ export function assertOnlineRetentionPlan(before, history) {
 }
 
 export function assertOnlineRetentionCompletion(before, after, history) {
+  if(before?.kind===BOOKING_WORKER_RELEASE_KIND){assertOnlineRetentionHistory(history);return assertBookingWorkerReleaseCompletion(before,after,history);}
   assertOnlineRetentionPlan(before, history);
   if (!object(after)) fail('completion_invalid');
   const expected = structuredClone(before);
@@ -379,8 +386,8 @@ export function inspectOnlineRetentionWindow({history, actualActive, current, sa
   const selected = [latest.active, latest.rollback].find(a => a.target === actualActive.target);
   if (!selected) fail('active_outside_window');
   equal(actualActive, Object.fromEntries(['target', 'name', 'directory', 'port'].map(k => [k, selected[k]])), 'actual_active_changed');
-  preserve(latest.processes, current, retirementCertificates(history), bookingHandoffReplacements(history));
-  if (saved) preserve(saved, current, retirementCertificates(history), bookingHandoffReplacements(history));
+  preserve(latest.processes, current, retirementCertificates(history), certifiedProcessReplacements(history));
+  if (saved) preserve(saved, current, retirementCertificates(history), certifiedProcessReplacements(history));
   for (const a of [latest.active, latest.rollback]) equal(current.find(p => p.name === a.name), a.process, 'window_process_changed');
   const stable = selected.target === latest.active.target;
   if (!stable && proof !== undefined) rollbackProof(proof, history);
@@ -426,7 +433,7 @@ export function assertOnlineRetentionPublication({history, state: publication, a
       [adopted.rollback.target, adopted.rollback.name, adopted.rollback.directory, adopted.rollback.port], 'publication_baseline_changed');
     if (publication.previousActive !== undefined) equal(publication.previousActive, locationOf(adopted.rollback), 'publication_baseline_changed');
     const window = inspectOnlineRetentionWindow({history, actualActive, current});
-    preserve(latest.processes, current, retirementCertificates(history), bookingHandoffReplacements(history));
+    preserve(latest.processes, current, retirementCertificates(history), certifiedProcessReplacements(history));
     if (current.length !== latest.processes.length) fail('unexpected_process_added');
     if (action === 'rollback' && window.phase !== 'stable') fail('rollback_edge_invalid');
     if (window.phase === 'rolled-back' && (publication.status !== 'rolled-back' ||
@@ -462,12 +469,12 @@ export function assertOnlineRetentionPublication({history, state: publication, a
     equal(introduced.rollback, baseline, 'publication_baseline_changed');
     equal(introduced.rollbackProof ?? null, proof ?? null, 'publication_rollback_proof_changed');
     const suffix = history.entries.slice(history.entries.indexOf(introduced) + 1);
-    if (suffix.some(c => c.kind !== 'retire' || c.active.target !== publication.target || c.rollback.target !== baseline.target))
+    if (suffix.some(c => !['retire',BOOKING_WORKER_RELEASE_KIND].includes(c.kind) || c.active.target !== publication.target || c.rollback.target !== baseline.target))
       fail('publication_no_longer_current');
   } else if (history.headSha256 !== publication.retentionHeadSha256) fail('publication_birth_head_changed');
   const latest = history.entries.at(-1), certificates = retirementCertificates(history);
-  preserve(latest.processes, current, certificates, bookingHandoffReplacements(history));
-  preserve(publication.processes, current, certificates, bookingHandoffReplacements(history));
+  preserve(latest.processes, current, certificates, certifiedProcessReplacements(history));
+  preserve(publication.processes, current, certificates, certifiedProcessReplacements(history));
   const added = current.filter(p => !latest.processes.some(old => old.name === p.name));
   if (added.length > (introduced ? 0 : 1) || added.some(p => p.name !== publication.name || p.cwd !== publication.directory ||
       p.port !== publication.port || p.status !== 'online')) fail('unexpected_process_added');

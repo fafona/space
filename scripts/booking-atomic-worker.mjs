@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
-import {fileURLToPath,pathToFileURL} from 'node:url';
+import {fileURLToPath} from 'node:url';
 import {isDeepStrictEqual} from 'node:util';
 import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE,BOOKING_HANDOFF_APPLICATION as APPLICATION} from './booking-handoff-policy.mjs';
 import {BOOKING_RETENTION_KIND} from './booking-handoff-retention.mjs';
@@ -12,7 +12,8 @@ import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {assertOnlineRetentionHistory,inspectOnlineRetentionWindow,retentionHash,retentionCanonicalText} from './online-release-retention-policy.mjs';
 import {assertOnlineToolOwnedPath,createOnlineReleaseToolPlan,readOnlineToolInventory,runOnlineToolGit} from './prepare-online-release-tool.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
-import {spawnSync} from 'node:child_process';
+import {bookingWorkerEntryMode} from './release-toolchain-worker-entry.mjs';
+import {assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
 
 const ROOT='/var/lib/faolla-booking-handoff/'+CANDIDATE;
 const SOURCE='/www/wwwroot/merchant-space.web-releases/'+CANDIDATE.slice(0,12)+'-online';
@@ -122,7 +123,12 @@ async function productionWorker(){
   const stop=()=>{stopped=true;wake?.();};process.once('SIGINT',stop);process.once('SIGTERM',stop);
   try{
     await runBookingAtomicWorkerLoop({stopped:()=>stopped,probe,tick,
-      gate:()=>{
+      gate:async()=>{
+       // Host observation depends on the publication graph. Load it only after
+       // module initialization, never from the pure application's import graph.
+       const {withPinnedFormalPm2Process}=await import('./release-toolchain-proc-witness.mjs');
+       const {collectFormalBookingPm2Registry}=await import('./release-toolchain-pm2-observation.mjs');
+       return withPinnedFormalPm2Process(()=>{
         // Missing is deliberately paused. Malformed/partial evidence is an
         // error, never an alternative permission to fall back to legacy.
         try{fs.lstatSync(ROOT+'/worker-enabled.json');}catch(e){if(e.code==='ENOENT')return null;throw e;}
@@ -130,18 +136,20 @@ async function productionWorker(){
         need(text===retentionCanonicalText(gate),'gate_encoding');
         equal(privateText(ROOT+'/worker-runtime.json'),savedText,'runtime_file_changed');
         assertBookingAtomicWorkerEnvironment(process.env);
-        const result=spawnSync('pm2',['jlist'],{encoding:'utf8',timeout:10000,maxBuffer:32*1024**2,windowsHide:true,
-          env:{PATH:'/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',HOME:'/root',PM2_HOME:'/root/.pm2'}});
-        need(result.status===0&&!result.signal&&!result.error,'pm2_read');
-        const current=JSON.parse(result.stdout).map(normalizeRetirementProcess);
+        // A missing/replaced manager fails closed. A task must never boot a
+        // fresh daemon as the PM2 CLI's jlist command can do implicitly.
+        const current=collectFormalBookingPm2Registry().rows.map(normalizeRetirementProcess);
         const actualActive=JSON.parse(privateText('/var/lib/faolla-online-release/active.json'));
-        return assertBookingAtomicWorkerGate({gate,history:readOnlineRetentionHistory(),actualActive,current,toolRevision});
+        const history=readOnlineRetentionHistory();
+        assertBookingWorkerExecutionRevision({gate,history,toolRevision});
+        return assertBookingAtomicWorkerGate({gate,history,actualActive,current,toolRevision:gate.toolRevision});
+       });
       },
       status:value=>{console.info(JSON.stringify({kind:'booking-atomic-worker',status:value,at:new Date().toISOString()}));},
       wait:ms=>new Promise(resolve=>{let timer;wake=()=>{clearTimeout(timer);wake=undefined;resolve();};timer=setTimeout(wake,ms);}),
     });
   }finally{process.removeListener('SIGINT',stop);process.removeListener('SIGTERM',stop);}
 }
-if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
+if(bookingWorkerEntryMode(import.meta.url)){
   productionWorker().catch(()=>{console.error('booking_atomic_worker_unverified');process.exitCode=1;});
 }

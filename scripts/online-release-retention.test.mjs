@@ -228,6 +228,27 @@ test('booking handoff round-trips through the strict reader with all legacy proo
   assert.equal(memory.fds.size, 0);
 });
 
+test('worker-only successor round-trips through the actual five-file reader without rewriting the website handoff',()=>{
+ const old=legacyFixture([],{activeTarget:BOOKING_HANDOFF_BASELINE,bookingLegacy:true}),memory=memoryFs(old.files);
+ const history=createOnlineRetentionHistory(readOnlineRollingRetentions('/rolling',memory.io,'/legacy'));
+ addReceipt(memory,history,observation(history,'initialize',old.processes,[BOOKING_HANDOFF_BASELINE,sha('b')]));
+ const f=bookingHandoffFixture({history,current:old.processes}),workerName='merchant-space-booking-atomic-f274ad615550';
+ for(const p of [f.before.processes.find(p=>p.name===workerName),f.before.bookingHandoff.added.find(p=>p.name===workerName)])Object.assign(p,{pmId:27,killTimeout:null});
+ f.before.activeState.bookingHandoffSha256=retentionHash(f.before.bookingHandoff);
+ const proof=f.before.releaseProofs.find(p=>p.target===f.before.active.target);proof.state=clone(f.before.activeState);proof.stateText=JSON.stringify(proof.state);proof.stateSha256=hash(proof.stateText);
+ const handoff=buildOnlineRetentionReceipt(f.before,clone(f.before),{version:2,process:null},history,{preparedAt:'2026-10-26T10:01:00.000Z',completedAt:'2026-10-26T10:01:00.000Z'});
+ const append=receipt=>{const directory='/retention/'+String(receipt.certificate.sequence).padStart(6,'0');memory.directories.add(directory);for(const [name,text]of receipt.files)memory.put(directory+'/'+name,text);history.entries.push(receipt.certificate);history.headSha256=retentionHash(receipt.certificate);memory.put('/retention.head.json',canonical(onlineRetentionHeadRecord(history)));return directory;};
+ append(handoff);const original=new Map([...memory.files].map(([name,bytes])=>[name,Buffer.from(bytes)])),prior=history.entries.at(-1),p=prior.processes.find(p=>p.name===workerName);
+ const gate={schemaVersion:1,kind:'booking-atomic-worker-gate',candidate:prior.active.target,toolRevision:prior.toolRevision,certificateSha256:history.headSha256,generation:prior.bookingHandoff.databaseAfter.generation,enabled:true};
+ const workerRelease={version:1,kind:'booking-worker-source-only',candidate:prior.active.target,toolRevision:sha('e'),priorToolRevision:prior.toolRevision,priorWorker:clone(p),gateSha256:hash(canonical(gate)),publicationCertificateSha256:history.headSha256,inventorySha256:digest('a'),nativeEvidenceSha256:digest('b'),protectedHostSha256:digest('c'),window:{id:'10000000-0000-4000-8000-000000000002',startedAt:'2026-10-31T14:00:00.000Z',deadlineAt:'2026-10-31T14:10:00.000Z'},mailEnabled:false};
+ const before={...Object.fromEntries(['version','policy','legacySha256','rollingHeadSha256','rollingHistorySha256','active','rollback','victim'].map(k=>[k,clone(prior[k])])),kind:'booking-worker',toolRevision:sha('e'),sequence:history.entries.length+1,previousSha256:history.headSha256,workerRelease,processes:clone(prior.processes),workerIdentity:{pid:p.pid,uid:0,startTicks:'100'},protectedHostSha256:digest('c'),persistenceSha256:null};
+ const after={...clone(before),processes:before.processes.map(v=>v.name===workerName?{...v,pid:77777,restartCount:v.restartCount+1,executable:'/var/lib/faolla-online-code/'+sha('e')+'/scripts/booking-atomic-worker.mjs'}:clone(v)),workerIdentity:{pid:77777,uid:0,startTicks:'200'},persistenceSha256:digest('d')};
+ const next=buildOnlineRetentionReceipt(before,after,{version:2,process:null},history,{preparedAt:'2026-10-31T14:00:00.000Z',completedAt:'2026-10-31T14:01:00.000Z'}),directory=append(next);
+ assert.deepEqual(readOnlineRetentionHistory('/retention',memory.io,'/rolling','/legacy'),history);
+ for(const [name,bytes]of original)if(name!=='/retention.head.json')assert.deepEqual(memory.files.get(name),bytes);
+ const prepared=JSON.parse(memory.files.get(directory+'/prepared.json'));delete prepared.workerRelease;memory.put(directory+'/prepared.json',canonical(prepared));const certificate=clone(next.certificate);certificate.preparedSha256=hash(canonical(prepared));memory.put(directory+'/certificate.json',canonical(certificate));assert.throws(()=>readOnlineRetentionHistory('/retention',memory.io,'/rolling','/legacy'),/preparation_changed/);assert.equal(memory.fds.size,0);
+});
+
 test('old retirement and rolling source files retain their original full LF-normalized hashes', () => {
   const expected = {
     'online-release-retirement.mjs': 'd2c051cde588464d16d57b96bbd83bf1f6c8d16da8ab653cd0f22ddb9922639e',
