@@ -24,6 +24,15 @@ This also runs inside the real isolated PM2 worker before its report can satisfy
 the strengthened release admission. No formal database or network is used.
 Diagnostics emit only fixed phase/code pairs, never exception text or paths.
 
+The isolated fixture uses the existing complete application/dependency copy,
+with all source/configuration bytes matched first. Once closed-gate/no-dispatch
+and exact four-process ownership have been proved, it stops only the fourth
+owned Node fixture by its unchanged identity. Its esbuild children are pinned
+by parent identity, cwd, binary and exact service argv, and must exit naturally
+with that parent. Compiler PIDs are not signalled. The original node-only final
+cleanup predicate remains unchanged; all three protected processes are checked
+again. Compiler resources cannot be hidden by changing cwd.
+
 ## Audited continuation
 
 The separate application profile pins certificate 24, PID 754409 / restart 13,
