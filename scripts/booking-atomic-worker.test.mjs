@@ -4,12 +4,21 @@ import {readFileSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
-import {assertBookingAtomicWorkerEnvironment,assertBookingAtomicWorkerGate,runBookingAtomicWorkerLoop} from './booking-atomic-worker.mjs';
+import {assertBookingAtomicWorkerEnvironment,assertBookingAtomicWorkerGate,runBookingAtomicWorkerLoop,selectBookingWorkerDatabaseCredential} from './booking-atomic-worker.mjs';
 import {bookingHandoffFixture} from './test-support/booking-handoff-retention-fixture.mjs';
 import {buildOnlineRetentionReceipt} from './online-release-retention.mjs';
 import {retentionHash} from './online-release-retention-policy.mjs';
 import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE} from './booking-handoff-policy.mjs';
 const clone=structuredClone;
+test('database selection copies only the existing matching service credential, never mail or admin settings',()=>{
+  const value='synthetic-service-credential-'.repeat(3),env={NEXT_PUBLIC_SUPABASE_URL:'https://synthetic.invalid',SUPABASE_INTERNAL_URL:'http://127.0.0.1:8000'},text=`NEXT_PUBLIC_SUPABASE_URL=${env.NEXT_PUBLIC_SUPABASE_URL}\nSUPABASE_INTERNAL_URL=${env.SUPABASE_INTERNAL_URL}\nSUPABASE_SERVICE_ROLE_KEY="${value}"\nRESEND_API_KEY=must-not-load\nSUPER_ADMIN_PASSWORD=must-not-load\n`;
+  const before=clone(env);assert.deepEqual(selectBookingWorkerDatabaseCredential(text,env),{name:'SUPABASE_SERVICE_ROLE_KEY',value});assert.deepEqual(env,before);
+  assert.deepEqual(selectBookingWorkerDatabaseCredential(text.replace('SUPABASE_SERVICE_ROLE_KEY','NEXT_SUPABASE_SERVICE_ROLE_KEY'),env),{name:'NEXT_SUPABASE_SERVICE_ROLE_KEY',value});
+  for(const changed of [text.replace('SUPABASE_SERVICE_ROLE_KEY','UNRELATED_KEY'),text+'SUPABASE_SERVICE_ROLE_KEY='+value+'\n',text.replace(value,'$VARIABLE'),text.replace(value,'bad value'),text.replace('https://synthetic.invalid','https://foreign.invalid')])assert.throws(()=>selectBookingWorkerDatabaseCredential(changed,env),error=>!error.message.includes(value)&&!error.message.includes('must-not-load'));
+  assert.throws(()=>selectBookingWorkerDatabaseCredential(text,{...env,SUPABASE_SERVICE_ROLE_KEY:'foreign-credential'}),/database_credential_changed/);
+  assert.throws(()=>selectBookingWorkerDatabaseCredential(text,{...env,SUPABASE_INTERNAL_URL:'http://foreign.invalid'}),/database_destination_changed/);
+  assert.throws(()=>selectBookingWorkerDatabaseCredential(text+'NEXT_SUPABASE_SERVICE_ROLE_KEY=another-service-credential-different\n',env));
+});
 test('booking worker environment can enable only atomic booking automation, not mail or enterprise workers',()=>{
   const env={NODE_ENV:'production',PWD:'/www/wwwroot/merchant-space.web-releases/'+CANDIDATE.slice(0,12)+'-online',
     MERCHANT_BOOKING_STORAGE_MODE:'atomic-v2',MERCHANT_BOOKING_NOTIFICATION_WORKER_ENABLED:'1',FAOLLA_BACKGROUND_JOBS_PAUSED:'0',

@@ -22,6 +22,41 @@ const need=(v,code)=>{if(!v)fail(code);};
 const equal=(a,b,code)=>need(isDeepStrictEqual(a,b),code);
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const hex=/^[a-f0-9]{64}(?![\s\S])/,sha=/^[a-f0-9]{40}(?![\s\S])/;
+// This immutable application's environment is already an attested deployment
+// input. Import ONLY its database credential, never dotenv's other settings.
+const DATABASE_ENV_SHA256='7a3beb2c4a8b8d493972beb84401b6bcf4cd8385c0b786d8d997e10566466100';
+export function selectBookingWorkerDatabaseCredential(text,environment){
+  need(typeof text==='string'&&Buffer.byteLength(text)<=1048576&&object(environment),'database_configuration');
+  const selected={},names=['NEXT_PUBLIC_SUPABASE_URL','SUPABASE_INTERNAL_URL','SUPABASE_SERVICE_ROLE_KEY','NEXT_SUPABASE_SERVICE_ROLE_KEY'];
+  for(const line of text.split(/\r?\n/)){
+    const match=line.match(/^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=\s*(.*)$/);
+    if(!match||!names.includes(match[1]))continue;
+    need(!Object.hasOwn(selected,match[1]),'database_configuration');let value=match[2].trim();
+    if(value.startsWith('"')||value.startsWith("'")){const quote=value[0];need(value.length>=2&&value.at(-1)===quote,'database_configuration');value=value.slice(1,-1);}
+    need(value.length>0&&!/[\x00-\x20\x7f$`\\]/.test(value),'database_configuration');selected[match[1]]=value;
+  }
+  for(const name of ['NEXT_PUBLIC_SUPABASE_URL','SUPABASE_INTERNAL_URL']){
+    need((environment[name]??'')===(selected[name]??''),'database_destination_changed');
+  }
+  need(selected.NEXT_PUBLIC_SUPABASE_URL,'database_configuration');
+  const keys=names.slice(2).filter(name=>selected[name]);need(keys.length>0,'database_credential_missing');
+  need(keys.every(name=>/^[A-Za-z0-9._~-]{32,16384}$/.test(selected[name])),'database_configuration');
+  need(keys.length===1||selected[keys[0]]===selected[keys[1]],'database_configuration');
+  const name=keys[0],value=selected[name];
+  for(const key of names.slice(2))need(!environment[key]||environment[key]===value,'database_credential_changed');
+  return {name,value};
+}
+export function configureBookingWorkerDatabase(){
+  need(process.platform==='linux'&&process.getuid?.()===0&&process.cwd()===SOURCE,'database_invocation');
+  const text=privateText(SOURCE+'/.env.local');need(createHash('sha256').update(text).digest('hex')===DATABASE_ENV_SHA256,'database_configuration_changed');
+  const {name,value}=selectBookingWorkerDatabaseCredential(text,process.env);process.env[name]=value;
+  return {sourceEnvironmentSha256:DATABASE_ENV_SHA256,credentialConfigured:true,otherSettingsLoaded:false,mailEnabled:false};
+}
+export async function probeConfiguredBookingWorkerDatabase(){
+  const configuration=configureBookingWorkerDatabase(),{probe}=loadBookingAtomicWorkerApplication(),snapshot=await probe();
+  need(snapshot?.protocol===2&&snapshot.generation==='9b85e75c-f474-4b17-b2a5-75601f7940b4','database_generation');
+  return {kind:'booking-worker-database-readonly-probe-verified',...configuration,protocol:2,generation:snapshot.generation,tickDispatched:false,businessDataWritten:false,at:new Date().toISOString()};
+}
 const identity=st=>Object.fromEntries(['dev','ino','mode','uid','nlink','size','mtimeMs','ctimeMs'].map(k=>[k,st[k]]));
 function privateText(file){
   assertOnlineToolOwnedPath(file,'file');
@@ -103,7 +138,7 @@ function verifyPinnedSource(toolRevision){
 export function loadBookingAtomicWorkerApplication(source=SOURCE){
   const require=createRequire(source+'/package.json'),{require:tsxRequire}=require('tsx/cjs/api');
   // The scoped CJS API resolves the application's extensionless TS imports
-  // and aliases on both Node 20 and Node 24. No environment file is loaded.
+  // and aliases on both Node 20 and Node 24. This loader does not load secrets.
   const atomic=tsxRequire(source+'/src/lib/merchantBookingAtomicRuntime.server.ts',source+'/package.json');
   const bookings=tsxRequire(source+'/src/lib/merchantBookings.server.ts',source+'/package.json');
   const probe=atomic.readAtomicBookingSnapshot??atomic.default?.readAtomicBookingSnapshot;
@@ -118,6 +153,8 @@ async function productionWorker(){
   const savedText=privateText(ROOT+'/worker-runtime.json'),saved=JSON.parse(savedText);
   assertBookingAtomicWorkerEnvironment(saved);
   for(const [key,value]of Object.entries(saved))need(typeof value==='string'&&process.env[key]===value,'runtime_changed');
+  const database=configureBookingWorkerDatabase();
+  console.info(JSON.stringify({kind:'booking-worker-database-configuration',...database,at:new Date().toISOString()}));
   const {probe,tick}=loadBookingAtomicWorkerApplication();
   let stopped=false,wake;
   const stop=()=>{stopped=true;wake?.();};process.once('SIGINT',stop);process.once('SIGTERM',stop);
