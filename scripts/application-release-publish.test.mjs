@@ -46,7 +46,7 @@ test('importing the actual controller and publisher is inert on ordinary develop
 });
 test('ordinary manifests and tooling trigger the existing mandatory safety workflow without removing any real acceptance',()=>{
  const workflow=readFileSync(new URL('../.github/workflows/release-toolchain.yml',import.meta.url),'utf8');
- for(const value of ["'release/application-release.json'","'scripts/application-release*'",'node --test scripts/application-release-*.test.mjs scripts/release-toolchain-*.test.mjs',
+ for(const value of ["'release/application-release.json'","'scripts/application-release*'",'node --test scripts/release-toolchain-*.test.mjs','scripts/application-release-*.test.mjs',
   'release-toolchain-full-rehearsal.mjs','release-toolchain-full-active-rehearsal.mjs','release-toolchain-pm2-real-acceptance.mjs',
   'release-toolchain-origin-gate-native.mjs','booking-atomic-worker.test.mjs'])assert.ok(workflow.includes(value),value);
  assert.doesNotMatch(workflow,/continue-on-error: true/);
