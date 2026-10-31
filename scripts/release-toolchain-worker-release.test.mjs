@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {bookingHandoffFixture} from './test-support/booking-handoff-retention-fixture.mjs';
 import {buildOnlineRetentionReceipt} from './online-release-retention.mjs';
-import {assertOnlineRetentionHistory,retentionHash,retentionCanonicalText,inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
+import {assertOnlineRetentionHistory,assertOnlineRetentionPublication,retentionHash,retentionCanonicalText,inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
 import {assertBookingAtomicWorkerGate} from './booking-atomic-worker.mjs';
 import {assertBookingWorkerReleasePlan,assertBookingWorkerReleaseCompletion,assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
 import {createHash} from 'node:crypto';
@@ -18,7 +18,7 @@ function fixture(){
  const workerRelease={version:1,kind:'booking-worker-source-only',candidate:prior.active.target,toolRevision:sha('e'),priorToolRevision:sha('f'),priorWorker:clone(old),gateSha256:digest(retentionCanonicalText(gate)),publicationCertificateSha256:history.headSha256,inventorySha256:hash('a'),nativeEvidenceSha256:hash('b'),protectedHostSha256:hash('c'),window:{id:'10000000-0000-4000-8000-000000000002',startedAt:'2026-10-31T14:00:00.000Z',deadlineAt:'2026-10-31T14:10:00.000Z'},mailEnabled:false};
  const before={...Object.fromEntries(['version','policy','legacySha256','rollingHeadSha256','rollingHistorySha256','active','rollback','victim'].map(k=>[k,clone(prior[k])])),kind:'booking-worker',sequence:history.entries.length+1,previousSha256:history.headSha256,toolRevision:sha('e'),workerRelease,processes:clone(prior.processes),workerIdentity:{pid:old.pid,uid:0,startTicks:'100'},protectedHostSha256:hash('c'),persistenceSha256:null};
  const after={...clone(before),processes:before.processes.map(p=>p.name===name?{...p,pid:77777,restartCount:p.restartCount+1,executable:'/var/lib/faolla-online-code/'+sha('e')+'/scripts/booking-atomic-worker.mjs'}:clone(p)),workerIdentity:{pid:77777,uid:0,startTicks:'200'},persistenceSha256:hash('d')};
- return{history,gate,before,after,old,name};
+ return{history,gate,before,after,old,name,websiteState:clone(f.before.activeState)};
 }
 test('a worker-only receipt preserves website, rollback, original gate and every other process',()=>{
  const f=fixture();assertBookingWorkerReleasePlan(f.before,f.history);assertBookingWorkerReleaseCompletion(f.before,f.after,f.history);
@@ -28,6 +28,7 @@ test('a worker-only receipt preserves website, rollback, original gate and every
  assertBookingAtomicWorkerGate({gate:f.gate,history,current:f.after.processes,actualActive,toolRevision:f.gate.toolRevision});
  assertBookingWorkerExecutionRevision({gate:f.gate,history,toolRevision:f.before.toolRevision});
  assert.equal(inspectOnlineRetentionWindow({history,actualActive,current:f.after.processes,saved:f.before.processes}).phase,'stable');
+ assert.equal(assertOnlineRetentionPublication({history,state:f.websiteState,actualActive,current:f.after.processes,action:'stage'}).phase,'published');
 });
 test('pending, unrelated or fabricated tool revisions cannot dispatch against the old gate',()=>{
  const f=fixture();assert.throws(()=>assertBookingWorkerExecutionRevision({gate:f.gate,history:f.history,toolRevision:f.before.toolRevision}));
