@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
-import {applicationPublicationServicePlan,executeOrdinaryApplicationPublication} from './application-release-publish.mjs';
+import {applicationPublicationServicePlan,executeOrdinaryApplicationPublication,ordinaryPublicationSteps} from './application-release-publish.mjs';
 const target='a'.repeat(40),baseline='b'.repeat(40);
 function operations({failure,recoveredTarget=baseline,recoveryFails=false}={}){
  const events=[];let failed=false;
@@ -24,6 +24,16 @@ test('a durable service has fixed limits, independent stop recovery and no maint
 test('completion requires stage, activate and independent audit, not a process exit or green source report',async()=>{
  const op=operations();assert.equal((await executeOrdinaryApplicationPublication(op)).target,target);
  assert.deepEqual(op.events,['admit','stage','activate','audit','complete']);
+});
+test('same-source continuation selects the observed phase; resource refusal never requires a new version or replays activation',()=>{
+ assert.deepEqual(ordinaryPublicationSteps(target,baseline,null),{stage:['stage-application',target,baseline],activate:['activate',target]});
+ const current={target,baseline};
+ assert.deepEqual(ordinaryPublicationSteps(target,baseline,{...current,status:'preparing'}),{stage:['finish-stage',target],activate:['activate',target]});
+ assert.deepEqual(ordinaryPublicationSteps(target,baseline,{...current,status:'ready-no-database'}),{stage:null,activate:['activate',target]});
+ assert.deepEqual(ordinaryPublicationSteps(target,baseline,{...current,status:'active'}),{stage:null,activate:['finish-application',target]});
+ assert.deepEqual(ordinaryPublicationSteps(target,baseline,{...current,status:'active',applicationCompletion:{status:'completed'}}),{stage:null,activate:null});
+ for(const value of [{...current,status:'rolled-back'},{...current,status:'unknown'},{target:baseline,baseline,status:'ready-no-database'}])
+  assert.throws(()=>ordinaryPublicationSteps(target,baseline,value));
 });
 test('each uncertain step preserves failure then recovers once; verified rollback is not falsely called a publication',async()=>{
  for(const failure of ['stage','activate','audit','complete']){
