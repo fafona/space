@@ -3,6 +3,8 @@ import {BOOKING_HANDOFF_NATIVE_SOURCES} from './booking-handoff-policy.mjs';
 // source inventory in the native report. No caller can shrink the closure.
 export const FULL_REHEARSAL_SOURCES=Object.freeze([...BOOKING_HANDOFF_NATIVE_SOURCES,
  'release-toolchain-active-fixture-ports.mjs',
+ 'release-toolchain-worker-entry.mjs','release-toolchain-worker-release-contract.mjs',
+ 'release-toolchain-worker-release-ci.mjs','release-toolchain-worker-release-host.mjs','release-toolchain-worker-release-entry.mjs','release-toolchain-worker-release-install.mjs','release-toolchain-worker-release-pm2.py','release-toolchain-worker-release-pm2.test.py',
  'release-toolchain-approved-network-policy.mjs','release-toolchain-approved-network-admission.mjs',
  'release-toolchain-historical-native-provenance.mjs','release-toolchain-historical-origin-provenance.mjs',
  'release-toolchain-active-generation-metadata-preflight.mjs',

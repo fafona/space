@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
-import {fileURLToPath,pathToFileURL} from 'node:url';
+import {fileURLToPath} from 'node:url';
 import {isDeepStrictEqual} from 'node:util';
 import {BOOKING_HANDOFF_CANDIDATE as CANDIDATE,BOOKING_HANDOFF_APPLICATION as APPLICATION} from './booking-handoff-policy.mjs';
 import {BOOKING_RETENTION_KIND} from './booking-handoff-retention.mjs';
@@ -13,6 +13,8 @@ import {assertOnlineRetentionHistory,inspectOnlineRetentionWindow,retentionHash,
 import {assertOnlineToolOwnedPath,createOnlineReleaseToolPlan,readOnlineToolInventory,runOnlineToolGit} from './prepare-online-release-tool.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {spawnSync} from 'node:child_process';
+import {bookingWorkerEntryMode} from './release-toolchain-worker-entry.mjs';
+import {assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
 
 const ROOT='/var/lib/faolla-booking-handoff/'+CANDIDATE;
 const SOURCE='/www/wwwroot/merchant-space.web-releases/'+CANDIDATE.slice(0,12)+'-online';
@@ -135,13 +137,15 @@ async function productionWorker(){
         need(result.status===0&&!result.signal&&!result.error,'pm2_read');
         const current=JSON.parse(result.stdout).map(normalizeRetirementProcess);
         const actualActive=JSON.parse(privateText('/var/lib/faolla-online-release/active.json'));
-        return assertBookingAtomicWorkerGate({gate,history:readOnlineRetentionHistory(),actualActive,current,toolRevision});
+        const history=readOnlineRetentionHistory();
+        assertBookingWorkerExecutionRevision({gate,history,toolRevision});
+        return assertBookingAtomicWorkerGate({gate,history,actualActive,current,toolRevision:gate.toolRevision});
       },
       status:value=>{console.info(JSON.stringify({kind:'booking-atomic-worker',status:value,at:new Date().toISOString()}));},
       wait:ms=>new Promise(resolve=>{let timer;wake=()=>{clearTimeout(timer);wake=undefined;resolve();};timer=setTimeout(wake,ms);}),
     });
   }finally{process.removeListener('SIGINT',stop);process.removeListener('SIGTERM',stop);}
 }
-if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
+if(bookingWorkerEntryMode(import.meta.url)){
   productionWorker().catch(()=>{console.error('booking_atomic_worker_unverified');process.exitCode=1;});
 }
