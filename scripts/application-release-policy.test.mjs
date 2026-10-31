@@ -27,6 +27,8 @@ test('no role can launder migrations, dependencies, unknown scripts, unsafe path
  assert.throws(()=>applicationReleaseChanges(before,[{...row('src/a.ts'),mode:'120000'}]));
  assert.equal(applicationReleaseRole('scripts/application-release-policy.mjs'),'release-tool');
  assert.equal(applicationReleaseRole('scripts/booking-atomic-worker.mjs'),'release-tool');
+ assert.equal(applicationReleaseRole('scripts/example-browser-acceptance.mjs'),'verification');
+ assert.throws(()=>createApplicationReleaseManifest({...input(),targetRows:[...after,row('scripts/example-browser-acceptance.mjs')],focusedTests:['scripts/example-browser-acceptance.mjs']}),/focused_test_missing/);
 });
 test('package permits reviewed test-script changes, never dependency, build or lifecycle changes',()=>{
  const original={scripts:{build:'next build',test:'node --test'},dependencies:{next:'16.3.4'}};
