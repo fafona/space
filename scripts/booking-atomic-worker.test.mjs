@@ -73,6 +73,7 @@ test('worker CLI has no secret-loading prompt, alternate roots, unguarded timer 
   const source=readFileSync(new URL('./booking-atomic-worker.mjs',import.meta.url),'utf8');
   assert.doesNotMatch(source,/setInterval\(|loadEnvConfig|startMerchantEnterprise|exec\(|--skip|--force/);
   assert.match(source,/process\.argv\.length===2/);assert.match(source,/readOnlineRetentionHistory\(\)/);
+  assert.match(source,/withPinnedFormalPm2Process/);assert.match(source,/collectFormalBookingPm2Registry\(\)/);assert.doesNotMatch(source,/spawnSync\('pm2'|\['jlist'\]/);
 });
 test('the actual worker loader imports the approved TS application without executing a tick or any remote request',()=>{
   const root=path.dirname(path.dirname(fileURLToPath(import.meta.url)));

@@ -12,9 +12,10 @@ import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {assertOnlineRetentionHistory,inspectOnlineRetentionWindow,retentionHash,retentionCanonicalText} from './online-release-retention-policy.mjs';
 import {assertOnlineToolOwnedPath,createOnlineReleaseToolPlan,readOnlineToolInventory,runOnlineToolGit} from './prepare-online-release-tool.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
-import {spawnSync} from 'node:child_process';
 import {bookingWorkerEntryMode} from './release-toolchain-worker-entry.mjs';
 import {assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
+import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
+import {withPinnedFormalPm2Process} from './release-toolchain-proc-witness.mjs';
 
 const ROOT='/var/lib/faolla-booking-handoff/'+CANDIDATE;
 const SOURCE='/www/wwwroot/merchant-space.web-releases/'+CANDIDATE.slice(0,12)+'-online';
@@ -124,7 +125,7 @@ async function productionWorker(){
   const stop=()=>{stopped=true;wake?.();};process.once('SIGINT',stop);process.once('SIGTERM',stop);
   try{
     await runBookingAtomicWorkerLoop({stopped:()=>stopped,probe,tick,
-      gate:()=>{
+      gate:()=>withPinnedFormalPm2Process(()=>{
         // Missing is deliberately paused. Malformed/partial evidence is an
         // error, never an alternative permission to fall back to legacy.
         try{fs.lstatSync(ROOT+'/worker-enabled.json');}catch(e){if(e.code==='ENOENT')return null;throw e;}
@@ -132,15 +133,14 @@ async function productionWorker(){
         need(text===retentionCanonicalText(gate),'gate_encoding');
         equal(privateText(ROOT+'/worker-runtime.json'),savedText,'runtime_file_changed');
         assertBookingAtomicWorkerEnvironment(process.env);
-        const result=spawnSync('pm2',['jlist'],{encoding:'utf8',timeout:10000,maxBuffer:32*1024**2,windowsHide:true,
-          env:{PATH:'/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',HOME:'/root',PM2_HOME:'/root/.pm2'}});
-        need(result.status===0&&!result.signal&&!result.error,'pm2_read');
-        const current=JSON.parse(result.stdout).map(normalizeRetirementProcess);
+        // A missing/replaced manager fails closed. A task must never boot a
+        // fresh daemon as the PM2 CLI's jlist command can do implicitly.
+        const current=collectFormalBookingPm2Registry().rows.map(normalizeRetirementProcess);
         const actualActive=JSON.parse(privateText('/var/lib/faolla-online-release/active.json'));
         const history=readOnlineRetentionHistory();
         assertBookingWorkerExecutionRevision({gate,history,toolRevision});
         return assertBookingAtomicWorkerGate({gate,history,actualActive,current,toolRevision:gate.toolRevision});
-      },
+      }),
       status:value=>{console.info(JSON.stringify({kind:'booking-atomic-worker',status:value,at:new Date().toISOString()}));},
       wait:ms=>new Promise(resolve=>{let timer;wake=()=>{clearTimeout(timer);wake=undefined;resolve();};timer=setTimeout(wake,ms);}),
     });
