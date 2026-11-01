@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {applicationStandbyPlan,executeApplicationStandbyInspection,executeApplicationStandbyReconciliation,applicationStandbyMain} from './application-release-standby.mjs';
-import {reviewedApplicationStandbyExecution,withApplicationStandbyExecution} from './application-release-authority.mjs';
+import {reviewedApplicationStandbyExecution,withApplicationStandbyExecution,assertApplicationStandbyCommandLine} from './application-release-authority.mjs';
 import {applicationPublicationProof} from './application-release-publication-proof.mjs';
 import {applicationRetentionFixture} from './test-support/application-release-retention-fixture.mjs';
 import {buildOnlineRetentionReceipt} from './online-release-retention.mjs';
@@ -35,6 +35,13 @@ test('standby selection has fixed source paths and cannot select the candidate o
   retainsFiles:true,retainsLogs:true,retainsRegistration:true,changesRoutes:false,changesDatabase:false});
  for(const values of [[target,baseline,target],[target,baseline,baseline],[target,target,victim],[target,baseline,'../x'],[target,baseline,victim+'\n']])
   assert.throws(()=>applicationStandbyPlan(...values));
+});
+test('the real kernel command must be the exact reviewed entry, not a rewritten JavaScript argv or eval wrapper',()=>{
+ const options={target:'a'.repeat(40),baseline:'b'.repeat(40),victimTarget:'c'.repeat(40),action:'retire'};
+ const command=['/usr/bin/node','/var/lib/faolla-online-code/'+options.target+'/scripts/application-release-standby.mjs',options.action,options.target,options.baseline,options.victimTarget];
+ assert.equal(assertApplicationStandbyCommandLine(command,options),true);
+ for(const changed of [['/usr/bin/node','--eval','spoofed'],[...command,'extra'],['/other/node',...command.slice(1)],command.map((v,i)=>i===2?'inspect':v)])
+  assert.throws(()=>assertApplicationStandbyCommandLine(changed,options));
 });
 test('inspection performs the original complete retirement guards twice, never a stop or save',async()=>{
  const f=standbyFixture(),events=[];

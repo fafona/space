@@ -47,12 +47,17 @@ export function reviewedApplicationStandbyExecution(revision,activeTarget,victim
  need(kind==='retire'&&context.standby.activeTarget===activeTarget&&context.standby.victimTarget===victimTarget,'standby_scope');
  return context.standby;
 }
+export function assertApplicationStandbyCommandLine(command,{target,baseline,victimTarget,action}){
+ const expected=['/usr/bin/node','/var/lib/faolla-online-code/'+target+'/scripts/application-release-standby.mjs',action,target,baseline,victimTarget];
+ need(isDeepStrictEqual(command,expected),'standby_command');return true;
+}
 export async function withApplicationStandbyExecution({target,baseline,victimTarget,action},work){
  const directory='/var/lib/faolla-online-code/'+target;
  need(process.platform==='linux'&&process.getuid?.()===0&&process.execPath==='/usr/bin/node'&&
   process.cwd()===directory&&process.argv.length===6&&process.argv[1]===directory+'/scripts/application-release-standby.mjs'&&
   process.argv[2]===action&&['inspect','retire','reconcile'].includes(action)&&process.argv[3]===target&&process.argv[4]===baseline&&process.argv[5]===victimTarget&&
   /^[a-f0-9]{40}$/.test(victimTarget??'')&&![target,baseline].includes(victimTarget)&&typeof work==='function','standby_invocation');
+ assertApplicationStandbyCommandLine(fs.readFileSync('/proc/self/cmdline','utf8').split('\0').filter(Boolean),{target,baseline,victimTarget,action});
  const context=active.getStore();need(context&&!context.standby,'standby_context');reviewedApplicationExecution(target,target);
  need(context.public.baseline===baseline,'standby_baseline');
  const actual=JSON.parse(bookingHostRead(ROOT+'/active.json'));
