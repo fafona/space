@@ -1539,7 +1539,7 @@
       "before": null,
       "after": [
         "100644",
-        "a8cefb915d08c3dac1a236fc941fa96e6979175d"
+        "5ddb110d9d598bc27aecced8d208d0d5b8aeb9c4"
       ]
     },
     {
@@ -2466,7 +2466,7 @@
       "before": null,
       "after": [
         "100644",
-        "decc91f2b640d788fb56cf6496e84702ad4702e9"
+        "82538604b5f7d76f3eeabe693e1ce869603f433d"
       ]
     },
     {
@@ -4658,6 +4658,7 @@
     "src/lib/merchantRedemptionCheckoutRecovery.test.ts",
     "scripts/enterprise-session-renewal-browser-contract.test.mjs",
     "scripts/application-release-standby.test.mjs",
-    "scripts/production-maintenance-pm2-dump.test.mjs"
+    "scripts/production-maintenance-pm2-dump.test.mjs",
+    "scripts/release-toolchain-active-fixture-ports.test.mjs"
   ]
 }
