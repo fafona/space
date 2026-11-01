@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
-import {applicationPublicationServicePlan,executeOrdinaryApplicationPublication,ordinaryPublicationSteps} from './application-release-publish.mjs';
+import {applicationPublicationServicePlan,applicationPublicationLaunchArguments,executeOrdinaryApplicationPublication,ordinaryPublicationSteps} from './application-release-publish.mjs';
 const target='a'.repeat(40),baseline='b'.repeat(40);
 function operations({failure,recoveredTarget=baseline,recoveryFails=false}={}){
  const events=[];let failed=false;
@@ -24,6 +24,14 @@ test('a durable service has fixed limits, independent stop recovery and no maint
 test('completion requires stage, activate and independent audit, not a process exit or green source report',async()=>{
  const op=operations();assert.equal((await executeOrdinaryApplicationPublication(op)).target,target);
  assert.deepEqual(op.events,['admit','stage','activate','audit','complete']);
+});
+test('the start command queues a durable oneshot without waiting for the build or falsely reporting a 20-second startup timeout',()=>{
+ const plan=applicationPublicationServicePlan(target,baseline),args=applicationPublicationLaunchArguments(target,baseline);
+ assert.deepEqual(args.slice(0,4),['--no-block','--unit',plan.unit,'--collect']);
+ assert.deepEqual(args.slice(-6),['--',...plan.command]);
+ assert.ok(args.includes('Type=oneshot'));assert.ok(args.includes('Restart=no'));
+ assert.ok(args.includes('ExecStopPost=/usr/bin/node '+plan.entry+' recover '+target+' '+baseline));
+ assert.ok(!args.includes('--wait'));
 });
 test('same-source continuation selects the observed phase; resource refusal never requires a new version or replays activation',()=>{
  assert.deepEqual(ordinaryPublicationSteps(target,baseline,null),{stage:['stage-application',target,baseline],activate:['activate',target]});

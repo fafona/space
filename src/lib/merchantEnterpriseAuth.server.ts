@@ -106,10 +106,11 @@ export async function resolveValidatedMerchantEnterpriseAuthContext(
   if (tokens.length === 0) throw new MerchantEnterpriseAccessError("unauthorized", 401);
   const authClient = createServerSupabaseAuthClient();
   if (!authClient) throw new MerchantEnterpriseAccessError("enterprise_auth_unavailable", 503);
+  let authUnavailable = false;
   for (const accessToken of tokens) {
     const [claimsResult, userResult] = await Promise.all([
-      authClient.auth.getClaims(accessToken).catch(() => null),
-      authClient.auth.getUser(accessToken).catch(() => null),
+      authClient.auth.getClaims(accessToken).catch((error: unknown) => ({ data: null, error })),
+      authClient.auth.getUser(accessToken).catch((error: unknown) => ({ data: null, error })),
     ]);
     const claims = claimsResult?.data?.claims;
     const user = userResult?.data?.user;
@@ -120,14 +121,37 @@ export async function resolveValidatedMerchantEnterpriseAuthContext(
       !userResult?.error &&
       normalizeText(claims.sub, 80) === normalizeText(user.id, 80)
     ) {
+      // Renewal may race another tab's account switch. This header can only
+      // restrict the validated cookie identity, never supply authority.
+      if (request.headers.has("x-merchant-expected-auth-user-id")
+        && request.headers.get("x-merchant-expected-auth-user-id") !== user.id) {
+        throw new MerchantEnterpriseAccessError("unauthorized", 401);
+      }
       return {
         accessToken,
         authenticationMethods: normalizeAuthenticationMethods(claims.amr),
         user,
       };
     }
+    if (isEnterpriseAuthTemporarilyUnavailable(claimsResult?.error)
+      || isEnterpriseAuthTemporarilyUnavailable(userResult?.error)
+      || (!claims && !claimsResult?.error) || (!user && !userResult?.error)) authUnavailable = true;
   }
+  if (authUnavailable) throw new MerchantEnterpriseAccessError("enterprise_auth_unavailable", 503);
   throw new MerchantEnterpriseAccessError("unauthorized", 401);
+}
+
+function isEnterpriseAuthTemporarilyUnavailable(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { status?: unknown; name?: unknown; message?: unknown };
+  // Installed auth-js uses plain Error for these local JWT rejections. They
+  // must stay 401 so an expired access token can enter cookie renewal.
+  if (record.name === "Error" && ["Missing exp claim", "JWT has expired", "Invalid alg claim"].includes(String(record.message))) return false;
+  const status = typeof record.status === "number" ? record.status : null;
+  return status === 0 || status === 408 || status === 429 || (status !== null && status >= 500)
+    || record.name === "AuthRetryableFetchError" || record.name === "AbortError" || record.name === "TypeError"
+    // Unknown/invalid upstream responses are not evidence of revocation.
+    || status === null;
 }
 
 export async function resolveValidatedMerchantEnterpriseAuthUser(request: Request) {

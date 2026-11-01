@@ -3,7 +3,6 @@
 // No traffic switch, formal DB write, old pilot start, or production authority.
 import * as fs from 'node:fs';
 import path from 'node:path';
-import net from 'node:net';
 import {createServer} from 'node:http';
 import {spawn,spawnSync} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
@@ -224,7 +223,6 @@ create trigger set_pages_updated_at before update on public.pages for each row e
   const next=structuredClone(rules.snapshots[id]);for(const e of next.entries)Object.assign(e,{storeOptions:['A','B','C'],itemOptions:['1','2','3','4','5'],titleOptions:['Ms','Mr']});return next;}});
  return {before:snapshot(database),plan,initial:initial.map(p=>p.row)};
 }
-async function freePort(){const server=net.createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;await new Promise(r=>server.close(r));return port;}
 function production({connectOnly=false}={}){
  const anchors=["/root/.pm2/pm2.pid","/var/lib/faolla-online-release/active.json","/www/wwwroot/merchant-space.current"];
  if(anchors.every(f=>!fs.existsSync(f)))return {formalHostPresent:false};need(anchors.every(f=>fs.existsSync(f)),"formal_host_incomplete");
@@ -267,7 +265,7 @@ async function runFullToolchainRehearsalProfile(activeProfile){
    const database='faolla_booking_activation_'+randomBytes(8).toString('hex'),seeded=await seed(database,defaultPrivileges);postgresSystemIdentifier=seeded.before.systemIdentifier;
    const installed=pg(database,bookingInstalledMetadataReadSql);need(/^[a-f0-9]{64}$/.test(installed),'installed_metadata');if(installedMetadataSha256)equal(installed,installedMetadataSha256,'installed_metadata_changed');else installedMetadataSha256=installed;
    need(seeded.before.serverVersionNum==='150008'&&postgresSystemIdentifier!=='7612049595342295079','actual_pg15');write(runtime+'/original-rows.json',seeded.initial);rehearseIsolatedBackup(isolation,database,runtime);
-   phase='case-runtime:'+name;const ports=activeProfile?await allocateOwnedActiveFixturePorts():{};if(!activeProfile)for(const key of ['baseline','primary','rollback','ingress'])ports[key]=await freePort();need(new Set(Object.values(ports)).size===4,'ports');
+   phase='case-runtime:'+name;const ports=await allocateOwnedActiveFixturePorts();need(new Set(Object.values(ports)).size===4,'ports');
    const profile=inspectToolchainNginxProfile(NGINX),lua=profile.httpDirectives?[profile.httpDirectives]:[];
    const window={id:randomUUID(),startedAt:now(),deadlineAt:new Date(Date.now()+600000).toISOString()};
    // Exact ten-minute duration, with no fixture timing override of the seven-

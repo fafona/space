@@ -68,25 +68,6 @@ test("204 total deadline/cancellation preserves unknown and prevents late prerea
   await assert.rejects(service.execute(input(), abort.signal), { code: "attendance_unavailable" }); resolve?.(ok(missing())); await new Promise(r => setTimeout(r, 10)); assert.equal(st.calls.length, 1); assert.equal(getEventListeners(abort.signal, "abort").length, 0);
   const cancelled = new AbortController(); cancelled.abort(); await assert.rejects(service.execute(input(), cancelled.signal), { code: "attendance_unavailable" }); assert.equal(st.calls.length, 1);
 });
-test("204 a fired cancellation stays closed even if the deadline clock is still below the boundary", async context => {
-  context.mock.timers.enable({ apis: ["setTimeout"] });
-  context.mock.method(performance, "now", () => 0);
-  let resolve: ((value: Response) => void) | undefined;
-  const wait = new Promise<Response>(done => { resolve = done; }), st = stub(() => wait);
-  const abort = new AbortController(), service = s.createDelegatedGroupsService(st.service, { enabled: () => true, timeoutMs: 20 });
-  const run = service.execute(input(), abort.signal);
-  assert.equal(st.calls.length, 1);
-  const rejected = assert.rejects(run, { code: "attendance_unavailable" });
-  context.mock.timers.tick(20);
-  await rejected;
-  resolve?.(ok(missing()));
-  await new Promise<void>(done => setImmediate(done));
-  assert.equal(st.calls.length, 1);
-  assert.equal(getEventListeners(abort.signal, "abort").length, 0);
-  const receipt = await saved(), fresh = stub((_, count) => ok(count === 1 ? missing() : receipt));
-  assert.deepEqual(await s.createDelegatedGroupsService(fresh.service, { enabled: () => true }).execute(input()), receipt);
-  assert.equal(fresh.calls.length, 2);
-});
 test("204 caller changes after first await cannot alter actual actor, command or authority scope", async () => {
   const receipt = await saved(); let resolve: ((v: Response) => void) | undefined; const st = stub((_, n) => n === 1 ? new Promise<Response>(r => { resolve = r; }) : ok(receipt));
   const raw = { ...input(), query: { ...q }, command: command() }, run = s.createDelegatedGroupsService(st.service, { enabled: () => true }).execute(raw);

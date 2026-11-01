@@ -65,7 +65,7 @@
     "app:android:debug": "cd android && gradlew assembleDebug",
     "app:android:release": "cd android && gradlew assembleRelease",
     "lint": "eslint",
-    "test:enterprise-browser": "node scripts/check-merchant-enterprise-browser.mjs",
+    "test:enterprise-browser": "node scripts/check-merchant-enterprise-browser.mjs && node --test scripts/enterprise-session-renewal-browser-acceptance.mjs",
     "test": "node scripts/run-local-tests.mjs && npm run check:db-migrations",
     "test:list": "node scripts/run-local-tests.mjs --list",
     "test:qr-database": "node scripts/qr-token-integration/run.mjs",

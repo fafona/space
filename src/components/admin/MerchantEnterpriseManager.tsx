@@ -71,6 +71,7 @@ import {
   type MerchantTaskPriority,
 } from "@/lib/merchantEnterprise";
 import { isValidAuthEmail, normalizeAuthEmail } from "@/lib/authCredentialValidation";
+import { createMerchantEnterpriseSessionRecovery } from "@/lib/merchantEnterpriseSessionRecovery";
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import {
   getMerchantLinkedOrderSummaryErrorMessage,
@@ -700,6 +701,7 @@ function readApiError(payload: unknown, fallback: string) {
   if (code === "employee_invitation_renew_not_required") return "当前邀请仍然有效，请使用重发邀请。";
   if (code === "employee_invitation_in_use") return "该待接受账号仍关联任务，请先移除相关任务负责人后再移除邀请。";
   if (code === "unauthorized") return "登录状态已失效，请重新登录。";
+  if (code === "enterprise_auth_unavailable") return "登录服务暂时不可用，请稍后重试。";
   return fallback;
 }
 
@@ -4339,6 +4341,12 @@ function MerchantEnterpriseManagerContent({
   const [internalView, setInternalView] = useState<MerchantEnterpriseView>("overview");
   const [actor, setActor] = useState<MerchantEnterpriseActor | null>(null);
   const [currentAuthUserId, setCurrentAuthUserId] = useState<string | null>(null);
+  const authorizedAuthUserIdRef = useRef(currentAuthUserId);
+  authorizedAuthUserIdRef.current = currentAuthUserId;
+  const requestWithCookieSessionRecovery = useMemo(() => createMerchantEnterpriseSessionRecovery({
+    fetch: (path, init) => fetch(path, init),
+    getAuthUserId: () => authorizedAuthUserIdRef.current,
+  }), []);
   const actorAuthorizationFingerprint = actor
     ? buildMerchantEnterpriseCurrentOperationsAuthorizationFingerprint(actor)
     : "";
@@ -4585,7 +4593,7 @@ function MerchantEnterpriseManagerContent({
         requestController.abort();
       }, MERCHANT_ENTERPRISE_REQUEST_TIMEOUT_MS);
       try {
-        return await fetch(path, {
+        return await requestWithCookieSessionRecovery(path, {
           ...init,
           headers,
           credentials: accessToken ? "omit" : "include",
@@ -4600,7 +4608,7 @@ function MerchantEnterpriseManagerContent({
         callerSignal?.removeEventListener("abort", abortFromCaller);
       }
     },
-    [accessToken],
+    [accessToken, requestWithCookieSessionRecovery],
   );
 
   // The new independent launcher is scoped to the same authorized overview.

@@ -34,7 +34,7 @@ node scripts/application-release-manifest.mjs <实际在线40位SHA> HEAD "明�
 /usr/bin/node scripts/application-release-publish.mjs start <候选SHA> <在线基线SHA>
 ```
 
-这会启动 `faolla-application-publish-<SHA>` 的服务器持久任务，不依赖当前 SSH 或聊天连接。主体最多 45 分钟，停止收尾有独立恢复命令，禁止自动重新启动整次发布。日志和凭证位于 `/var/lib/faolla-application-publications/<SHA>`，候选本体仍使用原独立网站目录及原全局部署锁。
+这会通过 `systemd-run --no-block` 提交 `faolla-application-publish-<SHA>` 的服务器持久任务，不等待整个 oneshot 构建完成，也不依赖当前 SSH 或聊天连接。启动回执只表示任务已提交，不表示发布成功。主体最多 45 分钟，停止收尾有独立恢复命令，禁止自动重新启动整次发布。日志和凭证位于 `/var/lib/faolla-application-publications/<SHA>`，候选本体仍使用原独立网站目录及原全局部署锁。
 
 每次启动使用新的私有 `attempt-UUID` 保存本次证据，旧失败日志不覆盖。资源预检在创建候选前拒绝时，条件满足后可用同一版本重新进行预检；已经就绪的候选仅进入切换，已经切换的候选仅进入收尾，不重新构建或重放激活。私有未就绪状态只能通过原构建/源码/实际进程证明后补完只读验收；未知构建结果和已经回退的失败版本不会被盲目重发。
 
@@ -49,6 +49,21 @@ node scripts/application-release-manifest.mjs <实际在线40位SHA> HEAD "明�
 7. 保留凭证先在私有暂存目录写齐并 fsync 五份文件，再整体发布完整目录。半份暂存不是公共历史。完整凭证已发布但外部 head 未更新时，执行严格的 head-only 核对，不重放切换、SQL、重启或业务请求。
 8. 确认两个公网域名、实际保留窗口、源文件、构建、运行环境、持久 PM2 配置和原预约门禁一致。观察认证后至少两个自然任务完成周期，不由验收程序发起调度写请求。
 9. 写入完成记录，再使用独立只读审核 `application-release-audit.mjs <SHA>` 复核。进程 online、主页 200、CI 绿色或“恢复到旧版”都不能单独算发布完成。
+
+## 资源不足时的旧备用进程退役
+
+只针对明确选定、通过原完整退役规则的旧网站进程；不是删除备份或停止数据库。需要当前正式 `main`、全部 CI 通过、精确应用清单和独立安装的来源。在已安装来源中先检查，再执行：
+
+```text
+/usr/bin/node scripts/application-release-standby.mjs inspect <已审查候选SHA> <清单基线SHA> <旧备用SHA>
+/usr/bin/node scripts/application-release-standby.mjs retire <已审查候选SHA> <清单基线SHA> <旧备用SHA>
+```
+
+新入口的进程内能力仅限这个明确选定的退役对象，不改变旧通道的历史 pending 守卫，不给调用方 JSON/环境变量跳过权限。必须重新核对当前站点及回滚窗口、完整进程集、源码/构建、真实 PID 出生、Nginx 全配置、连接和监听、子进程、暂停的后台任务、实际信号处理和持久化配置。任一不符不停止。执行只调用原审计退役器的单次按 PM2 ID 停止和持久化；保留所有文件、日志和进程注册。失败不自动重复停止。操作应通过服务器持久任务运行，避免依赖 SSH 连接。
+
+合规退役会追加原保留证书，不重新发布网站。应用完成凭证仍必须指向经过验证、锚点不变的同一发布历史；只能接受 `retire` / `booking-worker` 的合法后缀，不能把另一版本、伪造证书或重新激活当成原发布。
+
+若五份完整证书已写齐、仅外部 head 尚未提交，可用相同参数把动作改为 `reconcile`，调用原严格的 head-only 校验；不重放停止或持久化。半份证据、另一对象或未知停止结果不能使用此续接，全部原证据必须保留。
 
 ## 中断和恢复
 

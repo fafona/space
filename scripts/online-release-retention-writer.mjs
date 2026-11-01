@@ -6,7 +6,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {fileURLToPath} from 'node:url';
 import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertApplicationReleasePackage} from './application-release-policy.mjs';
 import {parseSourceTree,sourceGit} from './release-toolchain-source.mjs';
-import {reviewedApplicationExecution} from './application-release-authority.mjs';
+import {reviewedApplicationExecution,reviewedApplicationStandbyExecution} from './application-release-authority.mjs';
 import {readOnlineRetentionHistory, ONLINE_RETENTION_ROOT, ONLINE_RETENTION_FILES,
   buildOnlineRetentionPreparation, buildOnlineRetentionReceipt} from './online-release-retention.mjs';
 import {ONLINE_RETENTION_POLICY, assertOnlineRetentionPlan, assertOnlineRetentionCompletion,
@@ -278,7 +278,10 @@ function productionOperations({toolRevision, kind, activeTarget, victimTarget = 
   const observe = async frozen => {
     const tool = validateTool(toolRevision);
     const selectedState=parse(stateText(activeTarget));
-    if(selectedState.lane===APPLICATION_RELEASE_LANE){
+    const standbyAuthority=reviewedApplicationStandbyExecution(toolRevision,activeTarget,victimTarget,kind);
+    if(standbyAuthority){
+      if(kind!=='retire'||!victimTarget)fail('application_standby_scope');
+    }else if(selectedState.lane===APPLICATION_RELEASE_LANE){
       const authority=reviewedApplicationExecution(toolRevision,activeTarget);
       if(!authority||authority.manifestSha256!==selectedState.applicationManifestSha256||authority.priorStatesSha256!==selectedState.applicationPriorStatesSha256)fail('application_release_review_required');
     }else assertOnlineToolNoPending();
@@ -319,7 +322,7 @@ function productionOperations({toolRevision, kind, activeTarget, victimTarget = 
       resolvedInterpreter: victim ? releaseProofs.find(p => p.target === victim.target).resolvedInterpreter : null,
       victimChildren: victim ? frozen?.victimChildren ?? fs.readFileSync(`/proc/${victim.process.pid}/task/${victim.process.pid}/children`, 'utf8').trim() : null,
       victimRuntimeFlags: victim ? frozen?.victimRuntimeFlags ?? runtimeFlags(victim.process) : null};
-    if(current.lane===APPLICATION_RELEASE_LANE){
+    if(current.lane===APPLICATION_RELEASE_LANE&&!standbyAuthority){
       if(kind!=='converge'||victim!==null)fail('application_release_converge_only');
       const rows=revision=>parseSourceTree(sourceGit(APP,['ls-tree','-r','-z',revision]));
       const manifest=parse(sourceGit(APP,['show',`${active.target}:${APPLICATION_RELEASE_MANIFEST}`]));

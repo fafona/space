@@ -6,6 +6,7 @@ import * as fs from 'node:fs';
 import {isDeepStrictEqual} from 'node:util';
 import {randomUUID} from 'node:crypto';
 import {APPLICATION_RELEASE_LANE} from './application-release-policy.mjs';
+import {applicationPublicationProof} from './application-release-publication-proof.mjs';
 import {ownedReleasePath} from './release-toolchain-source.mjs';
 import {buildOnlineRetentionReceipt,readOnlineRetentionHistory,ONLINE_RETENTION_ROOT} from './online-release-retention.mjs';
 import {assertOnlineRetentionPlan,assertOnlineRetentionCompletion,retentionHash,retentionCanonicalText} from './online-release-retention-policy.mjs';
@@ -49,7 +50,8 @@ export async function commitApplicationRetention({toolRevision,target,operation,
   }
   if(pending.history.entries.at(-1)?.active.target===target){
     const prior=pending.history.entries.at(-1);
-    need(prior.toolRevision===toolRevision&&prior.applicationRelease?.kind===APPLICATION_RELEASE_LANE,'completion_identity');return prior;
+    const publication=applicationPublicationProof(pending.history,target);
+    need(publication.introduced.toolRevision===toolRevision,'completion_identity');return prior;
   }
   const adapter=createOnlineRetentionProductionOperations({kind:'converge',activeTarget:target,victimTarget:null,toolRevision,lock});
   const staging=operation+'/application-retention-staging-'+randomUUID();let captured=null;

@@ -519,7 +519,10 @@ export async function GET(request: Request) {
     const cookieAccessToken = cookieAccessTokens[0] ?? readMerchantAuthCookie(request);
     const cookieRefreshToken = cookieRefreshTokens[0] ?? readMerchantAuthRefreshCookie(request);
     const adminSupabase = createServiceRoleSupabaseClient();
-    const cached = readMerchantSessionCacheFromCandidates(cookieAccessTokens, cookieRefreshTokens);
+    // A protected API has already rejected these credentials. Do not hand its
+    // recovery path the same token from the ordinary short identity cache.
+    const reauthenticate = new URL(request.url).searchParams.get("reauth") === "1";
+    const cached = reauthenticate ? null : readMerchantSessionCacheFromCandidates(cookieAccessTokens, cookieRefreshTokens);
     if (cached) {
       await assertLegacyMerchantIdentityAllowed(adminSupabase, cached.user);
       return respondWithMerchantSession(request, cached);

@@ -11,6 +11,7 @@ import struct
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -154,7 +155,15 @@ class FakePeer:
                     try:
                         data = b""
                         while control._parts(data) is None:
-                            chunk = connection.recv(65536)
+                            try:
+                                chunk = connection.recv(65536)
+                            except socket.timeout:
+                                # Poll shutdown without treating an idle client
+                                # fsync as EOF. Retain any partial request bytes;
+                                # the real client still enforces its deadline.
+                                if self.stop.is_set():
+                                    break
+                                continue
                             if not chunk:
                                 break
                             data += chunk
@@ -231,6 +240,26 @@ class FilesystemTests(unittest.TestCase):
             self.assertEqual(receipt["target"]["backup"]["sha256"], hashlib.sha256(old).hexdigest())
             self.assertTrue(dump.verify_pm2_dump(peer.path, peer.daemon, peer.expected(), receipt))
             self.assertEqual(set(os.listdir(peer.directory.name)), {"rpc.sock", "dump.pm2", "dump.pm2.bak"})
+
+    def test_idle_fsync_longer_than_peer_poll_does_not_close_healthy_connection(self):
+        with FakePeer() as peer:
+            original_fsync = dump.os.fsync
+            calls = []
+            def delayed_fsync(descriptor):
+                calls.append(descriptor)
+                if len(calls) == 2:
+                    # After primary replacement, exceed the fake peer's 0.5s
+                    # poll, but stay within the unchanged real 15s deadline.
+                    time.sleep(0.7)
+                return original_fsync(descriptor)
+            registry = peer.expected()
+            with mock.patch.object(dump.os, "fsync", side_effect=delayed_fsync):
+                receipt = peer.persist(peer.capture())
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(dump.verify_pm2_dump(peer.path, peer.daemon, registry, receipt))
+            self.assertEqual([item["name"] for item in json.loads(peer.file("dump.pm2").read_bytes())],
+                             ["faolla", "other-app"])
+            self.assertEqual(set(item["method"] for item in peer.calls), {"getVersion", "getMonitorData"})
 
     def test_stale_file_or_registry_rejected_before_fixed_file_writes(self):
         with FakePeer() as peer:

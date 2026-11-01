@@ -39,6 +39,32 @@ export function reviewedApplicationExecution(revision,target){
  const current=priorStates(target);need(isDeepStrictEqual(current,context.prior),'prior_states_changed');
  return context.public;
 }
+// A separate, exact-invocation capability for an explicitly selected standby.
+// This never authorizes the default writer to ignore historical pending state.
+export function reviewedApplicationStandbyExecution(revision,activeTarget,victimTarget,kind){
+ const context=active.getStore();if(!context?.standby)return null;
+ reviewedApplicationExecution(revision,revision);
+ need(kind==='retire'&&context.standby.activeTarget===activeTarget&&context.standby.victimTarget===victimTarget,'standby_scope');
+ return context.standby;
+}
+export function assertApplicationStandbyCommandLine(command,{target,baseline,victimTarget,action}){
+ const expected=['/usr/bin/node','/var/lib/faolla-online-code/'+target+'/scripts/application-release-standby.mjs',action,target,baseline,victimTarget];
+ need(isDeepStrictEqual(command,expected),'standby_command');return true;
+}
+export async function withApplicationStandbyExecution({target,baseline,victimTarget,action},work){
+ const directory='/var/lib/faolla-online-code/'+target;
+ need(process.platform==='linux'&&process.getuid?.()===0&&process.execPath==='/usr/bin/node'&&
+  process.cwd()===directory&&process.argv.length===6&&process.argv[1]===directory+'/scripts/application-release-standby.mjs'&&
+  process.argv[2]===action&&['inspect','retire','reconcile'].includes(action)&&process.argv[3]===target&&process.argv[4]===baseline&&process.argv[5]===victimTarget&&
+  /^[a-f0-9]{40}$/.test(victimTarget??'')&&![target,baseline].includes(victimTarget)&&typeof work==='function','standby_invocation');
+ assertApplicationStandbyCommandLine(fs.readFileSync('/proc/self/cmdline','utf8').split('\0').filter(Boolean),{target,baseline,victimTarget,action});
+ const context=active.getStore();need(context&&!context.standby,'standby_context');reviewedApplicationExecution(target,target);
+ need(context.public.baseline===baseline,'standby_baseline');
+ const actual=JSON.parse(bookingHostRead(ROOT+'/active.json'));
+ need([target,baseline].includes(actual.target),'standby_active');
+ context.standby=Object.freeze({kind:'reviewed-application-standby-retirement',toolRevision:target,activeTarget:actual.target,victimTarget});
+ try{return await work(context.standby);}finally{delete context.standby;}
+}
 export async function withReviewedApplicationExecution({target,baseline,lock},work){
  need(process.platform==='linux'&&process.getuid?.()===0&&/^[a-f0-9]{40}$/.test(target??'')&&/^[a-f0-9]{40}$/.test(baseline??'')&&typeof work==='function','invocation');
  assertOnlineRetentionHeldLocks(lock);

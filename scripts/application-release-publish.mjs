@@ -9,6 +9,8 @@ import {APPLICATION_RELEASE_MANIFEST} from './application-release-policy.mjs';
 import {inspectPinnedExecutionSource,collectRemoteReleaseReview,assertReviewFresh,ownedReleasePath} from './release-toolchain-source.mjs';
 import {withApplicationPublicationLocks,withApplicationOrphanRecoveryLocks} from './online-release-retention-writer.mjs';
 import {observeApplicationRelease} from './application-release-audit.mjs';
+import {applicationPublicationProof} from './application-release-publication-proof.mjs';
+import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {bookingHostRead,bookingHostWriteOnce,bookingHostSync,bookingHostEnvironment} from './booking-handoff-host-io.mjs';
 import {captureProcessFact} from './check-production-runtime-supervision.mjs';
 const ROOT='/var/lib/faolla-application-publications',RELEASE='/var/lib/faolla-online-release';
@@ -23,6 +25,11 @@ export function applicationPublicationServicePlan(target,baseline){
    'WorkingDirectory='+source,'StandardOutput=journal','StandardError=journal',
    'ExecStopPost=/usr/bin/node '+entry+' recover '+target+' '+baseline],
   command:['/usr/bin/node',entry,'run',target,baseline]};
+}
+export function applicationPublicationLaunchArguments(target,baseline){
+ const plan=applicationPublicationServicePlan(target,baseline);
+ return['--no-block','--unit',plan.unit,'--collect',...plan.properties.flatMap(value=>['--property',value]),
+  '--setenv=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin','--setenv=HOME=/root','--setenv=PM2_HOME=/root/.pm2','--',...plan.command];
 }
 export function ordinaryPublicationSteps(target,baseline,current){
  applicationPublicationServicePlan(target,baseline);
@@ -129,7 +136,7 @@ export async function runOrdinaryApplicationPublication(target,baseline){
   activate:async()=>{const args=ordinaryPublicationSteps(target,baseline,readState()).activate;if(args)await child(plan.source,args,attempt+'/activate.log',600000);},
   audit:()=>observeApplicationRelease(target),
   complete:async proof=>{
-   if(fs.existsSync(root+'/completed.json')){const completed=JSON.parse(bookingHostRead(root+'/completed.json'));need(completed.target===target&&completed.proof.certificateSha256===proof.certificateSha256,'completion_changed');return;}
+   if(fs.existsSync(root+'/completed.json')){const completed=JSON.parse(bookingHostRead(root+'/completed.json'));need(completed.target===target&&applicationPublicationProof(readOnlineRetentionHistory(),target).completionCertificates.includes(completed.proof.certificateSha256),'completion_changed');return;}
    seal(root,'completed.json',{kind:'ordinary-application-publication-completed',target,baseline,proof,mailEnabled:false,at:new Date().toISOString()});
   },
   failed:async error=>seal(attempt,'controller-failure.json',{kind:'ordinary-application-controller-failed',target,attemptId,errorSha256:digest(String(error?.message)),originalFailureRetained:true,at:new Date().toISOString()}),
@@ -147,8 +154,7 @@ export async function runOrdinaryApplicationPublication(target,baseline){
 export async function startOrdinaryApplicationPublication(target,baseline){
  const plan=invocation('start',target,baseline),review=await collectRemoteReleaseReview(target);assertReviewFresh(review,target);
  ordinaryPublicationSteps(target,baseline,state(target));
- const args=['--unit',plan.unit,'--collect',...plan.properties.flatMap(value=>['--property',value]),
-  '--setenv=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin','--setenv=HOME=/root','--setenv=PM2_HOME=/root/.pm2','--',...plan.command];
+ const args=applicationPublicationLaunchArguments(target,baseline);
  const result=spawnSync('systemd-run',args,{cwd:plan.source,env:bookingHostEnvironment(),encoding:'utf8',timeout:20000,maxBuffer:65536});
  need(result.status===0&&!result.signal&&!result.error,'service_start_unconfirmed');
  return{kind:'ordinary-application-publication-service-started',target,baseline,unit:plan.unit,source:plan.source,sshDisconnectSafe:true,publicationCompleted:false};
