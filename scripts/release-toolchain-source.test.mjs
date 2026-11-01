@@ -24,6 +24,8 @@ test('missing, extra, duplicate, skipped, stale-attempt and foreign-repository j
 });
 test('application inputs include unknown scripts and runtime source, while reviewed release/test-only edits are independent',()=>{
  assert.equal(toolOnlySourcePath('scripts/release-toolchain-pm2-worker.test.py'),true);assert.equal(toolOnlySourcePath('scripts/arbitrary-runtime.py'),false);
+ assert.equal(toolOnlySourcePath('scripts/test_production_maintenance_pm2_dump.py'),true);
+ for(const file of ['src/test_runtime.py','scripts/test_runtime.py.sql','scripts/test_worker_runtime.ts'])assert.equal(toolOnlySourcePath(file),false);
  const row=(file,oid=old)=>({mode:'100644',oid,file}),a=[row('src/app/[merchantEntry]/page.tsx'),row('package.json'),row('package-lock.json'),row('scripts/run-merchant-worker.ts'),row('scripts/release-toolchain.mjs')];
  const b=[...a.slice(0,-1),row('scripts/release-toolchain.mjs',sha),row('scripts/release-toolchain-new.mjs',sha)];assert.doesNotThrow(()=>assertUnchangedApplicationSource(old,a,b));
  for(const file of ['src/app/[merchantEntry]/page.tsx','package.json','scripts/run-merchant-worker.ts','scripts/arbitrary.mjs','scripts/supabase-migrations/new.sql']){
