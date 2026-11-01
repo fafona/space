@@ -4095,7 +4095,7 @@
       "before": null,
       "after": [
         "100644",
-        "71712f26c4927030452f457b5f9474242db66840"
+        "4d467f098c8074ed4229c3762803847d42b6374e"
       ]
     },
     {
@@ -4104,7 +4104,7 @@
       "before": null,
       "after": [
         "100644",
-        "ceef71c3c53005ce6959d45b4817b6ffd9fc4953"
+        "72936a230a5c8756934f0105c1497675b1c7ba62"
       ]
     },
     {
@@ -4531,6 +4531,18 @@
       ]
     },
     {
+      "file": "scripts/test_production_maintenance_pm2_dump.py",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "a7d88d3237735ce66ff1dcfb360dbd7d4c5aa060"
+      ],
+      "after": [
+        "100644",
+        "0e76680c481c408c59f8140480104f37840362f9"
+      ]
+    },
+    {
       "file": "src/app/api/auth/merchant-session/reauth.test.ts",
       "role": "verification",
       "before": null,
@@ -4645,6 +4657,7 @@
     "src/app/api/auth/merchant-session/reauth.test.ts",
     "src/lib/merchantRedemptionCheckoutRecovery.test.ts",
     "scripts/enterprise-session-renewal-browser-contract.test.mjs",
-    "scripts/application-release-standby.test.mjs"
+    "scripts/application-release-standby.test.mjs",
+    "scripts/production-maintenance-pm2-dump.test.mjs"
   ]
 }
