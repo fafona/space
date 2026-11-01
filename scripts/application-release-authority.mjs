@@ -51,7 +51,7 @@ export async function withApplicationStandbyExecution({target,baseline,victimTar
  const directory='/var/lib/faolla-online-code/'+target;
  need(process.platform==='linux'&&process.getuid?.()===0&&process.execPath==='/usr/bin/node'&&
   process.cwd()===directory&&process.argv.length===6&&process.argv[1]===directory+'/scripts/application-release-standby.mjs'&&
-  process.argv[2]===action&&['inspect','retire'].includes(action)&&process.argv[3]===target&&process.argv[4]===baseline&&process.argv[5]===victimTarget&&
+  process.argv[2]===action&&['inspect','retire','reconcile'].includes(action)&&process.argv[3]===target&&process.argv[4]===baseline&&process.argv[5]===victimTarget&&
   /^[a-f0-9]{40}$/.test(victimTarget??'')&&![target,baseline].includes(victimTarget)&&typeof work==='function','standby_invocation');
  const context=active.getStore();need(context&&!context.standby,'standby_context');reviewedApplicationExecution(target,target);
  need(context.public.baseline===baseline,'standby_baseline');

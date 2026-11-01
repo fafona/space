@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
-import {applicationStandbyPlan,executeApplicationStandbyInspection,applicationStandbyMain} from './application-release-standby.mjs';
+import {applicationStandbyPlan,executeApplicationStandbyInspection,executeApplicationStandbyReconciliation,applicationStandbyMain} from './application-release-standby.mjs';
 import {reviewedApplicationStandbyExecution,withApplicationStandbyExecution} from './application-release-authority.mjs';
 import {applicationPublicationProof} from './application-release-publication-proof.mjs';
 import {applicationRetentionFixture} from './test-support/application-release-retention-fixture.mjs';
@@ -86,4 +86,14 @@ test('a certified standby retirement preserves the original application proof wi
 test('importing the standby entry has no native host or process side effect',()=>{
  const result=spawnSync(process.execPath,['--input-type=module','-e',"await import('./scripts/application-release-standby.mjs');"],{cwd:process.cwd(),encoding:'utf8',timeout:10000,windowsHide:true});
  assert.equal(result.status,0,result.stderr);assert.equal(result.stdout,'');
+});
+test('only a complete exact standby tail may reconcile its head; no stop, save or partial-tail retry exists',async()=>{
+ const expected={target:'a'.repeat(40),activeTarget:'b'.repeat(40),victimTarget:'c'.repeat(40)};
+ const pending={status:'complete-uncommitted-tail',before:{kind:'retire',toolRevision:expected.target,active:{target:expected.activeTarget},victim:{target:expected.victimTarget}},history:{headSha256:'d'.repeat(64)}};
+ let calls=0;const operations={inspect:()=>clone(pending),reconcile:async()=>{calls++;},history:()=>pending.history};
+ const result=await executeApplicationStandbyReconciliation(operations,expected);assert.equal(calls,1);assert.equal(result.stopReplayed,false);assert.equal(result.saveReplayed,false);
+ for(const mutate of [v=>v.status='incomplete-tail',v=>v.before.kind='converge',v=>v.before.toolRevision='e'.repeat(40),v=>v.before.active.target='e'.repeat(40),v=>v.before.victim.target='e'.repeat(40)]){
+  calls=0;const changed=clone(pending);mutate(changed);await assert.rejects(executeApplicationStandbyReconciliation({...operations,inspect:()=>changed},expected));assert.equal(calls,0);
+ }
+ await assert.rejects(executeApplicationStandbyReconciliation({...operations,reconcile:async()=>{throw Error('retained_failure');}},expected),/retained_failure/);
 });

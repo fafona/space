@@ -5,7 +5,8 @@ import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {isDeepStrictEqual} from 'node:util';
 import {withReviewedApplicationExecution,withApplicationStandbyExecution} from './application-release-authority.mjs';
-import {withOnlineRetentionLocks,createOnlineRetentionProductionOperations,runOnlineRetentionUnderHeldLocks} from './online-release-retention-writer.mjs';
+import {withOnlineRetentionLocks,createOnlineRetentionProductionOperations,runOnlineRetentionUnderHeldLocks,inspectOnlineRetentionReconciliation,reconcileOnlineRetentionUnderHeldLocks} from './online-release-retention-writer.mjs';
+import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {assertOnlineRetentionPlan,retentionHash} from './online-release-retention-policy.mjs';
 import {bookingHostRead} from './booking-handoff-host-io.mjs';
 const need=(value,reason)=>{if(!value)throw Error('application_standby_'+reason);};
@@ -24,14 +25,26 @@ export async function executeApplicationStandbyInspection(operations){
  return{kind:'application-standby-eligible-not-stopped',activeTarget:before.active.target,rollbackTarget:before.rollback.target,
   victimTarget:before.victim.target,pmId:before.victim.process.pmId,pid:before.victim.process.pid,observationSha256:retentionHash(stableObservation(before)),stopped:false};
 }
+export async function executeApplicationStandbyReconciliation(operations,{target,activeTarget,victimTarget}){
+ const pending=operations.inspect();
+ need(pending.status==='complete-uncommitted-tail'&&pending.before.kind==='retire'&&pending.before.toolRevision===target&&
+  pending.before.active.target===activeTarget&&pending.before.victim?.target===victimTarget,'reconcile_scope');
+ await operations.reconcile();
+ const history=operations.history();need(history.headSha256===pending.history.headSha256,'reconcile_incomplete');
+ return{kind:'application-standby-reconciled-head-only',toolRevision:target,activeTarget,victimTarget,
+  certificateSha256:history.headSha256,stopReplayed:false,saveReplayed:false};
+}
 export async function applicationStandbyMain(action,target,baseline,victimTarget){
  const plan=applicationStandbyPlan(target,baseline,victimTarget);
  need(process.platform==='linux'&&process.getuid?.()===0&&process.execPath==='/usr/bin/node'&&
   process.cwd()===plan.source&&fileURLToPath(import.meta.url)===plan.source+'/scripts/application-release-standby.mjs'&&
-  process.argv.length===6&&['inspect','retire'].includes(action),'invocation');
+  process.argv.length===6&&['inspect','retire','reconcile'].includes(action),'invocation');
  return withOnlineRetentionLocks(lock=>withReviewedApplicationExecution({target,baseline,lock},()=>
   withApplicationStandbyExecution({target,baseline,victimTarget,action},async authority=>{
    const options={toolRevision:target,kind:'retire',activeTarget:authority.activeTarget,victimTarget,lock};
+   if(action==='reconcile')return executeApplicationStandbyReconciliation({inspect:inspectOnlineRetentionReconciliation,
+    reconcile:()=>reconcileOnlineRetentionUnderHeldLocks({toolRevision:target,lock}),history:readOnlineRetentionHistory},
+    {target,activeTarget:authority.activeTarget,victimTarget});
    const inspection=await executeApplicationStandbyInspection(createOnlineRetentionProductionOperations(options));
    if(action==='inspect')return inspection;
    const certificate=await runOnlineRetentionUnderHeldLocks(options);
