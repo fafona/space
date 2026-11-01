@@ -26,6 +26,11 @@ export function applicationPublicationServicePlan(target,baseline){
    'ExecStopPost=/usr/bin/node '+entry+' recover '+target+' '+baseline],
   command:['/usr/bin/node',entry,'run',target,baseline]};
 }
+export function applicationPublicationLaunchArguments(target,baseline){
+ const plan=applicationPublicationServicePlan(target,baseline);
+ return['--no-block','--unit',plan.unit,'--collect',...plan.properties.flatMap(value=>['--property',value]),
+  '--setenv=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin','--setenv=HOME=/root','--setenv=PM2_HOME=/root/.pm2','--',...plan.command];
+}
 export function ordinaryPublicationSteps(target,baseline,current){
  applicationPublicationServicePlan(target,baseline);
  if(current===null)return{stage:['stage-application',target,baseline],activate:['activate',target]};
@@ -149,8 +154,7 @@ export async function runOrdinaryApplicationPublication(target,baseline){
 export async function startOrdinaryApplicationPublication(target,baseline){
  const plan=invocation('start',target,baseline),review=await collectRemoteReleaseReview(target);assertReviewFresh(review,target);
  ordinaryPublicationSteps(target,baseline,state(target));
- const args=['--unit',plan.unit,'--collect',...plan.properties.flatMap(value=>['--property',value]),
-  '--setenv=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin','--setenv=HOME=/root','--setenv=PM2_HOME=/root/.pm2','--',...plan.command];
+ const args=applicationPublicationLaunchArguments(target,baseline);
  const result=spawnSync('systemd-run',args,{cwd:plan.source,env:bookingHostEnvironment(),encoding:'utf8',timeout:20000,maxBuffer:65536});
  need(result.status===0&&!result.signal&&!result.error,'service_start_unconfirmed');
  return{kind:'ordinary-application-publication-service-started',target,baseline,unit:plan.unit,source:plan.source,sshDisconnectSafe:true,publicationCompleted:false};

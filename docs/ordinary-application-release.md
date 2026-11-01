@@ -34,7 +34,7 @@ node scripts/application-release-manifest.mjs <实际在线40位SHA> HEAD "明�
 /usr/bin/node scripts/application-release-publish.mjs start <候选SHA> <在线基线SHA>
 ```
 
-这会启动 `faolla-application-publish-<SHA>` 的服务器持久任务，不依赖当前 SSH 或聊天连接。主体最多 45 分钟，停止收尾有独立恢复命令，禁止自动重新启动整次发布。日志和凭证位于 `/var/lib/faolla-application-publications/<SHA>`，候选本体仍使用原独立网站目录及原全局部署锁。
+这会通过 `systemd-run --no-block` 提交 `faolla-application-publish-<SHA>` 的服务器持久任务，不等待整个 oneshot 构建完成，也不依赖当前 SSH 或聊天连接。启动回执只表示任务已提交，不表示发布成功。主体最多 45 分钟，停止收尾有独立恢复命令，禁止自动重新启动整次发布。日志和凭证位于 `/var/lib/faolla-application-publications/<SHA>`，候选本体仍使用原独立网站目录及原全局部署锁。
 
 每次启动使用新的私有 `attempt-UUID` 保存本次证据，旧失败日志不覆盖。资源预检在创建候选前拒绝时，条件满足后可用同一版本重新进行预检；已经就绪的候选仅进入切换，已经切换的候选仅进入收尾，不重新构建或重放激活。私有未就绪状态只能通过原构建/源码/实际进程证明后补完只读验收；未知构建结果和已经回退的失败版本不会被盲目重发。
 
