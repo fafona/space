@@ -1,4 +1,5 @@
 import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertApplicationReleasePackage} from './application-release-policy.mjs';
+import {applicationPublicationProof} from './application-release-publication-proof.mjs';
 import {parseSourceTree,sourceGit,assertReviewFresh,inspectPinnedExecutionSource} from './release-toolchain-source.mjs';
 import {commitApplicationRetention} from './application-release-retention.mjs';
 import {applicationReleaseProbeFetch} from './application-release-probe.mjs';
@@ -137,7 +138,7 @@ async function settleOnlineRetention(s,heldLock){
   await commitApplicationRetention({target:s.target,operation,toolRevision,lock:heldLock});
   const history=readOnlineRetentionHistory();
   const window=inspectOnlineRetentionWindow({history,actualActive:JSON.parse(safeFile(activeFile)),current:pm().map(normalizeRetirementProcess)});
-  if(window.phase!=='stable'||window.active.target!==s.target||history.entries.at(-1)?.applicationRelease?.manifestSha256!==s.applicationManifestSha256)fail('application_release_retention_incomplete');
+  if(window.phase!=='stable'||window.active.target!==s.target||applicationPublicationProof(history,s.target).manifestSha256!==s.applicationManifestSha256)fail('application_release_retention_incomplete');
   // Preserve every previous process; retirement is a different authorized action.
   s.applicationRetention={status:'completed',certificateSha256:history.headSha256,retired:null,at:new Date().toISOString()};save(s);
   return s.applicationRetention;

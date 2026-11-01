@@ -9,6 +9,8 @@ import {APPLICATION_RELEASE_MANIFEST} from './application-release-policy.mjs';
 import {inspectPinnedExecutionSource,collectRemoteReleaseReview,assertReviewFresh,ownedReleasePath} from './release-toolchain-source.mjs';
 import {withApplicationPublicationLocks,withApplicationOrphanRecoveryLocks} from './online-release-retention-writer.mjs';
 import {observeApplicationRelease} from './application-release-audit.mjs';
+import {applicationPublicationProof} from './application-release-publication-proof.mjs';
+import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {bookingHostRead,bookingHostWriteOnce,bookingHostSync,bookingHostEnvironment} from './booking-handoff-host-io.mjs';
 import {captureProcessFact} from './check-production-runtime-supervision.mjs';
 const ROOT='/var/lib/faolla-application-publications',RELEASE='/var/lib/faolla-online-release';
@@ -129,7 +131,7 @@ export async function runOrdinaryApplicationPublication(target,baseline){
   activate:async()=>{const args=ordinaryPublicationSteps(target,baseline,readState()).activate;if(args)await child(plan.source,args,attempt+'/activate.log',600000);},
   audit:()=>observeApplicationRelease(target),
   complete:async proof=>{
-   if(fs.existsSync(root+'/completed.json')){const completed=JSON.parse(bookingHostRead(root+'/completed.json'));need(completed.target===target&&completed.proof.certificateSha256===proof.certificateSha256,'completion_changed');return;}
+   if(fs.existsSync(root+'/completed.json')){const completed=JSON.parse(bookingHostRead(root+'/completed.json'));need(completed.target===target&&applicationPublicationProof(readOnlineRetentionHistory(),target).completionCertificates.includes(completed.proof.certificateSha256),'completion_changed');return;}
    seal(root,'completed.json',{kind:'ordinary-application-publication-completed',target,baseline,proof,mailEnabled:false,at:new Date().toISOString()});
   },
   failed:async error=>seal(attempt,'controller-failure.json',{kind:'ordinary-application-controller-failed',target,attemptId,errorSha256:digest(String(error?.message)),originalFailureRetained:true,at:new Date().toISOString()}),
