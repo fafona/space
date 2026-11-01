@@ -460,8 +460,7 @@ export type PollQuestion = {
   required?: boolean;
   options?: PollOption[];
 };
-export type PollProps = BackgroundEditableProps &
-  TypographyEditableProps & {
+export type PollRoundSettings = {
     heading?: string;
     text?: string;
     pollId?: string;
@@ -480,6 +479,14 @@ export type PollProps = BackgroundEditableProps &
     pollNamePlaceholder?: string;
     pollContentBackgroundOpacity?: number;
   };
+export type PollRoundSnapshot = {
+  settings: PollRoundSettings & { pollId: string };
+  deleted?: boolean;
+};
+export type PollProps = BackgroundEditableProps & TypographyEditableProps & PollRoundSettings & {
+  pollRoundHistory?: PollRoundSnapshot[];
+  pollRoundDeleted?: boolean;
+};
 type NavProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading?: string;

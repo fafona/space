@@ -101,7 +101,12 @@ function PollResults({ summary }: { summary: PollSummary }) {
   );
 }
 
-export default function PollBlock({
+export default function PollBlock(props: PollBlockRuntimeProps) {
+  if (props.pollRoundDeleted === true) return null;
+  return <ActivePollBlock key={`${props.runtimeSiteId}/${props.runtimeBlockId}/${props.pollId}`} {...props} />;
+}
+
+function ActivePollBlock({
   runtimeSiteId = "",
   runtimeBlockId = "",
   runtimeSource = "pc_web",

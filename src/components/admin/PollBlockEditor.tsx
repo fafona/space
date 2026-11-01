@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
 import type { PollAudience, PollOption, PollProps, PollQuestion, PollQuestionType } from "@/data/homeBlocks";
 import {
   POLL_MAX_OPTIONS,
@@ -9,16 +9,15 @@ import {
   getPollConfigurationIssue,
   normalizePollConfig,
 } from "@/lib/merchantPolls";
-import { allocateMerchantPollId } from "@/lib/merchantPollClient";
-import { isMerchantNumericId } from "@/lib/merchantIdentity";
-import { showGlobalToast } from "@/lib/globalToast";
 import { BufferedEditorInput, BufferedEditorTextarea } from "@/components/admin/BufferedEditorControls";
+import PollRoundManager from "@/components/admin/PollRoundManager";
 
 type PollBlockEditorProps = {
   props: PollProps;
   runtimeSiteId: string;
   runtimeBlockId: string;
   onChange: (patch: Partial<PollProps>) => void;
+  onFlushPendingChanges?: () => void;
 };
 
 type EditablePollQuestion = Omit<PollQuestion, "options"> & {
@@ -258,11 +257,23 @@ function CompositionSafePollTextarea({
   );
 }
 
-export default function PollBlockEditor({ props, runtimeSiteId, runtimeBlockId, onChange }: PollBlockEditorProps) {
+export default function PollBlockEditor(input: PollBlockEditorProps) {
+  return (
+    <div className="grid min-w-0 gap-4">
+      <PollRoundManager key={`${input.runtimeSiteId}/${input.runtimeBlockId}`} {...input} />
+      {input.props.pollRoundDeleted === true ? (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">本轮投票已删除。可以选择其他轮次、恢复本轮，或新建一轮；保存并发布后前台生效。历史选票仍保留在经营中心的“投票统计”。</div>
+      ) : (
+        <PollRoundFields key={`${input.runtimeSiteId}/${input.runtimeBlockId}/${input.props.pollId}`} {...input} />
+      )}
+    </div>
+  );
+}
+
+function PollRoundFields({ props, runtimeBlockId, onChange }: PollBlockEditorProps) {
   const config = useMemo(() => normalizePollConfig(props, runtimeBlockId || "poll"), [props, runtimeBlockId]);
   const questions = useMemo(() => readEditableQuestions(props.pollQuestions), [props.pollQuestions]);
   const configurationIssue = getPollConfigurationIssue(config);
-  const [creatingRound, setCreatingRound] = useState(false);
 
   const updateQuestions = (next: EditablePollQuestion[]) => {
     onChange({ pollQuestions: next });
@@ -270,22 +281,6 @@ export default function PollBlockEditor({ props, runtimeSiteId, runtimeBlockId, 
 
   const updateQuestion = (questionId: string, patch: Partial<EditablePollQuestion>) => {
     updateQuestions(questions.map((question) => (question.id === questionId ? { ...question, ...patch } : question)));
-  };
-
-  const startNewRound = async () => {
-    if (creatingRound) return;
-    if (typeof window !== "undefined" && !window.confirm("确定新建一轮投票吗？当前轮次的结果会保留，并可按原投票编号继续查询。")) return;
-    setCreatingRound(true);
-    try {
-      const pollId = isMerchantNumericId(runtimeSiteId)
-        ? await allocateMerchantPollId(runtimeSiteId)
-        : createPollEntityId("poll");
-      onChange({ pollId, pollLegacyIds: [], pollStatus: "open", pollOpenAt: "", pollCloseAt: "" });
-    } catch (error) {
-      showGlobalToast(error instanceof Error ? error.message : "新投票编号生成失败，请稍后重试。", { tone: "error" });
-    } finally {
-      setCreatingRound(false);
-    }
   };
 
   return (
@@ -297,9 +292,6 @@ export default function PollBlockEditor({ props, runtimeSiteId, runtimeBlockId, 
             <div className="mt-1 break-all text-xs text-slate-500">投票编号：{config.pollId}</div>
             <div className="mt-1 text-xs text-slate-500">统计和导出请前往经营中心的“投票统计”。</div>
           </div>
-          <button type="button" className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60" onClick={() => void startNewRound()} disabled={creatingRound}>
-            {creatingRound ? "生成编号中..." : "新建一轮"}
-          </button>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="grid gap-1 text-sm text-slate-700">

@@ -79,3 +79,26 @@ test("all inline block text controls use the buffered editor adapters", async ()
   assert.match(controls, /onCompositionEnd/);
   assert.match(controls, /useBufferedEditorTextCommit/);
 });
+
+test("poll editor archives round settings with reversible deletion, never destructive ballot deletion", async () => {
+  const [editor, manager, pollBlock, inline, admin] = await Promise.all([
+    read("src/components/admin/PollBlockEditor.tsx"),
+    read("src/components/admin/PollRoundManager.tsx"),
+    read("src/components/blocks/PollBlock.tsx"),
+    read("src/components/admin/InlineEditorBlock.tsx"),
+    read("src/app/admin/AdminClient.tsx"),
+  ]);
+  assert.match(editor, /PollRoundManager/);
+  assert.match(manager, /选择投票轮次/);
+  assert.match(manager, /window\.confirm/);
+  assert.match(manager, /flushBufferedEditorTextCommits\(\)/);
+  assert.match(manager, /latest\.current\.onFlushPendingChanges\?\.\(\)/);
+  assert.match(inline, /onFlushPendingChanges=\{onFlushPendingChanges\}/);
+  assert.equal([...admin.matchAll(/onFlushPendingChanges=\{flushPendingEditorChanges\}/g)].length, 2);
+  assert.match(manager, /已删除（/);
+  assert.match(manager, /恢复/);
+  assert.match(manager, /选票与历史统计不会清空/);
+  assert.doesNotMatch(manager, /method: ["']DELETE["']/);
+  assert.match(pollBlock, /if \(props\.pollRoundDeleted === true\) return null/);
+  assert.match(manager, /operation\.current\?\.abort\(\)/);
+});
