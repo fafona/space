@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "f274ad615550c83717aa7af2ad32339608e6f8aa",
-  "purpose": "Repair enterprise cookie session renewal and hide only routine cashier settlement verification; retain deployed attendance inputs and booking worker application",
+  "purpose": "Repair enterprise cookie session renewal and quiet routine checkout verification; audited obsolete-standby retirement only, preserving booking application and deployed attendance inputs",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -66,7 +66,7 @@
       "before": null,
       "after": [
         "100644",
-        "7b1b85c4bdea026e8ca6112276488a84d18eef29"
+        "7d8b824e5de9f22826dc51e9c6bb47f48f754c39"
       ]
     },
     {
@@ -141,7 +141,7 @@
       "before": null,
       "after": [
         "100644",
-        "de3ec4347fd0d23fe8caf4968d1830d895f2b857"
+        "555cbaf1fbfb2829523f6da522d29643f1e3a6e4"
       ]
     },
     {
@@ -150,7 +150,7 @@
       "before": null,
       "after": [
         "100644",
-        "94fa851f9f32786b403741221a49727b50acf38a"
+        "bad69c43a199ec4dc1c671aea2459386f5551054"
       ]
     },
     {
@@ -217,12 +217,21 @@
       ]
     },
     {
+      "file": "scripts/application-release-publication-proof.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "4e3beef09156e0282679cb0d7a74459d149e2db4"
+      ]
+    },
+    {
       "file": "scripts/application-release-publish.mjs",
       "role": "release-tool",
       "before": null,
       "after": [
         "100644",
-        "c56e8e741223bc63214e81c5296beb89ca29d7fc"
+        "5670e64c00228a546372179a3fb1dc60d1ad7af1"
       ]
     },
     {
@@ -240,7 +249,7 @@
       "before": null,
       "after": [
         "100644",
-        "db54346e06dc67b841649dc90ddb332943a9c2b2"
+        "5bbfcfed052d4b11fa6704c76fe9e6afd472f09b"
       ]
     },
     {
@@ -250,6 +259,24 @@
       "after": [
         "100644",
         "398eb6a61b7b3aac53e3448101b8ce4976e952cb"
+      ]
+    },
+    {
+      "file": "scripts/application-release-standby.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a704ed74346773812cf5bd26c175389eb5fc3f84"
+      ]
+    },
+    {
+      "file": "scripts/application-release-standby.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "4174081324a0ce0799dbfcd6e6db3fd1458925ea"
       ]
     },
     {
@@ -1365,7 +1392,7 @@
       ],
       "after": [
         "100644",
-        "cef4c1aecd037ec3ca84312e18e3b3a34803b6a1"
+        "dd1591137fa17d0050259a6af265b6049093f348"
       ]
     },
     {
@@ -1425,7 +1452,7 @@
       ],
       "after": [
         "100644",
-        "f426215b2b0220314d2632077b5c40ef09fc0a8d"
+        "ffee68fcc979cca8d94c8db431974bad9c2bd010"
       ]
     },
     {
@@ -4617,6 +4644,7 @@
     "src/lib/merchantEnterpriseAuthAvailability.server.test.ts",
     "src/app/api/auth/merchant-session/reauth.test.ts",
     "src/lib/merchantRedemptionCheckoutRecovery.test.ts",
-    "scripts/enterprise-session-renewal-browser-contract.test.mjs"
+    "scripts/enterprise-session-renewal-browser-contract.test.mjs",
+    "scripts/application-release-standby.test.mjs"
   ]
 }
