@@ -9,6 +9,7 @@ import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { redactMerchantMembershipForCashier } from "@/lib/merchantMembershipBusinessPermissions";
 import { retryMerchantMembershipRedemptionCheckout } from "@/lib/merchantMemberships.server";
 import { summarizeMerchantRedemptionCheckout } from "@/lib/merchantRedemptionCheckout";
+import { buildMerchantRedemptionPendingCart } from "@/lib/merchantRedemptionPendingCart";
 import { readMerchantRedemptionCheckoutError } from "@/lib/merchantRedemptionCheckoutErrors";
 import {
   ackMerchantRedemptionCheckout,
@@ -79,7 +80,9 @@ export async function handleMerchantRedemptionCheckoutGet(
     const actor = await dependencies.authorizeActor(request, { siteId, requiredPermission: "redemptions.checkout" });
     const checkout = await dependencies.getCheckout(siteId, actor.principalKey, operationId);
     await dependencies.reauthorizeActor(request, { actor, requiredPermissions: ["redemptions.checkout"] });
-    return privateJson({ ok: true, checkout: checkout ? summarizeMerchantRedemptionCheckout(checkout) : null });
+    const summary = checkout ? summarizeMerchantRedemptionCheckout(checkout) : null;
+    if (checkout?.status === "pending" && summary) summary.pendingCart = buildMerchantRedemptionPendingCart(checkout, siteId);
+    return privateJson({ ok: true, checkout: summary });
   } catch (error) {
     return errorResponse(error);
   }

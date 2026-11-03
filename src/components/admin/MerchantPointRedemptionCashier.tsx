@@ -885,6 +885,8 @@ export default function MerchantPointRedemptionCashier({
   const activeCheckoutRecovery = checkoutRecovery.scope === checkoutScope ? checkoutRecovery : null;
   const checkoutRecoveryBlocksNewSale = !activeCheckoutRecovery || cashierCheckoutBlocksNewSale(activeCheckoutRecovery.phase, activeCheckoutRecovery.checkout);
   const visibleCheckout = activeCheckoutRecovery?.phase === "ready" ? activeCheckoutRecovery.checkout : null;
+  const hasPendingCheckout = activeCheckoutRecovery?.checkout?.status === "pending";
+  const pendingCheckoutCart = hasPendingCheckout ? activeCheckoutRecovery.checkout?.pendingCart : undefined;
   const [memberships, setMemberships] = useState<MerchantMembershipListItem[]>([]);
   const [settings, setSettings] = useState<MerchantMembershipSettings | null>(null);
   const [coupons, setCoupons] = useState<MerchantCouponRecord[]>([]);
@@ -1417,6 +1419,8 @@ export default function MerchantPointRedemptionCashier({
     !pointVoucherMinimumViolation &&
     totalPoints <= selectedInsight.pointBalance &&
     !saving;
+  const canResumePendingCheckout = canCheckoutRedemptions && Boolean(pendingCheckoutCart) &&
+    activeCheckoutRecovery?.phase === "ready" && !checkoutRecoveryBusy && !saving;
 
   const transactionRecordTypeLabel = view === "rechargeRecords" ? "充值" : "兑换";
   const recordsTimeOptions: Array<{ value: RecordsTimeFilter; label: string }> = [
@@ -1861,7 +1865,8 @@ export default function MerchantPointRedemptionCashier({
   const refreshCheckoutRecovery = useCallback(async (options?: { afterUncertainMutation?: boolean }) => {
     if (!canCheckoutRedemptions || !/^\d{8}$/.test(normalizedSiteId) || checkoutRecoveryActionRef.current || checkoutSubmittingRef.current) return undefined;
     const ticket = checkoutRecoveryGuardRef.current.begin();
-    setCheckoutRecovery({ scope: checkoutScope, phase: "checking", checkout: null, message: "" });
+    setCheckoutRecovery((current) => ({ scope: checkoutScope, phase: "checking",
+      checkout: current.scope === checkoutScope ? current.checkout : null, message: "" }));
     try {
       const response = await requestRedemptionApi(`/api/merchant-admin/redemption-checkout?siteId=${encodeURIComponent(normalizedSiteId)}`, {
         method: "GET", credentials: "same-origin", cache: "no-store", headers: { accept: "application/json" },
@@ -1871,8 +1876,9 @@ export default function MerchantPointRedemptionCashier({
       if (!response.ok) throw new Error(operationErrorMessage(payload?.message ?? payload?.error, "暂时无法核对原结算，请重新读取状态。"));
       const checkout = readCashierCheckoutSummary(payload, normalizedSiteId);
       if (options?.afterUncertainMutation && !checkout) {
-        setCheckoutRecovery({ scope: checkoutScope, phase: "error", checkout: null,
-          message: "暂未查询到原单，不能据此认定请求未发送。请先核对兑换记录，再重新读取结算状态。" });
+        setCheckoutRecovery((current) => ({ scope: checkoutScope, phase: "error",
+          checkout: current.scope === checkoutScope ? current.checkout : null,
+          message: "暂未查询到原单，不能据此认定请求未发送。请先核对兑换记录，再重新读取结算状态。" }));
         return undefined;
       }
       setCheckoutRecovery({ scope: checkoutScope, phase: "ready", checkout: checkout?.acknowledgedAt ? null : checkout, message: "" });
@@ -1881,8 +1887,9 @@ export default function MerchantPointRedemptionCashier({
       return checkout;
     } catch (recoveryError) {
       if (checkoutRecoveryGuardRef.current.isCurrent(ticket)) {
-        setCheckoutRecovery({ scope: checkoutScope, phase: "error", checkout: null,
-          message: operationErrorMessage(recoveryError instanceof Error ? recoveryError.message : "", "暂时无法核对原结算，已暂停新结算。") });
+        setCheckoutRecovery((current) => ({ scope: checkoutScope, phase: "error",
+          checkout: current.scope === checkoutScope ? current.checkout : null,
+          message: operationErrorMessage(recoveryError instanceof Error ? recoveryError.message : "", "暂时无法核对原结算，已暂停新结算。") }));
       }
       return undefined;
     }
@@ -2164,6 +2171,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function selectMember(membership: MerchantMembershipListItem) {
+    if (hasPendingCheckout) return;
     setMemberships((current) => mergeMemberLists(current, [membership]));
     selectedMemberIdRef.current = membership.id;
     setSelectedMemberId(membership.id);
@@ -2246,7 +2254,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function addToCart(item: MerchantMemberRedemptionItem) {
-    if (!canCheckoutRedemptions) return;
+    if (!canCheckoutRedemptions || hasPendingCheckout) return;
     setError("");
     setNotice("");
     if (item.pointsCost === null) {
@@ -2272,7 +2280,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function addCouponClaimToCart(coupon: MemberCouponClaim) {
-    if (!canCheckoutRedemptions || !canLoadMemberInsights) return;
+    if (!canCheckoutRedemptions || !canLoadMemberInsights || hasPendingCheckout) return;
     setError("");
     setNotice("");
     if (!selectedMember) {
@@ -2326,6 +2334,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function changeQuantity(index: number, nextQuantity: number) {
+    if (hasPendingCheckout) return;
     setCart((current) => {
       const line = current[index];
       if (!line) return current;
@@ -2792,7 +2801,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function submitQuickRedeemItem() {
-    if (!canCheckoutRedemptions) return;
+    if (!canCheckoutRedemptions || hasPendingCheckout) return;
     const points = parsePositiveInteger(quickRedeemPoints);
     const name = trimText(quickRedeemName, 120) || "临时项目";
     if (points <= 0) {
@@ -2824,6 +2833,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function holdCurrentSale() {
+    if (hasPendingCheckout) return;
     if (!cart.length) {
       setError("当前没有可挂起的兑换。");
       return;
@@ -2850,6 +2860,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function restoreHeldSale(sale: HeldSale) {
+    if (hasPendingCheckout) return;
     selectedMemberIdRef.current = sale.selectedMemberId;
     setSelectedMemberId(sale.selectedMemberId);
     setMemberKeyword(sale.memberKeyword);
@@ -2863,6 +2874,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function handleRetrieveHeldSale() {
+    if (hasPendingCheckout) return;
     if (heldSales.length === 0) {
       setError("暂无挂单。");
       setHeldOpen(false);
@@ -2941,6 +2953,10 @@ export default function MerchantPointRedemptionCashier({
     const checkout = visibleCheckout;
     if (!canCheckoutRedemptions || !checkout || checkoutRecoveryActionRef.current || checkoutSubmittingRef.current) return;
     if (action === "ack" ? checkout.status === "pending" : checkout.status !== "pending") return;
+    if (action === "retry" && !pendingCheckoutCart) {
+      setError("原单商品明细尚未读取成功，请先重新读取结算状态。");
+      return;
+    }
     const scope = checkoutScope;
     const ticket = checkoutRecoveryGuardRef.current.begin();
     checkoutRecoveryActionRef.current = true; setCheckoutRecoveryBusy(true); setError("");
@@ -3125,7 +3141,9 @@ export default function MerchantPointRedemptionCashier({
   }
 
   useEffect(() => {
-    submitCheckoutRef.current = submitCheckout;
+    submitCheckoutRef.current = hasPendingCheckout
+      ? async () => { if (canResumePendingCheckout) await handleCheckoutRecoveryAction("retry"); }
+      : submitCheckout;
   });
 
   useEffect(() => {
@@ -3143,7 +3161,7 @@ export default function MerchantPointRedemptionCashier({
         heldOpen ||
         Boolean(selectedRecordId),
       openQuickRedeem: () => {
-        if (!canCheckoutRedemptions) return;
+        if (!canCheckoutRedemptions || hasPendingCheckout) return;
         setError("");
         setNotice("");
         setQuickRedeemDialogOpen(true);
@@ -3162,13 +3180,15 @@ export default function MerchantPointRedemptionCashier({
       },
       openCheckout: () => {
         if (!canCheckoutRedemptions) return;
-        if (canSubmitCheckout) void submitCheckoutRef.current();
+        if (canSubmitCheckout || canResumePendingCheckout) void submitCheckoutRef.current();
       },
     };
   }, [
     canCheckoutRedemptions,
     canRecharge,
     canSubmitCheckout,
+    canResumePendingCheckout,
+    hasPendingCheckout,
     canViewRedemptions,
     categoryMenuOpen,
     couponWalletOpen,
@@ -5444,6 +5464,19 @@ export default function MerchantPointRedemptionCashier({
         .merchant-pos-cashier .checkout-recovery .recovery-result { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 10px 0; }
         .merchant-pos-cashier .checkout-recovery .recovery-result strong { font-size: 20px; color: var(--pos-primary-dark); }
         .merchant-pos-cashier .checkout-recovery .recovery-error { color: #a8251a; }
+        .merchant-pos-cashier .pending-sale-summary { display: flex; flex-wrap: wrap; gap: 12px; }
+        .merchant-pos-cashier .pending-sale-summary .summary-actions-left { display: none; }
+        .merchant-pos-cashier .pending-sale-summary .checkout-button { min-width: 128px; white-space: nowrap; }
+
+        @media (max-width: 720px) {
+          .merchant-pos-cashier .pending-cart-header { grid-template-columns: 1fr; }
+          .merchant-pos-cashier .pending-cart-header > span:not(:nth-child(2)) { display: none; }
+          .merchant-pos-cashier .pending-cart-row { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+          .merchant-pos-cashier .pending-cart-row .cart-code,
+          .merchant-pos-cashier .pending-cart-row .cart-name { grid-column: 1 / -1; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+          .merchant-pos-cashier .pending-cart-row .pending-cart-points::before { content: attr(data-label); display: block; color: var(--pos-muted); font-size: 12px; }
+          .merchant-pos-cashier .pending-cart-row .coupon-locked-quantity { height: auto; min-height: 34px; min-width: 0; }
+        }
 
         @media (max-width: 1280px) {
           .merchant-pos-cashier .cashier-workbench {
@@ -5539,7 +5572,7 @@ export default function MerchantPointRedemptionCashier({
             visibleCheckout?.status === "pending" ? "有一笔原结算等待处理" : visibleCheckout?.status === "committed" ? "原结算已完成，等待确认" : "原结算已放弃，等待确认"}</h3>
           {activeCheckoutRecovery?.message ? <p role="alert" className="recovery-error">{activeCheckoutRecovery.message}</p> : null}
           {visibleCheckout ? <p>结算编号：{visibleCheckout.operationId} · {new Date(visibleCheckout.createdAt).toLocaleString()}</p> : null}
-          {visibleCheckout?.status === "pending" ? <p>仅使用服务器保存的原单，当前购物车为空也可核对；未完成的结算仍需通过余额、库存与权限检查。</p> : null}
+          {visibleCheckout?.status === "pending" ? <p>原单商品保留在下方购物车。继续结算沿用原会员、原商品和原结算编号，仍需通过余额、库存与权限检查。</p> : null}
           {visibleCheckout?.status === "pending" ? <p>放弃仅针对尚未完成的原单；若已经完成，将显示原结果，不会撤销扣减。</p> : null}
           {visibleCheckout?.result ? <div className="recovery-result" aria-label="服务器确认的原单金额">
             <span>原单扣减 <strong>{formatPoints(visibleCheckout.result.totalPoints)}</strong> 积分</span>
@@ -5552,7 +5585,7 @@ export default function MerchantPointRedemptionCashier({
             <button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy || activeCheckoutRecovery?.phase === "checking"}
               onClick={() => void refreshCheckoutRecovery()}>重新读取结算状态</button>
             {visibleCheckout?.status === "pending" ? <>
-              <button type="button" className="el-button el-button--primary" disabled={checkoutRecoveryBusy}
+              <button type="button" className="el-button el-button--primary" disabled={checkoutRecoveryBusy || !pendingCheckoutCart}
                 onClick={() => void handleCheckoutRecoveryAction("retry")}>核对/重试原结算</button>
               <button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy}
                 onClick={() => void handleCheckoutRecoveryAction("cancel")}>放弃尚未完成的原结算</button>
@@ -6075,6 +6108,13 @@ export default function MerchantPointRedemptionCashier({
       <section className="cashier-workbench">
         <section className="panel sale-panel">
           <div className="panel-heading compact">
+            {hasPendingCheckout ? (
+              <div className="member-line">
+                <span className="member-avatar">原</span>
+                <strong>待结算原单</strong>
+                <span>沿用原单会员；如需修改会员或商品，请先放弃原单并确认。</span>
+              </div>
+            ) : <>
             <div className="member-line">
               <span className="member-avatar">{getAvatarInitial(selectedMember)}</span>
               {selectedMember ? (
@@ -6173,11 +6213,12 @@ export default function MerchantPointRedemptionCashier({
                 </button> : null}
               </div>
             </div>
+            </>}
           </div>
 
           <div className="cart-area">
             <div className="cart-table">
-              <div className="cart-header">
+              <div className={hasPendingCheckout ? "cart-header pending-cart-header" : "cart-header"}>
                 <span>编号</span>
                 <span>产品/项目</span>
                 <span>积分</span>
@@ -6185,7 +6226,24 @@ export default function MerchantPointRedemptionCashier({
                 <span>小计</span>
               </div>
               <div className="cart-body">
-                {cartRows.length ? (
+                {hasPendingCheckout ? pendingCheckoutCart ? (
+                  <div role="group" aria-label="服务器保存的未结算购物车">
+                    {pendingCheckoutCart.quote.lines.map((line, index) => (
+                      <div key={`${pendingCheckoutCart.operationId}-${index}`} className="cart-row-shell">
+                        <div className="cart-row pending-cart-row">
+                          <span className="cart-code">{line.code || "-"}</span>
+                          <strong className="cart-name"><span>{line.name}</span><span className="cart-meta">{line.couponDiscountLabel || line.categoryName || "原单商品"}</span></strong>
+                          <span className="pending-cart-points" data-label="积分">{line.couponPointDiscount > 0 ? `-${formatPoints(line.couponPointDiscount)}` : formatPoints(line.unitPoints)}</span>
+                          <span className="coupon-locked-quantity pending-cart-points" data-label="数量" title="原单数量，继续结算不会更改">{line.quantity}</span>
+                          <span className="pending-cart-points" data-label="小计">{line.couponPointDiscount > 0 ? `-${formatPoints(line.couponPointDiscount)}` : formatPoints(line.subtotalPoints)}</span>
+                        </div>
+                      </div>
+                    ))}
+                    <p className="cart-meta" role="status">服务器已保留原单商品和数量。这里是待结算金额，不代表已扣积分。</p>
+                  </div>
+                ) : (
+                  <div className="cart-empty" role="status"><span>检测到未结算原单，商品明细暂未读取成功。</span><button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy || activeCheckoutRecovery?.phase === "checking"} onClick={() => void refreshCheckoutRecovery()}>重新读取原单商品</button></div>
+                ) : cartRows.length ? (
                   cartRows.map((row, index) => (
                     <div key={`${row.itemId}-${index}`} className="cart-row-shell">
                       <div className="cart-row">
@@ -6242,18 +6300,19 @@ export default function MerchantPointRedemptionCashier({
 
             <div className="checkout-note">
               <input
-                value={note}
+                value={hasPendingCheckout ? "" : note}
+                readOnly={hasPendingCheckout}
                 onChange={(event) => setNote(event.target.value)}
-                placeholder="兑换备注，例如：前台积分兑换"
+                placeholder={hasPendingCheckout ? "继续结算沿用服务器保存的原单备注" : "兑换备注，例如：前台积分兑换"}
               />
             </div>
 
-            <div className="sale-summary">
+            <div className={hasPendingCheckout ? "sale-summary pending-sale-summary" : "sale-summary"}>
               <div className="summary-actions-left">
-                <button type="button" className="el-button el-button--default" onClick={holdCurrentSale}>
+                <button type="button" className="el-button el-button--default" disabled={hasPendingCheckout} onClick={holdCurrentSale}>
                   挂单
                 </button>
-                <button type="button" className="el-button el-button--default" onClick={handleRetrieveHeldSale}>
+                <button type="button" className="el-button el-button--default" disabled={hasPendingCheckout} onClick={handleRetrieveHeldSale}>
                   提单
                   {heldSales.length ? <span className="held-count">{heldSales.length}</span> : null}
                 </button>
@@ -6275,24 +6334,24 @@ export default function MerchantPointRedemptionCashier({
               </div>
               <div className="summary-item">
                 <span>{cartRows.some((row) => row.couponClaimId && row.quantity > 1) ? "项目（含券内商品）" : "项目"}</span>
-                <strong>{totalQuantity}</strong>
+                <strong>{hasPendingCheckout ? pendingCheckoutCart?.quote.totalQuantity ?? "待核对" : totalQuantity}</strong>
               </div>
               <div className="summary-item">
-                <span>会员积分</span>
-                <strong>{formatPoints(selectedInsight.pointBalance)}</strong>
+                <span>{hasPendingCheckout ? "原单会员积分" : "会员积分"}</span>
+                <strong>{hasPendingCheckout ? "结算时核验" : formatPoints(selectedInsight.pointBalance)}</strong>
               </div>
               <div className="summary-total">
-                <span>{couponPointDiscountTotal > 0 ? "扣减积分" : "合计积分"}</span>
-                <strong>{formatPoints(totalPoints)}</strong>
+                <span>{hasPendingCheckout ? "原单待扣积分" : couponPointDiscountTotal > 0 ? "扣减积分" : "合计积分"}</span>
+                <strong>{hasPendingCheckout ? pendingCheckoutCart ? formatPoints(pendingCheckoutCart.quote.totalPoints) : "待核对" : formatPoints(totalPoints)}</strong>
               </div>
-              {couponPointDiscountTotal > 0 ? (
+              {(hasPendingCheckout ? (pendingCheckoutCart?.quote.couponPointDiscountTotal ?? 0) : couponPointDiscountTotal) > 0 ? (
                 <div className="summary-item">
                   <span>积分券抵扣</span>
-                  <strong>-{formatPoints(couponPointDiscountTotal)}</strong>
+                  <strong>-{formatPoints(hasPendingCheckout ? pendingCheckoutCart?.quote.couponPointDiscountTotal ?? 0 : couponPointDiscountTotal)}</strong>
                 </div>
               ) : null}
-              <button type="button" className="checkout-button" disabled={!canSubmitCheckout} onClick={() => void submitCheckoutRef.current()}>
-                {saving ? "结算中" : "结算"}
+              <button type="button" className="checkout-button" disabled={hasPendingCheckout ? !canResumePendingCheckout : !canSubmitCheckout} onClick={() => void submitCheckoutRef.current()}>
+                {hasPendingCheckout ? checkoutRecoveryBusy ? "结算中" : activeCheckoutRecovery?.phase === "ready" ? "继续原单结算" : "核对原单中" : saving ? "结算中" : "结算"}
               </button>
             </div>
           </div>
@@ -6498,7 +6557,7 @@ export default function MerchantPointRedemptionCashier({
                 const outOfStock = item.stock !== null && inCartQuantity >= item.stock;
                 const itemImageUrl = normalizePublicAssetUrl(item.imageUrl || "");
                 const pointsUnavailable = item.pointsCost === null;
-                const itemDisabled = !canCheckoutRedemptions || outOfStock || pointsUnavailable;
+                const itemDisabled = !canCheckoutRedemptions || hasPendingCheckout || outOfStock || pointsUnavailable;
 
                 if (viewMode === "text") {
                   return (

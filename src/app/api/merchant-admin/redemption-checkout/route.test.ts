@@ -81,8 +81,9 @@ test("GET scopes unresolved context to current actor and strips original request
   }));
   assert.equal(response.status, 200); assertPrivate(response);
   const body = await response.json();
-  assert.deepEqual(Object.keys(body.checkout).sort(), ["operationId", "status", "createdAt", "acknowledgedAt", "result"].sort());
+  assert.deepEqual(Object.keys(body.checkout).sort(), ["operationId", "status", "createdAt", "acknowledgedAt", "result", "pendingCart"].sort());
   assert.equal(body.checkout.status, "pending");
+  assert.deepEqual(body.checkout.pendingCart, { version: 1, siteId: SITE, operationId: OP, quote: context().request.quote });
   assert.doesNotMatch(JSON.stringify(body), /PRIVATE-|fingerprint|membershipId|request/);
   assert.deepEqual(calls, ["auth", "read", "reauth"]);
 });
@@ -95,6 +96,18 @@ test("GET preserves unacknowledged committed authority result and allows explici
   assert.deepEqual(body.checkout.result, receipt());
   assert.equal(body.checkout.acknowledgedAt, null);
   assert.equal("request" in body.checkout, false);
+  assert.equal("pendingCart" in body.checkout, false);
+});
+
+test("pending display rejects malformed quotes without exposing the original request or writing", async () => {
+  const bad = context(); bad.request.quote.totalPoints = -1;
+  const response = await handleMerchantRedemptionCheckoutGet(new Request(`${URL_BASE}?siteId=${SITE}`), dependencies({
+    getCheckout: async () => bad,
+    retryCheckout: async () => { assert.fail("GET must never resume checkout"); },
+    cancelCheckout: async () => { assert.fail("GET must never cancel checkout"); },
+  }));
+  assert.equal(response.status, 503); assertPrivate(response);
+  assert.doesNotMatch(await response.text(), /PRIVATE-|Item|membership-one|pendingCart/);
 });
 
 test("GET returns null only after a successful scoped lookup and reauthorization", async () => {

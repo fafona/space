@@ -10,7 +10,7 @@ import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusines
 
 const SITE = "10000000";
 const CREATED = "2026-09-08T10:00:00.000Z";
-type Scenario = "pending" | "committed" | "read-error" | "quote-changed" | "cancel-race" | "new-response-lost" | "retry-response-lost" | "deleted-member" | "delayed" | "empty";
+type Scenario = "pending" | "committed" | "read-error" | "quote-changed" | "cancel-race" | "new-response-lost" | "retry-response-lost" | "deleted-member" | "delayed" | "empty" | "pending-recheck-error" | "pending-no-preview" | "slow-retry";
 type HarnessState = { actor: string; scenario: Scenario; checkout: MerchantRedemptionCheckoutSummary | null; calls: string[]; writes: number };
 
 function receipt(actor: string, operationId = `original-${actor}`): MerchantRedemptionCheckoutReceipt {
@@ -26,6 +26,9 @@ function fixture(actor: string, scenario: Scenario): HarnessState {
     checkout: scenario === "empty" || scenario === "new-response-lost" ? null : {
       operationId: result.operationId, status: scenario === "committed" ? "committed" : "pending", createdAt: CREATED,
       acknowledgedAt: null, result: scenario === "committed" ? result : null,
+      ...(scenario === "committed" || scenario === "pending-no-preview" ? {} : { pendingCart: { version: 1 as const, siteId: SITE, operationId: result.operationId,
+        quote: { totalQuantity: result.totalQuantity, grossPoints: result.grossPoints, couponPointDiscountTotal: result.couponPointDiscountTotal,
+          totalPoints: result.totalPoints, couponCount: result.couponCount, lines: result.lines } } }),
     } };
 }
 function membership(state: HarnessState) {
@@ -60,13 +63,21 @@ export default function RedemptionCheckoutHarness() {
       if (url.pathname === "/api/merchant-admin/redemption-checkout") {
         if (method === "GET") {
           if (state.scenario === "read-error") return json({ ok: false, message: "merchant_transaction_unavailable" }, 503);
+          if (state.scenario === "pending-recheck-error" && state.calls.filter((call) => call.includes("GET /api/merchant-admin/redemption-checkout")).length > 1) {
+            await new Promise<void>((resolve) => document.addEventListener("faolla:synthetic-checkout-release-failed-read", () => resolve(), { once: true }));
+            return json({ ok: false, message: "merchant_transaction_unavailable" }, 503);
+          }
           const checkout = structuredClone(state.checkout?.acknowledgedAt ? null : state.checkout);
-          if (state.scenario === "delayed") await new Promise((resolve) => setTimeout(resolve, 1800));
+          if (state.scenario === "delayed") {
+            await new Promise((resolve) => setTimeout(resolve, 1800));
+            document.dispatchEvent(new Event("faolla:synthetic-checkout-delayed-read-complete"));
+          }
           return json({ ok: true, checkout });
         }
         if (body.operationId !== state.checkout?.operationId) return json({ ok: false, message: "redemption_operation_conflict" }, 409);
         if (body.action === "retry") {
           if (state.scenario === "quote-changed") return json({ ok: false, message: "redemption_checkout_quote_changed" }, 409);
+          if (state.scenario === "slow-retry") await new Promise((resolve) => setTimeout(resolve, 1000));
           const replayed = state.checkout?.status === "committed";
           commit(state, String(body.operationId));
           if (state.scenario === "retry-response-lost") return json({ ok: false, message: "merchant_transaction_unavailable" }, 503);
@@ -74,7 +85,7 @@ export default function RedemptionCheckoutHarness() {
         }
         if (body.action === "cancel") {
           if (state.scenario === "cancel-race") commit(state, String(body.operationId));
-          else if (state.checkout?.status === "pending") state.checkout = { ...state.checkout, status: "cancelled" };
+          else if (state.checkout?.status === "pending") state.checkout = { ...state.checkout, pendingCart: undefined, status: "cancelled" };
           return json({ ok: true, checkout: state.checkout });
         }
         if (body.action === "ack") {
@@ -118,6 +129,10 @@ export default function RedemptionCheckoutHarness() {
           ["quote-changed", "原价已变化"], ["cancel-race", "取消时已完成"], ["new-response-lost", "新单响应丢失"],
           ["retry-response-lost", "重试响应丢失"], ["deleted-member", "会员后来被删除"], ["delayed", "旧身份延迟响应"] ] as const).map(([key, label]) =>
           <button key={key} type="button" onClick={() => scenario(key)}>{label}</button>)}
+        <button type="button" onClick={() => scenario("pending-recheck-error")}>再次核对失败</button>
+        <button type="button" onClick={() => document.dispatchEvent(new Event("faolla:synthetic-checkout-release-failed-read"))}>结束失败核对</button>
+        <button type="button" onClick={() => scenario("pending-no-preview")}>旧接口缺少明细</button>
+        <button type="button" onClick={() => scenario("slow-retry")}>慢速原单结算</button>
         <button type="button" onClick={() => { stateRef.current = fixture(stateRef.current.actor === "A" ? "B" : "A", "empty"); setDisplay({ actor: stateRef.current.actor, writes: 0, calls: [] }); setRevision((value) => value + 1); }}>切换员工身份</button>
         <label><input type="checkbox" checked={printAllowed} onChange={(event) => setPrintAllowed(event.target.checked)} />授权打印（不自动打印恢复单）</label>
       </div>
