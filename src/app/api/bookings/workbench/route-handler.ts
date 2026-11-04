@@ -34,6 +34,7 @@ import {
 } from "@/lib/requestMutationGuard";
 import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
 import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusiness";
+import { bookingWorkbenchDiagnosticDetails } from "@/lib/merchantBookingWorkbenchSaveFailure";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -274,11 +275,15 @@ function mergeSettingsSection(
   return applyCalendarSyncAction(current, calendarSyncAction);
 }
 
-function authorizationErrorResponse(error: unknown) {
+function authorizationErrorResponse(error: unknown, operation: "read" | "save", section?: WorkbenchSection | null) {
   if (error instanceof MerchantBusinessAccessError) {
     return privateJson({ error: error.code }, { status: error.status });
   }
-  return privateJson({ error: "booking_workbench_failed" }, { status: 503 });
+  const reference = randomBytes(8).toString("hex");
+  const details = bookingWorkbenchDiagnosticDetails(error);
+  const reason = details.reason;
+  console.warn("booking_workbench_failure", { operation, section: section ?? null, reference, ...details });
+  return privateJson({ error: "booking_workbench_failed", reason, reference }, { status: 503 });
 }
 
 export async function handleMerchantBookingWorkbenchGet(
@@ -309,7 +314,7 @@ export async function handleMerchantBookingWorkbenchGet(
         : {}),
     });
   } catch (error) {
-    return authorizationErrorResponse(error);
+    return authorizationErrorResponse(error, "read");
   }
 }
 
@@ -426,7 +431,7 @@ export async function handleMerchantBookingWorkbenchPatch(
         : {}),
     });
   } catch (error) {
-    return authorizationErrorResponse(error);
+    return authorizationErrorResponse(error, "save", section);
   }
 }
 

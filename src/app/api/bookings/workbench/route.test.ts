@@ -490,3 +490,28 @@ test("workbench PATCH rejects cross-origin requests before authorization", async
   assert.equal(authorizations, 0);
   assertPrivateHeaders(response);
 });
+
+test("failed save exposes a safe diagnostic reference, not database or customer payloads", async () => {
+  const warnings: unknown[][] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args); };
+  try {
+    for (const message of ["booking_atomic_conflict", "private@example.invalid raw-secret-in-provider-body"]) {
+      const response = await handleMerchantBookingWorkbenchPatch(patchRequest({ siteId: SITE_ID, section: "settings", settings: makeSettings() }), {
+        async authorizeActor() { return makeEmployee(["bookings.view", "bookings.settings.manage"]); },
+        async loadSnapshotSite() { return null; },
+        async updateSettings() { throw new Error(message); },
+      });
+      const json = await readJsonRecord(response);
+      assert.equal(response.status, 503); assertPrivateHeaders(response);
+      assert.equal(json.error, "booking_workbench_failed");
+      assert.equal(json.reason, message === "booking_atomic_conflict" ? message : "booking_workbench_failed");
+      assert.match(String(json.reference), /^[a-f0-9]{16}$/);
+      const warning = warnings.at(-1)?.[1] as Record<string, unknown>;
+      assert.equal(warning.reference, json.reference);
+      assert.equal(warning.operation, "save"); assert.equal(warning.section, "settings");
+      assert.equal(JSON.stringify([warnings, json]).includes("raw-secret"), false);
+      assert.equal(JSON.stringify([warnings, json]).includes("private@example.invalid"), false);
+    }
+  } finally { console.warn = warn; }
+});

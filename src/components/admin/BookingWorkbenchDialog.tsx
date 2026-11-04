@@ -6,6 +6,7 @@ import { useI18n } from "@/components/I18nProvider";
 import BookingTimeZoneSelect from "@/components/admin/BookingTimeZoneSelect";
 import { readBookingTimeZoneDefault, type BookingTimeZoneDefault } from "@/lib/merchantBookingTimeZoneOptions";
 import { showGlobalToast } from "@/lib/globalToast";
+import { getBookingWorkbenchSaveFailure, type BookingWorkbenchSaveFailure } from "@/lib/merchantBookingWorkbenchSaveFailure";
 import { getMerchantBookingFieldText, getMerchantBookingStatusText } from "@/lib/merchantBookingLocale";
 import { MERCHANT_BOOKING_STATUSES, type MerchantBookingRecord, type MerchantBookingStatus } from "@/lib/merchantBookings";
 import {
@@ -553,6 +554,7 @@ export default function BookingWorkbenchDialog({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [saveFailures, setSaveFailures] = useState<Partial<Record<"settings" | "automation", BookingWorkbenchSaveFailure>>>({});
   const [sectionView, setSectionView] = useState<WorkbenchSectionView>("home");
   const [employeeCalendarSyncEnabled, setEmployeeCalendarSyncEnabled] = useState(false);
   const [employeeCalendarSyncTokenUpdatedAt, setEmployeeCalendarSyncTokenUpdatedAt] = useState("");
@@ -570,6 +572,7 @@ export default function BookingWorkbenchDialog({
   const lastFailedSectionDraftRef = useRef({ settings: "", automation: "" });
   const lastSavedSectionDraftRef = useRef({ settings: "", automation: "" });
   const securityGenerationRef = useRef(0);
+  const saveViewGenerationRef = useRef(0);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -577,6 +580,7 @@ export default function BookingWorkbenchDialog({
 
   useEffect(() => {
     securityGenerationRef.current += 1;
+    saveViewGenerationRef.current += 1;
     hasLoadedRef.current = false;
     lastFailedDraftRef.current = "";
     lastSavedDraftRef.current = "";
@@ -591,6 +595,7 @@ export default function BookingWorkbenchDialog({
     setLoading(false);
     setSaving(false);
     setError("");
+    setSaveFailures({});
     setEmployeeCalendarSyncEnabled(false);
     setEmployeeCalendarSyncTokenUpdatedAt("");
     setSectionView("home");
@@ -602,6 +607,7 @@ export default function BookingWorkbenchDialog({
 
   useEffect(() => {
     if (!open) {
+      saveViewGenerationRef.current += 1;
       hasLoadedRef.current = false;
       if (autosaveTimerRef.current) {
         clearTimeout(autosaveTimerRef.current);
@@ -623,15 +629,19 @@ export default function BookingWorkbenchDialog({
     let cancelled = false;
     hasLoadedRef.current = false;
     lastFailedDraftRef.current = "";
+    lastFailedSectionDraftRef.current = { settings: "", automation: "" };
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = null;
     }
     const load = async () => {
+      saveViewGenerationRef.current += 1;
       setLoading(true);
+      setSaving(false);
       setError("");
       setTimeZoneDefault({ countryCode: "", timeZone: "" });
       setTimeZoneDefaultDismissed(false);
+      setSaveFailures({});
       try {
         const response = await requestWorkbenchApi(`/api/bookings/workbench?siteId=${encodeURIComponent(siteId)}`, {
           cache: "no-store",
@@ -700,6 +710,7 @@ export default function BookingWorkbenchDialog({
     void load();
     return () => {
       cancelled = true;
+      saveViewGenerationRef.current += 1;
       controller.abort();
     };
   }, [
@@ -1018,6 +1029,7 @@ export default function BookingWorkbenchDialog({
         return null;
       }
       const generation = securityGenerationRef.current;
+      const saveViewGeneration = saveViewGenerationRef.current;
       if (autosaveTimerRef.current) {
         clearTimeout(autosaveTimerRef.current);
         autosaveTimerRef.current = null;
@@ -1031,6 +1043,7 @@ export default function BookingWorkbenchDialog({
             effectivePermissions,
           )
         : sourceDraft;
+      let failureForAttempt: BookingWorkbenchSaveFailure | null = null;
       try {
         const response = await requestWorkbenchApi("/api/bookings/workbench", {
           method: "PATCH",
@@ -1046,15 +1059,31 @@ export default function BookingWorkbenchDialog({
           | {
               ok?: boolean;
               message?: string;
+              error?: string;
+              reason?: string;
+              reference?: string;
               settings?: MerchantBookingWorkbenchSettings & {
                 calendarSyncEnabled?: boolean;
               };
             }
           | null;
         if (!response.ok || !json?.ok || !json.settings) {
-          throw new Error(json?.message || "工作台设置保存失败");
+          if (section === "calendar") throw new Error(json?.message || "工作台设置保存失败");
+          const failure = getBookingWorkbenchSaveFailure(response.status, json, locale);
+          failureForAttempt = failure;
+          throw new Error(failure.message);
         }
-        if (securityGenerationRef.current !== generation) return null;
+        if (securityGenerationRef.current !== generation || saveViewGenerationRef.current !== saveViewGeneration) return null;
+        if (section !== "calendar") {
+          // A successful retry also clears the owner's failed fingerprint;
+          // otherwise returning to that exact previous colour never auto-saves.
+          lastFailedSectionDraftRef.current[section] = "";
+          setSaveFailures((current) => {
+            const next = { ...current };
+            delete next[section];
+            return next;
+          });
+        }
         const normalized = normalizeMerchantBookingWorkbenchSettings(
           employeeMode
             ? createMerchantBookingEmployeeWorkbenchDraft(
@@ -1070,7 +1099,6 @@ export default function BookingWorkbenchDialog({
                 normalized,
                 section,
               );
-            lastFailedSectionDraftRef.current[section] = "";
           }
           setEmployeeCalendarSyncEnabled(
             json.settings.calendarSyncEnabled === true,
@@ -1098,7 +1126,7 @@ export default function BookingWorkbenchDialog({
         onSettingsSaved?.(normalized);
         return normalized;
       } catch (saveError) {
-        if (securityGenerationRef.current !== generation) return null;
+        if (securityGenerationRef.current !== generation || saveViewGenerationRef.current !== saveViewGeneration) return null;
         lastFailedDraftRef.current = sourceSerialized;
         if (section !== "calendar") {
           lastFailedSectionDraftRef.current[section] =
@@ -1107,16 +1135,23 @@ export default function BookingWorkbenchDialog({
               section,
             );
         }
-        setError(saveError instanceof Error ? saveError.message : "工作台设置保存失败");
+        if (section === "calendar") {
+          setError(saveError instanceof Error ? saveError.message : "工作台设置保存失败");
+        } else {
+          const failure = failureForAttempt ?? getBookingWorkbenchSaveFailure(0, null, locale);
+          setSaveFailures((current) => ({ ...current, [section]: failure }));
+          setError(failure.message);
+        }
         return null;
       } finally {
-        if (securityGenerationRef.current === generation) setSaving(false);
+        if (securityGenerationRef.current === generation && saveViewGenerationRef.current === saveViewGeneration) setSaving(false);
       }
     },
     [
       canViewBookings,
       effectivePermissions,
       employeeMode,
+      locale,
       onSettingsSaved,
       requestWorkbenchApi,
       siteId,
@@ -1455,6 +1490,19 @@ export default function BookingWorkbenchDialog({
 
         <div className={`min-h-0 flex-1 overflow-y-auto px-4 pt-4 sm:px-6 sm:py-5 ${pageContentBottomClassName}`}>
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-4">
+            {(["settings", "automation"] as const).map((failedSection) => {
+              const failure = saveFailures[failedSection];
+              if (!failure || !canManageMerchantBookingWorkbenchSection(effectivePermissions, failedSection)) return null;
+              return <div key={failedSection} role="alert" className={`rounded-2xl border p-4 ${darkMode ? "border-rose-800 bg-rose-950/40 text-rose-100" : "border-rose-200 bg-rose-50 text-rose-900"}`}>
+                <p className="text-sm font-semibold">{locale.startsWith("zh") ? "工作台设置尚未确认保存" : locale.startsWith("es") ? "Guardado pendiente de confirmar" : "Workbench save not confirmed"}</p>
+                <p className="mt-1 text-sm leading-6">{failure.message}</p>
+                {failure.reference ? <p className="mt-1 break-all text-xs opacity-70">{locale.startsWith("zh") ? "排查编号" : locale.startsWith("es") ? "Referencia" : "Reference"}: {failure.reference}</p> : null}
+                <button type="button" className={`mt-3 rounded-xl border px-4 py-2 text-sm font-medium disabled:opacity-50 ${darkMode ? "border-rose-700 bg-slate-900" : "border-rose-200 bg-white"}`} disabled={loading || saving}
+                  onClick={() => { void saveWorkbench({ section: failedSection, sourceDraft: draftRef.current }); }}>
+                  {saving ? (locale.startsWith("zh") ? "正在保存…" : locale.startsWith("es") ? "Guardando…" : "Saving…") : (locale.startsWith("zh") ? "重试保存" : locale.startsWith("es") ? "Reintentar guardado" : "Retry saving")}
+                </button>
+              </div>;
+            })}
             {sectionView === "home" ? (
               <>
                 <div className="space-y-2 md:hidden">
