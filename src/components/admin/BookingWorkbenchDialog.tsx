@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type TouchEventHandler } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/components/I18nProvider";
+import BookingTimeZoneSelect from "@/components/admin/BookingTimeZoneSelect";
+import { readBookingTimeZoneDefault, type BookingTimeZoneDefault } from "@/lib/merchantBookingTimeZoneOptions";
 import { showGlobalToast } from "@/lib/globalToast";
 import { getMerchantBookingFieldText, getMerchantBookingStatusText } from "@/lib/merchantBookingLocale";
 import { MERCHANT_BOOKING_STATUSES, type MerchantBookingRecord, type MerchantBookingStatus } from "@/lib/merchantBookings";
@@ -543,6 +545,10 @@ export default function BookingWorkbenchDialog({
   );
   const emailLanguageOptions = useMemo(() => getMerchantBookingCustomerEmailLanguageOptions(), []);
   const [draft, setDraft] = useState<MerchantBookingWorkbenchSettings>(() => createDefaultMerchantBookingWorkbenchSettings());
+  const [timeZoneDefault, setTimeZoneDefault] = useState<BookingTimeZoneDefault>({ countryCode: "", timeZone: "" });
+  const [timeZoneDefaultDismissed, setTimeZoneDefaultDismissed] = useState(false);
+  const suggestedTimeZone = !timeZoneDefaultDismissed && !draft.timeZone ? timeZoneDefault.timeZone : "";
+  const selectedTimeZone = draft.timeZone || suggestedTimeZone;
   const [dashboard, setDashboard] = useState<WorkbenchDashboard | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -579,6 +585,8 @@ export default function BookingWorkbenchDialog({
     const emptyDraft = createDefaultMerchantBookingWorkbenchSettings();
     draftRef.current = emptyDraft;
     setDraft(emptyDraft);
+    setTimeZoneDefault({ countryCode: "", timeZone: "" });
+    setTimeZoneDefaultDismissed(false);
     setDashboard(null);
     setLoading(false);
     setSaving(false);
@@ -622,6 +630,8 @@ export default function BookingWorkbenchDialog({
     const load = async () => {
       setLoading(true);
       setError("");
+      setTimeZoneDefault({ countryCode: "", timeZone: "" });
+      setTimeZoneDefaultDismissed(false);
       try {
         const response = await requestWorkbenchApi(`/api/bookings/workbench?siteId=${encodeURIComponent(siteId)}`, {
           cache: "no-store",
@@ -635,6 +645,7 @@ export default function BookingWorkbenchDialog({
               };
               message?: string;
               dashboard?: WorkbenchDashboard;
+              timeZoneDefault?: BookingTimeZoneDefault;
               error?: string;
             }
           | null;
@@ -666,6 +677,7 @@ export default function BookingWorkbenchDialog({
           draftRef.current = normalized;
           hasLoadedRef.current = true;
           setDraft(normalized);
+          setTimeZoneDefault(readBookingTimeZoneDefault(json.timeZoneDefault));
           setDashboard(json.dashboard ?? null);
           setEmployeeCalendarSyncEnabled(
             employeeMode && json.settings?.calendarSyncEnabled === true,
@@ -1581,12 +1593,23 @@ export default function BookingWorkbenchDialog({
                 <div className="space-y-4">
                   <section className={`rounded-3xl border p-5 ${rulePanelClassName("sky")}`}>
                     <div className="text-base font-semibold">提前预约 / 截止规则</div>
-                    <label className="mt-4 block space-y-1">
-                      <span className="text-sm">新预约使用的商户时区（IANA）</span>
-                      <input className={inputClassName} value={draft.timeZone ?? ""} placeholder="例如 Europe/Madrid 或 Atlantic/Canary"
-                        onChange={(event) => setDraft((current) => ({ ...current, timeZone: event.target.value }))} />
-                      <span className="block text-xs opacity-70">只影响新预约和明确改期的预约，不换算历史记录。留空保持旧行为；请根据门店所在地设置，不使用访客手机的时区。</span>
-                    </label>
+                    <BookingTimeZoneSelect key={`${siteId}:${permissionFingerprint}`} value={selectedTimeZone} countryCode={timeZoneDefault.countryCode}
+                      locale={locale || "zh-CN"} className={inputClassName} disabled={loading || saving}
+                      onChange={(timeZone) => {
+                        setTimeZoneDefaultDismissed(true);
+                        setDraft((current) => ({ ...current, timeZone }));
+                      }} />
+                    {suggestedTimeZone ? <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <span>{locale.startsWith("es") ? "Preseleccionada según la ubicación guardada. Confirma para guardarla." : locale.startsWith("zh") ? "已按商户所在地预选，确认后才会保存。" : "Preselected from your saved merchant location. Confirm to save."}</span>
+                      <button type="button" className={`rounded-xl border px-3 py-2 font-medium disabled:opacity-50 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-100" : "border-sky-200 bg-white text-sky-800"}`} disabled={saving}
+                        onClick={() => {
+                          setTimeZoneDefaultDismissed(true);
+                          setDraft((current) => ({ ...current, timeZone: suggestedTimeZone }));
+                        }}>{locale.startsWith("es") ? "Usar esta zona horaria" : locale.startsWith("zh") ? "使用此时区" : "Use this time zone"}</button>
+                    </div> : !selectedTimeZone ? <p className="mt-2 text-xs opacity-70">
+                      {locale.startsWith("es") ? "Selecciona la zona horaria de la tienda; la ubicación guardada no determina una zona única." : locale.startsWith("zh") ? "尚未设置时区；所在地信息不足以唯一判断时，请手动选择门店时区。" : "No time zone set. Please choose your store’s time zone when the saved location is ambiguous."}
+                    </p> : null}
+                    <p className="mt-2 text-xs opacity-70">{locale.startsWith("es") ? "Solo afecta a reservas nuevas o reprogramadas explícitamente; no convierte el historial ni usa la zona del teléfono. La selección se guarda automáticamente." : locale.startsWith("zh") ? "只影响新预约和明确改期的预约，不换算历史记录，不使用访客手机的时区。手动选择后自动保存。" : "Only affects new or explicitly rescheduled bookings, not historical records or the visitor’s phone time zone. Manual selections save automatically."}</p>
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
                       <label className="min-w-0 space-y-1">
                         <span className="text-sm">最少提前分钟</span>

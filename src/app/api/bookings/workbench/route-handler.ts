@@ -27,6 +27,7 @@ import {
   type MerchantPushSubscriptionStoreClient,
 } from "@/lib/merchantPushSubscriptionStore";
 import { loadCurrentMerchantSnapshotSiteBySiteId } from "@/lib/publishedMerchantService";
+import { resolveMerchantBookingTimeZoneDefault } from "@/lib/merchantBookingTimeZoneLocation.server";
 import {
   getTrustedMutationRequestErrorResponse,
   isTrustedSameOriginMutationRequest,
@@ -296,10 +297,13 @@ export async function handleMerchantBookingWorkbenchGet(
     });
     const settings = await dependencies.loadSettings(siteId);
     const dashboard = await dependencies.buildDashboard(siteId);
+    const canManageSettings = actor.type === "owner" || actor.businessPermissions.includes("bookings.settings.manage");
+    const snapshotSite = canManageSettings ? await dependencies.loadSnapshotSite(siteId).catch(() => null) : null;
     return privateJson({
       ok: true,
       settings: projectSettingsForActor(settings, actor),
       dashboard: projectDashboardForActor(dashboard, actor),
+      ...(canManageSettings ? { timeZoneDefault: resolveMerchantBookingTimeZoneDefault(snapshotSite?.id === siteId ? snapshotSite.location : null) } : {}),
       ...(actor.type === "employee"
         ? { capabilities: buildCapabilities(actor) }
         : {}),

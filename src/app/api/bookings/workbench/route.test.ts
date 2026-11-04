@@ -31,6 +31,58 @@ function makeSettings(): MerchantBookingWorkbenchSettings {
   };
 }
 
+function makeLocationSite(id = SITE_ID) {
+  return { id, location: { countryCode: "ES", provinceCode: "41", province: "Sevilla", city: "Sevilla" } } as
+    NonNullable<Awaited<ReturnType<MerchantBookingWorkbenchRouteDependencies["loadSnapshotSite"]>>>;
+}
+
+test("time-zone default is authorized merchant metadata, never a settings write or an override", async () => {
+  for (const savedZone of ["", "Atlantic/Canary"]) {
+    const stored = { ...makeSettings(), timeZone: savedZone };
+    const response = await handleMerchantBookingWorkbenchGet(getRequest(), {
+      async authorizeActor() { return makeEmployee(["bookings.view", "bookings.settings.manage"]); },
+      async loadSettings(siteId) { assert.equal(siteId, SITE_ID); return stored; },
+      async buildDashboard() { return { pushDeviceCount: 0, automation: getMerchantBookingAutomationRuntimeSnapshot() }; },
+      async loadSnapshotSite(siteId) { assert.equal(siteId, SITE_ID); return makeLocationSite(); },
+      async updateSettings() { assert.fail("GET must not persist defaults"); },
+    });
+    const json = await readJsonRecord(response);
+    assert.equal(response.status, 200);
+    assert.deepEqual(json.timeZoneDefault, { countryCode: "ES", timeZone: "Europe/Madrid" });
+    assert.equal((json.settings as Record<string, unknown>).timeZone, savedZone);
+    assert.equal(stored.timeZone, savedZone);
+    assert.equal(JSON.stringify(json).includes("Sevilla"), false);
+    assertPrivateHeaders(response);
+  }
+});
+
+test("time-zone defaults fail safely for unavailable or mismatched merchant metadata", async () => {
+  for (const failure of ["missing", "wrong-site", "unavailable"]) {
+    const response = await handleMerchantBookingWorkbenchGet(getRequest(), {
+      async authorizeActor() { return makeEmployee(["bookings.view", "bookings.settings.manage"]); },
+      async loadSettings() { return makeSettings(); },
+      async buildDashboard() { return { pushDeviceCount: 0, automation: getMerchantBookingAutomationRuntimeSnapshot() }; },
+      async loadSnapshotSite() {
+        if (failure === "unavailable") throw new Error("synthetic lookup failure");
+        return failure === "wrong-site" ? makeLocationSite("20000000") : null;
+      },
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await readJsonRecord(response)).timeZoneDefault, { countryCode: "", timeZone: "" });
+  }
+});
+
+test("view-only employees do not read merchant geography or receive time-zone defaults", async () => {
+  const response = await handleMerchantBookingWorkbenchGet(getRequest(), {
+    async authorizeActor() { return makeEmployee(["bookings.view"]); },
+    async loadSettings() { return makeSettings(); },
+    async buildDashboard() { return { pushDeviceCount: 0, automation: getMerchantBookingAutomationRuntimeSnapshot() }; },
+    async loadSnapshotSite() { assert.fail("requires settings permission"); },
+  });
+  assert.equal(response.status, 200);
+  assert.ok(!("timeZoneDefault" in await readJsonRecord(response)));
+});
+
 function makeEmployee(
   permissions: MerchantStaffBusinessPermission[],
 ): MerchantBusinessActor {
@@ -107,6 +159,7 @@ test("workbench GET projects settings, dashboard, and secrets by permission", as
     async loadSettings() {
       return makeSettings();
     },
+    async loadSnapshotSite() { return null; },
     async buildDashboard() {
       return {
         pushDeviceCount: 7,
@@ -187,6 +240,7 @@ test("owner workbench remains compatible and can read its calendar bearer token"
     async loadSettings() {
       return makeSettings();
     },
+    async loadSnapshotSite() { return null; },
     async buildDashboard() {
       return {
         pushDeviceCount: 0,
