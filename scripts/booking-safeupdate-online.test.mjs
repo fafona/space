@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import path from 'node:path';
 import {createRequire} from 'node:module';
+import {spawnSync} from 'node:child_process';
 import test from 'node:test';
 import {bookingSafeupdateOnlineWorkflow} from './booking-safeupdate-online-workflow.mjs';
 import {bookingSafeupdateScope as scope,bookingSafeupdateAllowedFiles,assertBookingSafeupdateSource,
@@ -25,6 +26,8 @@ test('separate online workflow preserves every existing gate except the explicit
   assert.deepEqual(online.concurrency,old.concurrency);
   assert.equal(online.jobs.migrate.env.MAINTENANCE_MODE,'off');
   assert.equal(online.jobs.migrate.env.THROUGH_VERSION,scope.version);
+  assert.equal(online.jobs.migrate.env.FORWARD_REPAIR_CONFIRMED,'false');
+  for(const step of online.jobs.migrate.steps)if(step.run)assert.ok(step.run.length<=21000,'run step exceeds GitHub limit: '+step.name);
   for(const guard of ['Verify Recursive Backup Attestation Chain','Revalidate Evidence And Apply Exact Through','Verify Signed Backup Maintenance Binding','Verify Expected Live Application Build Exactly','Verify Expected Live Application Build Remains Exact','Setup Pinned SSH Host Trust'])
     assert.ok(actual.includes('- name: '+guard));
   assert.ok(actual.includes('test "$EXPECTED_LIVE_APP_SHA" = "'+scope.live+'"'));
@@ -37,6 +40,15 @@ test('separate online workflow preserves every existing gate except the explicit
 
 test('workflow construction refuses a changed old admission rather than dropping unreviewed checks',()=>{
   assert.throws(()=>bookingSafeupdateOnlineWorkflow(generic.replace('test "$MAINTENANCE_WINDOW_CONFIRMED" = "true"','changed_guard')),/workflow template changed/);
+});
+
+test('all retained shell steps parse before any publication is attempted',()=>{
+  const bash=process.platform==='win32'?'C:\\Program Files\\Git\\bin\\bash.exe':'bash';
+  for(const step of yaml.load(actual).jobs.migrate.steps){
+    if(!step.run)continue;
+    const r=spawnSync(bash,['-n'],{input:step.run,encoding:'utf8',windowsHide:true,timeout:10000});
+    assert.ifError(r.error);assert.equal(r.status,0,step.name+': '+r.stderr);
+  }
 });
 
 test('only exact approved migration bytes are accepted and application files are outside the allowed diff',()=>{

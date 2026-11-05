@@ -1014,15 +1014,6 @@ jobs:
 
           assert_exact_source
           assert_container
-          if [ "$FAOLLA_FORWARD_REPAIR_CONFIRMED" = "true" ]; then
-            node --input-type=module - <<'NODE'
-          import {
-            assertForwardRepairMigrationSource,
-          } from "./scripts/database-migrate-forward-repair-contract.mjs";
-
-          await assertForwardRepairMigrationSource(process.cwd());
-          NODE
-          fi
           node scripts/booking-safeupdate-online.mjs plan > "$dry_report_path"
           node --input-type=module - \
             "$dry_report_path" "$FAOLLA_THROUGH" "$expected_container_name" <<'NODE'
@@ -1173,62 +1164,6 @@ jobs:
           }
           NODE
 
-          if [ "$FAOLLA_FORWARD_REPAIR_CONFIRMED" = "true" ]; then
-            node --input-type=module - \
-              "$apply_report_path" "$expected_container_name" <<'NODE'
-          import { readFileSync } from "node:fs";
-          import {
-            assertForwardRepairApplyReport,
-          } from "./scripts/database-migrate-forward-repair-contract.mjs";
-
-          assertForwardRepairApplyReport(
-            JSON.parse(readFileSync(process.argv[2], "utf8")),
-            process.argv[3],
-          );
-          NODE
-
-            assert_exact_source
-            assert_container
-            FAOLLA_EXPECTED_DATABASE_NAME="$expected_database_name" \
-            FAOLLA_EXPECTED_DATABASE_SYSTEM_IDENTIFIER="$expected_database_system_identifier" \
-            FAOLLA_EXPECTED_MERCHANT_RECORD_COUNT="$expected_merchant_record_count" \
-            FAOLLA_EXPECTED_PERSONAL_CANONICAL_COUNT="$expected_personal_canonical_count" \
-            FAOLLA_EXPECTED_ORDINARY_IDENTITY_CONTENT_SHA256="$expected_identity_content_sha256" \
-              node --env-file="$repository_dir/.env.local" \
-                scripts/check-ordinary-account-cutover-readiness.mjs \
-                --json --fail-on-blocked > "$postflight_report_path"
-            node --input-type=module - \
-              "$postflight_report_path" "$database_path" "$baseline_path" <<'NODE'
-          import { readFileSync } from "node:fs";
-          import {
-            assertForwardRepairPostflightReport,
-          } from "./scripts/database-migrate-forward-repair-contract.mjs";
-
-          assertForwardRepairPostflightReport(
-            JSON.parse(readFileSync(process.argv[2], "utf8")),
-            JSON.parse(readFileSync(process.argv[3], "utf8")),
-            JSON.parse(readFileSync(process.argv[4], "utf8")),
-          );
-          NODE
-
-            assert_exact_source
-            assert_container
-            node --env-file="$repository_dir/.env.local" \
-              scripts/apply-production-database-migrations.mjs \
-              --dry-run --through="$FAOLLA_THROUGH" --json > "$post_dry_report_path"
-            node --input-type=module - \
-              "$post_dry_report_path" "$expected_container_name" <<'NODE'
-          import { readFileSync } from "node:fs";
-          import {
-            assertForwardRepairPostDryRunReport,
-          } from "./scripts/database-migrate-forward-repair-contract.mjs";
-
-          assertForwardRepairPostDryRunReport(
-            JSON.parse(readFileSync(process.argv[2], "utf8")),
-            process.argv[3],
-          );
-          NODE
-          fi
           assert_exact_source
           assert_container
           cat "$apply_report_path"
