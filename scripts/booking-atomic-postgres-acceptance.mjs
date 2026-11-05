@@ -356,6 +356,21 @@ test("real PostgreSQL transactions, private ACLs and conservative mail leases", 
     await assert.rejects(service1.query("select faolla_booking_atomic_read_v2()"), /booking_atomic_inactive/);
     await admin.query("update faolla_booking_atomic_control set active=true");
     assert.equal((await one(service1, "select faolla_booking_atomic_read_v2() as snapshot")).snapshot.protocol, 2);
+    await check("safeupdate correction installs online without changing business data or function ACLs", async () => {
+      const beforeCorrection = {
+        pages: (await admin.query("select * from pages order by id")).rows,
+        control: (await admin.query("select * from faolla_booking_atomic_control")).rows,
+        commands: (await admin.query("select * from faolla_booking_atomic_commands order by site_id,command_key")).rows,
+        mail: (await admin.query("select * from faolla_booking_mail_jobs order by id")).rows,
+        metadata: (await admin.query("select oid,proowner,proacl,proconfig,prosecdef from pg_proc where oid='public.faolla_booking_atomic_commit_v1(text,text,text,jsonb)'::regprocedure")).rows,
+      };
+      await admin.query(await readFile(path.join(root, "scripts/supabase-migrations/202611050213_booking_atomic_safeupdate_singleton.sql"), "utf8"));
+      assert.deepEqual((await admin.query("select * from pages order by id")).rows, beforeCorrection.pages);
+      assert.deepEqual((await admin.query("select * from faolla_booking_atomic_control")).rows, beforeCorrection.control);
+      assert.deepEqual((await admin.query("select * from faolla_booking_atomic_commands order by site_id,command_key")).rows, beforeCorrection.commands);
+      assert.deepEqual((await admin.query("select * from faolla_booking_mail_jobs order by id")).rows, beforeCorrection.mail);
+      assert.deepEqual((await admin.query("select oid,proowner,proacl,proconfig,prosecdef from pg_proc where oid='public.faolla_booking_atomic_commit_v1(text,text,text,jsonb)'::regprocedure")).rows, beforeCorrection.metadata);
+    });
     const result = await atomicRuntime.runAtomicBookingMutation({ siteId: "runtime", operation: "acceptance.config" }, async () => {
       atomicRuntime.stageAtomicBookingPersistence("workbench", { version: 1, settingsBySiteId: { runtime: { timeZone: "Europe/Madrid" } } });
       return { updated: true };
