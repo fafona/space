@@ -1,5 +1,25 @@
 begin;
 
+set local lock_timeout = '2s';
+set local statement_timeout = '10s';
+
+-- Existing atomic writers take this same singleton lock. Briefly serialize
+-- the definition change without stopping the site or pausing any worker.
+do $serialize$
+begin
+  perform 1 from public.faolla_booking_atomic_control where singleton for update;
+  if not found then raise exception 'booking_atomic_safeupdate_control_missing'; end if;
+end;
+$serialize$;
+
+create temporary table faolla_booking_safeupdate_before on commit drop as
+select
+  (select to_jsonb(c) from public.faolla_booking_atomic_control c where singleton) as control,
+  (select md5(coalesce(jsonb_agg(to_jsonb(p) order by p.id), '[]'::jsonb)::text)
+     from public.pages p where p.merchant_id = '__faolla_booking_persistence__') as pages_md5,
+  (select jsonb_build_object('oid',oid,'owner',proowner,'acl',proacl,'config',proconfig,'definer',prosecdef)
+     from pg_catalog.pg_proc where oid = 'public.faolla_booking_atomic_commit_v1(text,text,text,jsonb)'::regprocedure) as metadata;
+
 -- Online correction for PostgREST sessions using pg-safeupdate.
 -- Preserve the existing transaction protocol, private ACLs and all business data.
 -- Only the revision update is narrowed to the already locked singleton primary key.
@@ -174,6 +194,21 @@ begin
   return jsonb_build_object('replayed', false, 'result', p_mutation->'result');
 end;
 $commit_booking$;
+
+do $unchanged$
+begin
+  if (select to_jsonb(c) from public.faolla_booking_atomic_control c where singleton)
+       is distinct from (select control from pg_temp.faolla_booking_safeupdate_before)
+     or (select md5(coalesce(jsonb_agg(to_jsonb(p) order by p.id), '[]'::jsonb)::text)
+          from public.pages p where p.merchant_id = '__faolla_booking_persistence__')
+       is distinct from (select pages_md5 from pg_temp.faolla_booking_safeupdate_before)
+     or (select jsonb_build_object('oid',oid,'owner',proowner,'acl',proacl,'config',proconfig,'definer',prosecdef)
+          from pg_catalog.pg_proc where oid = 'public.faolla_booking_atomic_commit_v1(text,text,text,jsonb)'::regprocedure)
+       is distinct from (select metadata from pg_temp.faolla_booking_safeupdate_before) then
+    raise exception 'booking_atomic_safeupdate_postcondition_failed';
+  end if;
+end;
+$unchanged$;
 
 insert into public.faolla_schema_migrations(version,name)
   values (202611050213, 'booking_atomic_safeupdate_singleton');
