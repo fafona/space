@@ -55,5 +55,19 @@ export function bookingSafeupdateOnlineWorkflow(original) {
   once(plan,'          node scripts/booking-safeupdate-online.mjs plan > "$dry_report_path"');
   const apply='          node --env-file="$repository_dir/.env.local" scripts/apply-production-database-migrations.mjs --apply --through="$FAOLLA_THROUGH" --json > "$apply_report_path"';
   once(apply,'          node scripts/booking-safeupdate-online.mjs apply "$FAOLLA_REPORT_DIR" > "$apply_report_path"\n          node scripts/booking-safeupdate-online.mjs verify "$FAOLLA_REPORT_DIR" >&2');
+  // This lane pins the independent ACL forward repair to false. Remove only
+  // its unreachable host postflight branch so the retained JIT shell program
+  // remains below GitHub Actions' 21,000-character run-step limit.
+  const inactive='          if [ "$FAOLLA_FORWARD_REPAIR_CONFIRMED" = "true" ]; then\n'+
+    '            node --input-type=module - \\\n              "$apply_report_path" "$expected_container_name" <<\'NODE\'';
+  const tail='          fi\n          assert_exact_source\n          assert_container\n          cat "$apply_report_path"';
+  const begin=source.indexOf(inactive),endInactive=source.indexOf(tail,begin);
+  assert.ok(begin>=0&&endInactive>begin,'inactive ACL branch template changed');
+  source=source.slice(0,begin)+source.slice(endInactive+'          fi\n'.length);
+  const oldSourceStart='          if [ "$FAOLLA_FORWARD_REPAIR_CONFIRMED" = "true" ]; then\n            node --input-type=module - <<\'NODE\'';
+  const oldSourceEnd='          fi\n          node scripts/booking-safeupdate-online.mjs plan';
+  const sourceBegin=source.indexOf(oldSourceStart),sourceEnd=source.indexOf(oldSourceEnd,sourceBegin);
+  assert.ok(sourceBegin>=0&&sourceEnd>sourceBegin,'inactive ACL source branch template changed');
+  source=source.slice(0,sourceBegin)+source.slice(sourceEnd+'          fi\n'.length);
   return source;
 }
