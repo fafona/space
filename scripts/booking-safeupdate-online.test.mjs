@@ -7,6 +7,8 @@ import {bookingSafeupdateOnlineWorkflow} from './booking-safeupdate-online-workf
 import {bookingSafeupdateScope as scope,bookingSafeupdateAllowedFiles,assertBookingSafeupdateSource,
   assertBookingSafeupdateDryRun,assertBookingSafeupdateState,bookingSafeupdateRollbackSql,bookingSafeupdateOldRegistry} from './booking-safeupdate-online.mjs';
 import {attendanceProductionIdentity as identity} from './attendance-production-database-migrations.mjs';
+import {BOOKING_RELEASE_BASELINE,BOOKING_APPLICATION_FILES,BOOKING_TOOL_FILES,assertBookingReleaseClosure} from './booking-publication-policy.mjs';
+import {readReviewedApplicationFixture} from './test-support/reviewed-application-fixture.mjs';
 const root=path.resolve(import.meta.dirname,'..');
 const read=file=>readFileSync(path.join(root,file),'utf8').replaceAll('\r\n','\n');
 const generic=read('.github/workflows/database-migrate.yml');
@@ -41,8 +43,16 @@ test('only exact approved migration bytes are accepted and application files are
   const bytes=readFileSync(path.join(root,'scripts/supabase-migrations',scope.fileName));
   assert.doesNotThrow(()=>assertBookingSafeupdateSource(bytes));
   assert.throws(()=>assertBookingSafeupdateSource(Buffer.concat([bytes,Buffer.from('-- extra SQL\n')])));
-  assert.equal(bookingSafeupdateAllowedFiles.length,8);
+  assert.equal(bookingSafeupdateAllowedFiles.length,9);
   assert.ok(bookingSafeupdateAllowedFiles.every(f=>!f.startsWith('src/')&&!f.endsWith('database-migrate.yml')));
+});
+
+test('historical fixture matches its original approved pin while the old lane still rejects the new package',()=>{
+  const sealed=JSON.parse(read('scripts/test-support/booking-ci-source-base.json'));
+  const readBlob=file=>file==='.github/workflows/ci.yml'?sealed.workflow:readReviewedApplicationFixture(file);
+  const input={baseline:BOOKING_RELEASE_BASELINE,files:[...BOOKING_APPLICATION_FILES,...BOOKING_TOOL_FILES],readBlob};
+  assert.match(assertBookingReleaseClosure(input),/^[a-f0-9]{64}$/);
+  assert.throws(()=>assertBookingReleaseClosure({...input,readBlob:file=>file==='package.json'?read('package.json'):readBlob(file)}),/application_content_rejected/);
 });
 
 function dry(){return {ok:true,mode:'dry_run',status:'dry_run',databaseContainer:identity.containerName,

@@ -24,6 +24,7 @@ export const bookingSafeupdateAllowedFiles=Object.freeze([
   '.github/workflows/booking-safeupdate-online.yml','package.json',
   'scripts/booking-atomic-postgres-acceptance.mjs','scripts/booking-atomic-safeupdate-contract.test.mjs',
   'scripts/booking-safeupdate-online-workflow.mjs','scripts/booking-safeupdate-online.mjs','scripts/booking-safeupdate-online.test.mjs',
+  'scripts/test-support/reviewed-application-fixtures.json',
   'scripts/supabase-migrations/'+bookingSafeupdateScope.fileName,
 ].sort());
 export function bookingSafeupdateOldRegistry(){
