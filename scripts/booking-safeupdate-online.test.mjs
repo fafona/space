@@ -52,7 +52,8 @@ test('historical fixture matches its original approved pin while the old lane st
   const readBlob=file=>file==='.github/workflows/ci.yml'?sealed.workflow:readReviewedApplicationFixture(file);
   const input={baseline:BOOKING_RELEASE_BASELINE,files:[...BOOKING_APPLICATION_FILES,...BOOKING_TOOL_FILES],readBlob};
   assert.match(assertBookingReleaseClosure(input),/^[a-f0-9]{64}$/);
-  assert.throws(()=>assertBookingReleaseClosure({...input,readBlob:file=>file==='package.json'?read('package.json'):readBlob(file)}),/application_content_rejected/);
+  for(const changed of ['package.json','scripts/booking-atomic-postgres-acceptance.mjs'])
+    assert.throws(()=>assertBookingReleaseClosure({...input,readBlob:file=>file===changed?read(changed):readBlob(file)}),/application_content_rejected/);
 });
 
 function dry(){return {ok:true,mode:'dry_run',status:'dry_run',databaseContainer:identity.containerName,
