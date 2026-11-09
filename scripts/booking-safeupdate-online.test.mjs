@@ -59,12 +59,12 @@ test('only exact approved migration bytes are accepted and application files are
   assert.ok(bookingSafeupdateAllowedFiles.every(f=>!f.startsWith('src/')&&!f.endsWith('database-migrate.yml')));
 });
 
-test('historical fixture matches its original approved pin while the old lane still rejects the new package',()=>{
+test('historical fixture matches its original approved pin while the old lane still rejects current application edits',()=>{
   const sealed=JSON.parse(read('scripts/test-support/booking-ci-source-base.json'));
   const readBlob=file=>file==='.github/workflows/ci.yml'?sealed.workflow:readReviewedApplicationFixture(file);
   const input={baseline:BOOKING_RELEASE_BASELINE,files:[...BOOKING_APPLICATION_FILES,...BOOKING_TOOL_FILES],readBlob};
   assert.match(assertBookingReleaseClosure(input),/^[a-f0-9]{64}$/);
-  for(const changed of ['package.json','scripts/booking-atomic-postgres-acceptance.mjs'])
+  for(const changed of ['package.json','scripts/booking-atomic-postgres-acceptance.mjs','src/components/admin/BookingWorkbenchDialog.tsx','scripts/booking-atomic-preparation-contract.test.mjs'])
     assert.throws(()=>assertBookingReleaseClosure({...input,readBlob:file=>file===changed?read(changed):readBlob(file)}),/application_content_rejected/);
 });
 

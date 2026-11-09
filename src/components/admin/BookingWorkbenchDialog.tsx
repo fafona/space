@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type TouchEventHandler } from "react";
 import { createPortal } from "react-dom";
+import RecurringBookingTimeRanges from "@/components/admin/RecurringBookingTimeRanges";
 import { useI18n } from "@/components/I18nProvider";
 import BookingTimeZoneSelect from "@/components/admin/BookingTimeZoneSelect";
 import { readBookingTimeZoneDefault, type BookingTimeZoneDefault } from "@/lib/merchantBookingTimeZoneOptions";
@@ -903,18 +904,13 @@ export default function BookingWorkbenchDialog({
     setSectionView("home");
   }, [onClose, sectionView]);
 
-  const updateRecurringRule = (weekday: number, patch: { allDay?: boolean; timeRangesText?: string }) => {
+  const updateRecurringRule = (weekday: number, patch: { allDay?: boolean; timeRanges?: string[] }) => {
     setDraft((current) => {
       const currentRule = current.recurringRules.find((item) => item.weekday === weekday) ?? null;
       const nextAllDay = patch.allDay ?? currentRule?.allDay ?? false;
       const nextTimeRanges =
-        typeof patch.timeRangesText === "string"
-          ? normalizeMerchantBookingTimeRangeOptions(
-              patch.timeRangesText
-                .split(",")
-                .map((item) => item.trim())
-                .filter(Boolean),
-            )
+        patch.timeRanges
+          ? normalizeMerchantBookingTimeRangeOptions(patch.timeRanges)
           : currentRule?.timeRanges ?? [];
       const nextRules = current.recurringRules.filter((item) => item.weekday !== weekday);
       if (nextAllDay || nextTimeRanges.length > 0) {
@@ -1728,13 +1724,15 @@ export default function BookingWorkbenchDialog({
                                 全天停约
                               </label>
                             </div>
-                            <input
-                              type="text"
-                              className={`${inputClassName} mt-3`}
-                              placeholder="例如 13:00-18:00,19:30-21:00"
-                              value={currentRule?.allDay ? "" : (currentRule?.timeRanges ?? []).join(", ")}
+                            <RecurringBookingTimeRanges
+                              key={`${siteId}:${weekday}:${currentRule?.allDay === true}`}
+                              weekdayLabel={label}
+                              timeRanges={currentRule?.timeRanges ?? []}
+                              inputClassName={inputClassName}
+                              mutedTextClassName={mutedTextClassName}
+                              darkMode={darkMode}
                               disabled={currentRule?.allDay === true}
-                              onChange={(event) => updateRecurringRule(weekday, { timeRangesText: event.target.value })}
+                              onChange={(timeRanges) => updateRecurringRule(weekday, { timeRanges })}
                             />
                           </div>
                         );
