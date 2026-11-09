@@ -22,6 +22,16 @@ export function memberOperationUsesProductCheckout(type: string, redemptionItemI
   return type === "redeem" && Boolean(redemptionItemId.trim());
 }
 
+/** Recovery belongs to an explicit redemption flow, never the member list or recharge. */
+export function memberOperationShowsCheckoutRecovery(
+  type: string,
+  redemptionItemId: string,
+  snapshot: Pick<MemberCheckoutRecoverySnapshot, "phase" | "checkout">,
+) {
+  return type === "redeem" && (memberOperationUsesProductCheckout(type, redemptionItemId) ||
+    snapshot.phase === "error" || Boolean(snapshot.checkout));
+}
+
 export function readMemberScopedKeyword(scope: object, valueScope: object, keyword: string) {
   return scope === valueScope ? keyword : "";
 }

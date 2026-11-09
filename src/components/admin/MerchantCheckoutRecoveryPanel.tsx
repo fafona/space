@@ -21,6 +21,11 @@ export default function MerchantCheckoutRecoveryPanel({ snapshot, onRefresh, onA
       {checkout?.status === "pending" ? <>
         <p>仅使用服务器保存的原单，不需要重新选择会员或商品；未完成的结算仍需通过余额、库存与权限检查。</p>
         <p>放弃仅针对尚未完成的原单；若已经完成，将显示原结果，不会撤销扣减。</p>
+        {checkout.pendingCart ? <div className="space-y-1 rounded-xl border border-sky-200 bg-white p-3" aria-label="原单待结算商品">
+          {checkout.pendingCart.quote.lines.map((line, index) => <p key={index}>{line.name} × {line.quantity} · {line.subtotalPoints} 积分{line.couponDiscountLabel ? ` · ${line.couponDiscountLabel}` : ""}</p>)}
+          <p className="font-medium">原单合计：{checkout.pendingCart.quote.totalPoints} 积分</p>
+          <p className="text-xs text-slate-500">商品与金额来自服务器原单，不使用当前选择重新结算。</p>
+        </div> : null}
       </> : null}
       {checkout?.result ? <div className="space-y-1 rounded-xl border border-sky-200 bg-white p-3" aria-label="服务器确认的原单金额">
         <p>原单扣减 <strong>{checkout.result.totalPoints}</strong> 积分 · 原单积分 {checkout.result.beforePointBalance} → {checkout.result.afterPointBalance}</p>

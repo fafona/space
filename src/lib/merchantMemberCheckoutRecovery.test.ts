@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { createMemberCheckoutRecoveryController, memberCheckoutRecoveryError, memberOperationUsesProductCheckout, readMemberScopedKeyword, type MemberProductCheckoutRequest } from "./merchantMemberCheckoutRecovery";
+import { createMemberCheckoutRecoveryController, memberCheckoutRecoveryError, memberOperationShowsCheckoutRecovery, memberOperationUsesProductCheckout, readMemberScopedKeyword, type MemberProductCheckoutRequest } from "./merchantMemberCheckoutRecovery";
 import type { MerchantRedemptionCheckoutReceipt, MerchantRedemptionCheckoutSummary } from "./merchantRedemptionCheckout";
 import type { MerchantBusinessApiClient } from "./merchantBusinessApiClient";
 
@@ -14,6 +14,18 @@ const receipt: MerchantRedemptionCheckoutReceipt = {
 };
 const pending: MerchantRedemptionCheckoutSummary = { operationId: receipt.operationId, status: "pending", createdAt: receipt.createdAt, acknowledgedAt: null, result: null };
 const committed: MerchantRedemptionCheckoutSummary = { ...pending, status: "committed", result: receipt };
+
+test("recovery appears only in explicit redemption flows, including retired products, never membership browsing or recharge", () => {
+  for (const phase of ["checking", "ready", "error"] as const) {
+    for (const checkout of [null, pending, committed]) {
+      const snapshot = { phase, checkout };
+      assert.equal(memberOperationShowsCheckoutRecovery("list", "", snapshot), false);
+      assert.equal(memberOperationShowsCheckoutRecovery("recharge", "product-one", snapshot), false);
+      assert.equal(memberOperationShowsCheckoutRecovery("redeem", "product-one", snapshot), true);
+      assert.equal(memberOperationShowsCheckoutRecovery("redeem", "", snapshot), phase === "error" || Boolean(checkout));
+    }
+  }
+});
 const product: MemberProductCheckoutRequest = { action: "member_operation", type: "redeem", siteId: receipt.siteId,
   membershipId: "redacted-list-id", redemptionItemId: "product-one", redemptionQuantity: 1, points: 80, balanceAmount: 0, note: "Original note", rechargePlanId: "" };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
@@ -301,6 +313,13 @@ test("member component keeps product recovery separate from manual/recharge and 
   assert.match(memberSource, /readMemberScopedKeyword\(memberScope, visibleMemberScope, keyword\)/);
   assert.match(memberSource, /readMemberScopedKeyword\(memberScope, deferredMemberSearch\.scope, deferredMemberSearch\.keyword\)/);
   assert.match(memberSource, /init\.signal\?\.addEventListener\("abort", abortFromCaller/);
+  const listStart = memberSource.indexOf('return (\n    <section className={`space-y-4 ${className}`}>');
+  assert.ok(listStart >= 0);
+  const list = memberSource.slice(listStart, memberSource.indexOf('{operationDialog && operationMembership &&', listStart));
+  assert.doesNotMatch(list, /MerchantCheckoutRecoveryPanel/);
+  assert.match(memberSource, /memberOperationShowsCheckoutRecovery\(operationDialog\.type, operationRedemptionItemId, productCheckoutRecovery\)/);
+  const receiptEffect = memberSource.slice(memberSource.indexOf('const original = productCheckoutRecovery.checkout;'), memberSource.indexOf('const refreshOnVisible ='));
+  assert.doesNotMatch(receiptEffect, /setOperationDialog\(null\)/);
 });
 
 test("recovery never persists identity/cart/receipt or prints, and visible/focus handlers are cleaned up", () => {
