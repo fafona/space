@@ -1,6 +1,6 @@
 import { isMerchantRedemptionCheckoutReceipt, type MerchantRedemptionCheckoutReceipt, type MerchantRedemptionCheckoutSummary } from "@/lib/merchantRedemptionCheckout";
 import type { MerchantRedemptionReceiptData } from "@/lib/merchantReceiptPrint";
-import { isMerchantRedemptionPendingCart } from "@/lib/merchantRedemptionPendingCart";
+import { isMerchantRedemptionPendingCart, isMerchantRedemptionPendingMember } from "@/lib/merchantRedemptionPendingCart";
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -38,9 +38,17 @@ export function readCashierCheckoutSummary(payload: unknown, siteId: string): Me
     }
     pendingCart = structuredClone(data.pendingCart);
   }
+  let pendingMember: MerchantRedemptionCheckoutSummary["pendingMember"];
+  if (data.pendingMember !== undefined) {
+    if (data.status !== "pending" || (data.pendingMember !== null && !isMerchantRedemptionPendingMember(data.pendingMember))) {
+      throw new Error("redemption_checkout_response_invalid");
+    }
+    pendingMember = structuredClone(data.pendingMember);
+  }
   return { operationId: data.operationId, status: data.status as MerchantRedemptionCheckoutSummary["status"],
     createdAt: data.createdAt, acknowledgedAt: data.acknowledgedAt as string | null, result,
     ...(pendingCart ? { pendingCart } : {}),
+    ...(pendingMember === undefined ? {} : { pendingMember }),
   };
 }
 

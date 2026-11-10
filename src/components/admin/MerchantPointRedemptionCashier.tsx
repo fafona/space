@@ -1196,7 +1196,7 @@ export default function MerchantPointRedemptionCashier({
     pointBalance: selectedMember?.pointBalance ?? 0,
     balanceAmount: selectedMember?.balanceAmount ?? 0,
   };
-  const cashierMember = hasPendingCheckout ? pendingCheckoutCart?.member : selectedMember ? {
+  const cashierMember = hasPendingCheckout ? activeCheckoutRecovery?.checkout?.pendingMember : selectedMember ? {
     name: canViewCustomerData ? getMemberDisplayName(selectedMember) : "会员",
     memberNo: selectedMember.memberNo,
     pointBalance: selectedInsight.pointBalance,

@@ -34,7 +34,6 @@ export type MerchantRedemptionPendingCart = {
   siteId: string;
   operationId: string;
   quote: MerchantRedemptionCheckoutQuote;
-  member?: MerchantRedemptionPendingMember | null;
 };
 export type MerchantRedemptionCheckoutRequest = {
   membershipId: string;
@@ -51,6 +50,7 @@ export type MerchantRedemptionCheckoutSummary = {
   acknowledgedAt: string | null;
   result: MerchantRedemptionCheckoutReceipt | null;
   pendingCart?: MerchantRedemptionPendingCart;
+  pendingMember?: MerchantRedemptionPendingMember | null;
 };
 export type MerchantRedemptionCheckoutContext = MerchantRedemptionCheckoutSummary & {
   fingerprint: string;

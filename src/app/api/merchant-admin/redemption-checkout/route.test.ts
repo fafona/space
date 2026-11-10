@@ -82,10 +82,10 @@ test("GET scopes unresolved context to current actor and strips original request
   }));
   assert.equal(response.status, 200); assertPrivate(response);
   const body = await response.json();
-  assert.deepEqual(Object.keys(body.checkout).sort(), ["operationId", "status", "createdAt", "acknowledgedAt", "result", "pendingCart"].sort());
+  assert.deepEqual(Object.keys(body.checkout).sort(), ["operationId", "status", "createdAt", "acknowledgedAt", "result", "pendingCart", "pendingMember"].sort());
   assert.equal(body.checkout.status, "pending");
-  assert.deepEqual(body.checkout.pendingCart, { version: 1, siteId: SITE, operationId: OP, quote: context().request.quote,
-    member: { name: "会员", memberNo: "CARD-ONE", pointBalance: 90, balanceAmount: 20 } });
+  assert.deepEqual(body.checkout.pendingCart, { version: 1, siteId: SITE, operationId: OP, quote: context().request.quote });
+  assert.deepEqual(body.checkout.pendingMember, { name: "会员", memberNo: "CARD-ONE", pointBalance: 90, balanceAmount: 20 });
   assert.doesNotMatch(JSON.stringify(body), /PRIVATE-|fingerprint|membershipId|request/);
   assert.deepEqual(calls, ["auth", "read", "reauth"]);
 });
@@ -102,9 +102,9 @@ test("pending member uses the original actor-scoped membership, stays read-only 
     }, actor));
     assert.equal(response.status, 200); assertPrivate(response);
     const body = await response.json();
-    assert.equal(body.checkout.pendingCart.member.name, permitted ? "PRIVATE-NAME" : "会员");
-    assert.equal(body.checkout.pendingCart.member.memberNo, "CARD-ONE");
-    assert.deepEqual(Object.keys(body.checkout.pendingCart.member).sort(), ["memberNo", "name", "pointBalance", "balanceAmount"].sort());
+    assert.equal(body.checkout.pendingMember.name, permitted ? "PRIVATE-NAME" : "会员");
+    assert.equal(body.checkout.pendingMember.memberNo, "CARD-ONE");
+    assert.deepEqual(Object.keys(body.checkout.pendingMember).sort(), ["memberNo", "name", "pointBalance", "balanceAmount"].sort());
     assert.doesNotMatch(JSON.stringify(body), /Wrong member|PRIVATE-EMAIL|PRIVATE-ACCOUNT|PRIVATE-USER|PRIVATE-REQUEST|PRIVATE-SAVED|OTHER-TRANSACTION|PRIVATE-HISTORY/);
   }
 });
@@ -115,7 +115,7 @@ test("a missing or foreign-site original member is never replaced by another mem
       getMemberships: async () => ({ memberships, updatedAt: STAMP }),
     }));
     const body = await response.json();
-    assert.equal(body.checkout.pendingCart.member, null);
+    assert.equal(body.checkout.pendingMember, null);
     assert.deepEqual(body.checkout.pendingCart.quote, context().request.quote);
   }
 });

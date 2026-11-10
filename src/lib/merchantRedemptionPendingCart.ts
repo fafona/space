@@ -28,13 +28,12 @@ export function isMerchantRedemptionCheckoutQuote(value: unknown): value is Merc
 }
 
 export function isMerchantRedemptionPendingCart(value: unknown, siteId: string, operationId: string): value is MerchantRedemptionPendingCart {
-  return record(value) && Object.keys(value).every(key => ["version", "siteId", "operationId", "quote", "member"].includes(key)) &&
+  return record(value) && Object.keys(value).every(key => ["version", "siteId", "operationId", "quote"].includes(key)) &&
     value.version === 1 && value.siteId === siteId && value.operationId === operationId &&
-    /^[A-Za-z0-9_.:-]{1,120}$/.test(operationId) && isMerchantRedemptionCheckoutQuote(value.quote) &&
-    (value.member === undefined || value.member === null || isMerchantRedemptionPendingMember(value.member));
+    /^[A-Za-z0-9_.:-]{1,120}$/.test(operationId) && isMerchantRedemptionCheckoutQuote(value.quote);
 }
 
-function isMerchantRedemptionPendingMember(value: unknown): value is MerchantRedemptionPendingMember {
+export function isMerchantRedemptionPendingMember(value: unknown): value is MerchantRedemptionPendingMember {
   return record(value) && Object.keys(value).length === 4 &&
     Object.keys(value).every(key => ["memberNo", "name", "pointBalance", "balanceAmount"].includes(key)) &&
     text(value.memberNo) && Boolean(value.memberNo.trim()) && text(value.name) && Boolean(value.name.trim()) &&
@@ -42,18 +41,20 @@ function isMerchantRedemptionPendingMember(value: unknown): value is MerchantRed
     Number.isFinite(value.balanceAmount) && value.balanceAmount >= 0 && value.balanceAmount <= Number.MAX_SAFE_INTEGER;
 }
 
+export function buildMerchantRedemptionPendingMember(member: MerchantRedemptionPendingMember | null) {
+  if (member !== null && !isMerchantRedemptionPendingMember(member)) throw new Error("redemption_checkout_response_invalid");
+  return structuredClone(member);
+}
+
 /** Called only after actor-scoped lookup and reauthorization. No raw request,
  * membership IDs, claim/settlement tokens, notes or private versions are exposed. */
 export function buildMerchantRedemptionPendingCart(
   context: MerchantRedemptionCheckoutContext,
   siteId: string,
-  member?: MerchantRedemptionPendingMember | null,
 ): MerchantRedemptionPendingCart {
   if (context.status !== "pending" || context.acknowledgedAt !== null ||
-    !/^[A-Za-z0-9_.:-]{1,120}$/.test(context.operationId) || !isMerchantRedemptionCheckoutQuote(context.request.quote) ||
-    (member !== undefined && member !== null && !isMerchantRedemptionPendingMember(member))) {
+    !/^[A-Za-z0-9_.:-]{1,120}$/.test(context.operationId) || !isMerchantRedemptionCheckoutQuote(context.request.quote)) {
     throw new Error("redemption_checkout_response_invalid");
   }
-  return { version: 1, siteId, operationId: context.operationId, quote: structuredClone(context.request.quote),
-    ...(member === undefined ? {} : { member: structuredClone(member) }) };
+  return { version: 1, siteId, operationId: context.operationId, quote: structuredClone(context.request.quote) };
 }

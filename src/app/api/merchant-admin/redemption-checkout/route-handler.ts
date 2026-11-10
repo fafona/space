@@ -9,7 +9,7 @@ import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { redactMerchantMembershipForCashier } from "@/lib/merchantMembershipBusinessPermissions";
 import { getMerchantMembershipsSnapshot, retryMerchantMembershipRedemptionCheckout } from "@/lib/merchantMemberships.server";
 import { summarizeMerchantRedemptionCheckout } from "@/lib/merchantRedemptionCheckout";
-import { buildMerchantRedemptionPendingCart } from "@/lib/merchantRedemptionPendingCart";
+import { buildMerchantRedemptionPendingCart, buildMerchantRedemptionPendingMember } from "@/lib/merchantRedemptionPendingCart";
 import { readMerchantRedemptionCheckoutError } from "@/lib/merchantRedemptionCheckoutErrors";
 import {
   ackMerchantRedemptionCheckout,
@@ -89,7 +89,10 @@ export async function handleMerchantRedemptionCheckoutGet(
     if (checkout?.status === "pending" && summary) {
       const member = members?.memberships.find(item => item.siteId === siteId && item.id === checkout.membershipId);
       const canViewCustomerData = currentActor.type === "owner" || currentActor.businessPermissions.includes("redemptions.customer_data.view");
-      summary.pendingCart = buildMerchantRedemptionPendingCart(checkout, siteId, member ? {
+      summary.pendingCart = buildMerchantRedemptionPendingCart(checkout, siteId);
+      // Keep the existing cart envelope byte-shape compatible with open older
+      // clients, whose cart validator deliberately rejects unknown keys.
+      summary.pendingMember = buildMerchantRedemptionPendingMember(member ? {
         memberNo: member.memberNo,
         name: !member.profileVisible ? "已退会会员" : canViewCustomerData ? (member.nickname || member.name || member.memberNo).slice(0, 200) : "会员",
         pointBalance: member.pointBalance,
