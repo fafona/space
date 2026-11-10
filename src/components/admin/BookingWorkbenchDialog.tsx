@@ -2,8 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type TouchEventHandler } from "react";
 import { createPortal } from "react-dom";
+import RecurringBookingTimeRanges from "@/components/admin/RecurringBookingTimeRanges";
 import { useI18n } from "@/components/I18nProvider";
+import BookingTimeZoneSelect from "@/components/admin/BookingTimeZoneSelect";
+import { readBookingTimeZoneDefault, type BookingTimeZoneDefault } from "@/lib/merchantBookingTimeZoneOptions";
 import { showGlobalToast } from "@/lib/globalToast";
+import { getBookingWorkbenchSaveFailure, type BookingWorkbenchSaveFailure } from "@/lib/merchantBookingWorkbenchSaveFailure";
 import { getMerchantBookingFieldText, getMerchantBookingStatusText } from "@/lib/merchantBookingLocale";
 import { MERCHANT_BOOKING_STATUSES, type MerchantBookingRecord, type MerchantBookingStatus } from "@/lib/merchantBookings";
 import {
@@ -543,10 +547,15 @@ export default function BookingWorkbenchDialog({
   );
   const emailLanguageOptions = useMemo(() => getMerchantBookingCustomerEmailLanguageOptions(), []);
   const [draft, setDraft] = useState<MerchantBookingWorkbenchSettings>(() => createDefaultMerchantBookingWorkbenchSettings());
+  const [timeZoneDefault, setTimeZoneDefault] = useState<BookingTimeZoneDefault>({ countryCode: "", timeZone: "" });
+  const [timeZoneDefaultDismissed, setTimeZoneDefaultDismissed] = useState(false);
+  const suggestedTimeZone = !timeZoneDefaultDismissed && !draft.timeZone ? timeZoneDefault.timeZone : "";
+  const selectedTimeZone = draft.timeZone || suggestedTimeZone;
   const [dashboard, setDashboard] = useState<WorkbenchDashboard | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [saveFailures, setSaveFailures] = useState<Partial<Record<"settings" | "automation", BookingWorkbenchSaveFailure>>>({});
   const [sectionView, setSectionView] = useState<WorkbenchSectionView>("home");
   const [employeeCalendarSyncEnabled, setEmployeeCalendarSyncEnabled] = useState(false);
   const [employeeCalendarSyncTokenUpdatedAt, setEmployeeCalendarSyncTokenUpdatedAt] = useState("");
@@ -564,6 +573,7 @@ export default function BookingWorkbenchDialog({
   const lastFailedSectionDraftRef = useRef({ settings: "", automation: "" });
   const lastSavedSectionDraftRef = useRef({ settings: "", automation: "" });
   const securityGenerationRef = useRef(0);
+  const saveViewGenerationRef = useRef(0);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -571,6 +581,7 @@ export default function BookingWorkbenchDialog({
 
   useEffect(() => {
     securityGenerationRef.current += 1;
+    saveViewGenerationRef.current += 1;
     hasLoadedRef.current = false;
     lastFailedDraftRef.current = "";
     lastSavedDraftRef.current = "";
@@ -579,10 +590,13 @@ export default function BookingWorkbenchDialog({
     const emptyDraft = createDefaultMerchantBookingWorkbenchSettings();
     draftRef.current = emptyDraft;
     setDraft(emptyDraft);
+    setTimeZoneDefault({ countryCode: "", timeZone: "" });
+    setTimeZoneDefaultDismissed(false);
     setDashboard(null);
     setLoading(false);
     setSaving(false);
     setError("");
+    setSaveFailures({});
     setEmployeeCalendarSyncEnabled(false);
     setEmployeeCalendarSyncTokenUpdatedAt("");
     setSectionView("home");
@@ -594,6 +608,7 @@ export default function BookingWorkbenchDialog({
 
   useEffect(() => {
     if (!open) {
+      saveViewGenerationRef.current += 1;
       hasLoadedRef.current = false;
       if (autosaveTimerRef.current) {
         clearTimeout(autosaveTimerRef.current);
@@ -615,13 +630,19 @@ export default function BookingWorkbenchDialog({
     let cancelled = false;
     hasLoadedRef.current = false;
     lastFailedDraftRef.current = "";
+    lastFailedSectionDraftRef.current = { settings: "", automation: "" };
     if (autosaveTimerRef.current) {
       clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = null;
     }
     const load = async () => {
+      saveViewGenerationRef.current += 1;
       setLoading(true);
+      setSaving(false);
       setError("");
+      setTimeZoneDefault({ countryCode: "", timeZone: "" });
+      setTimeZoneDefaultDismissed(false);
+      setSaveFailures({});
       try {
         const response = await requestWorkbenchApi(`/api/bookings/workbench?siteId=${encodeURIComponent(siteId)}`, {
           cache: "no-store",
@@ -635,6 +656,7 @@ export default function BookingWorkbenchDialog({
               };
               message?: string;
               dashboard?: WorkbenchDashboard;
+              timeZoneDefault?: BookingTimeZoneDefault;
               error?: string;
             }
           | null;
@@ -666,6 +688,7 @@ export default function BookingWorkbenchDialog({
           draftRef.current = normalized;
           hasLoadedRef.current = true;
           setDraft(normalized);
+          setTimeZoneDefault(readBookingTimeZoneDefault(json.timeZoneDefault));
           setDashboard(json.dashboard ?? null);
           setEmployeeCalendarSyncEnabled(
             employeeMode && json.settings?.calendarSyncEnabled === true,
@@ -688,6 +711,7 @@ export default function BookingWorkbenchDialog({
     void load();
     return () => {
       cancelled = true;
+      saveViewGenerationRef.current += 1;
       controller.abort();
     };
   }, [
@@ -880,18 +904,13 @@ export default function BookingWorkbenchDialog({
     setSectionView("home");
   }, [onClose, sectionView]);
 
-  const updateRecurringRule = (weekday: number, patch: { allDay?: boolean; timeRangesText?: string }) => {
+  const updateRecurringRule = (weekday: number, patch: { allDay?: boolean; timeRanges?: string[] }) => {
     setDraft((current) => {
       const currentRule = current.recurringRules.find((item) => item.weekday === weekday) ?? null;
       const nextAllDay = patch.allDay ?? currentRule?.allDay ?? false;
       const nextTimeRanges =
-        typeof patch.timeRangesText === "string"
-          ? normalizeMerchantBookingTimeRangeOptions(
-              patch.timeRangesText
-                .split(",")
-                .map((item) => item.trim())
-                .filter(Boolean),
-            )
+        patch.timeRanges
+          ? normalizeMerchantBookingTimeRangeOptions(patch.timeRanges)
           : currentRule?.timeRanges ?? [];
       const nextRules = current.recurringRules.filter((item) => item.weekday !== weekday);
       if (nextAllDay || nextTimeRanges.length > 0) {
@@ -1006,6 +1025,7 @@ export default function BookingWorkbenchDialog({
         return null;
       }
       const generation = securityGenerationRef.current;
+      const saveViewGeneration = saveViewGenerationRef.current;
       if (autosaveTimerRef.current) {
         clearTimeout(autosaveTimerRef.current);
         autosaveTimerRef.current = null;
@@ -1019,6 +1039,7 @@ export default function BookingWorkbenchDialog({
             effectivePermissions,
           )
         : sourceDraft;
+      let failureForAttempt: BookingWorkbenchSaveFailure | null = null;
       try {
         const response = await requestWorkbenchApi("/api/bookings/workbench", {
           method: "PATCH",
@@ -1034,15 +1055,31 @@ export default function BookingWorkbenchDialog({
           | {
               ok?: boolean;
               message?: string;
+              error?: string;
+              reason?: string;
+              reference?: string;
               settings?: MerchantBookingWorkbenchSettings & {
                 calendarSyncEnabled?: boolean;
               };
             }
           | null;
         if (!response.ok || !json?.ok || !json.settings) {
-          throw new Error(json?.message || "工作台设置保存失败");
+          if (section === "calendar") throw new Error(json?.message || "工作台设置保存失败");
+          const failure = getBookingWorkbenchSaveFailure(response.status, json, locale);
+          failureForAttempt = failure;
+          throw new Error(failure.message);
         }
-        if (securityGenerationRef.current !== generation) return null;
+        if (securityGenerationRef.current !== generation || saveViewGenerationRef.current !== saveViewGeneration) return null;
+        if (section !== "calendar") {
+          // A successful retry also clears the owner's failed fingerprint;
+          // otherwise returning to that exact previous colour never auto-saves.
+          lastFailedSectionDraftRef.current[section] = "";
+          setSaveFailures((current) => {
+            const next = { ...current };
+            delete next[section];
+            return next;
+          });
+        }
         const normalized = normalizeMerchantBookingWorkbenchSettings(
           employeeMode
             ? createMerchantBookingEmployeeWorkbenchDraft(
@@ -1058,7 +1095,6 @@ export default function BookingWorkbenchDialog({
                 normalized,
                 section,
               );
-            lastFailedSectionDraftRef.current[section] = "";
           }
           setEmployeeCalendarSyncEnabled(
             json.settings.calendarSyncEnabled === true,
@@ -1086,7 +1122,7 @@ export default function BookingWorkbenchDialog({
         onSettingsSaved?.(normalized);
         return normalized;
       } catch (saveError) {
-        if (securityGenerationRef.current !== generation) return null;
+        if (securityGenerationRef.current !== generation || saveViewGenerationRef.current !== saveViewGeneration) return null;
         lastFailedDraftRef.current = sourceSerialized;
         if (section !== "calendar") {
           lastFailedSectionDraftRef.current[section] =
@@ -1095,16 +1131,23 @@ export default function BookingWorkbenchDialog({
               section,
             );
         }
-        setError(saveError instanceof Error ? saveError.message : "工作台设置保存失败");
+        if (section === "calendar") {
+          setError(saveError instanceof Error ? saveError.message : "工作台设置保存失败");
+        } else {
+          const failure = failureForAttempt ?? getBookingWorkbenchSaveFailure(0, null, locale);
+          setSaveFailures((current) => ({ ...current, [section]: failure }));
+          setError(failure.message);
+        }
         return null;
       } finally {
-        if (securityGenerationRef.current === generation) setSaving(false);
+        if (securityGenerationRef.current === generation && saveViewGenerationRef.current === saveViewGeneration) setSaving(false);
       }
     },
     [
       canViewBookings,
       effectivePermissions,
       employeeMode,
+      locale,
       onSettingsSaved,
       requestWorkbenchApi,
       siteId,
@@ -1443,6 +1486,19 @@ export default function BookingWorkbenchDialog({
 
         <div className={`min-h-0 flex-1 overflow-y-auto px-4 pt-4 sm:px-6 sm:py-5 ${pageContentBottomClassName}`}>
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-4">
+            {(["settings", "automation"] as const).map((failedSection) => {
+              const failure = saveFailures[failedSection];
+              if (!failure || !canManageMerchantBookingWorkbenchSection(effectivePermissions, failedSection)) return null;
+              return <div key={failedSection} role="alert" className={`rounded-2xl border p-4 ${darkMode ? "border-rose-800 bg-rose-950/40 text-rose-100" : "border-rose-200 bg-rose-50 text-rose-900"}`}>
+                <p className="text-sm font-semibold">{locale.startsWith("zh") ? "工作台设置尚未确认保存" : locale.startsWith("es") ? "Guardado pendiente de confirmar" : "Workbench save not confirmed"}</p>
+                <p className="mt-1 text-sm leading-6">{failure.message}</p>
+                {failure.reference ? <p className="mt-1 break-all text-xs opacity-70">{locale.startsWith("zh") ? "排查编号" : locale.startsWith("es") ? "Referencia" : "Reference"}: {failure.reference}</p> : null}
+                <button type="button" className={`mt-3 rounded-xl border px-4 py-2 text-sm font-medium disabled:opacity-50 ${darkMode ? "border-rose-700 bg-slate-900" : "border-rose-200 bg-white"}`} disabled={loading || saving}
+                  onClick={() => { void saveWorkbench({ section: failedSection, sourceDraft: draftRef.current }); }}>
+                  {saving ? (locale.startsWith("zh") ? "正在保存…" : locale.startsWith("es") ? "Guardando…" : "Saving…") : (locale.startsWith("zh") ? "重试保存" : locale.startsWith("es") ? "Reintentar guardado" : "Retry saving")}
+                </button>
+              </div>;
+            })}
             {sectionView === "home" ? (
               <>
                 <div className="space-y-2 md:hidden">
@@ -1581,12 +1637,23 @@ export default function BookingWorkbenchDialog({
                 <div className="space-y-4">
                   <section className={`rounded-3xl border p-5 ${rulePanelClassName("sky")}`}>
                     <div className="text-base font-semibold">提前预约 / 截止规则</div>
-                    <label className="mt-4 block space-y-1">
-                      <span className="text-sm">新预约使用的商户时区（IANA）</span>
-                      <input className={inputClassName} value={draft.timeZone ?? ""} placeholder="例如 Europe/Madrid 或 Atlantic/Canary"
-                        onChange={(event) => setDraft((current) => ({ ...current, timeZone: event.target.value }))} />
-                      <span className="block text-xs opacity-70">只影响新预约和明确改期的预约，不换算历史记录。留空保持旧行为；请根据门店所在地设置，不使用访客手机的时区。</span>
-                    </label>
+                    <BookingTimeZoneSelect key={`${siteId}:${permissionFingerprint}`} value={selectedTimeZone} countryCode={timeZoneDefault.countryCode}
+                      locale={locale || "zh-CN"} className={inputClassName} disabled={loading || saving}
+                      onChange={(timeZone) => {
+                        setTimeZoneDefaultDismissed(true);
+                        setDraft((current) => ({ ...current, timeZone }));
+                      }} />
+                    {suggestedTimeZone ? <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <span>{locale.startsWith("es") ? "Preseleccionada según la ubicación guardada. Confirma para guardarla." : locale.startsWith("zh") ? "已按商户所在地预选，确认后才会保存。" : "Preselected from your saved merchant location. Confirm to save."}</span>
+                      <button type="button" className={`rounded-xl border px-3 py-2 font-medium disabled:opacity-50 ${darkMode ? "border-slate-600 bg-slate-800 text-slate-100" : "border-sky-200 bg-white text-sky-800"}`} disabled={saving}
+                        onClick={() => {
+                          setTimeZoneDefaultDismissed(true);
+                          setDraft((current) => ({ ...current, timeZone: suggestedTimeZone }));
+                        }}>{locale.startsWith("es") ? "Usar esta zona horaria" : locale.startsWith("zh") ? "使用此时区" : "Use this time zone"}</button>
+                    </div> : !selectedTimeZone ? <p className="mt-2 text-xs opacity-70">
+                      {locale.startsWith("es") ? "Selecciona la zona horaria de la tienda; la ubicación guardada no determina una zona única." : locale.startsWith("zh") ? "尚未设置时区；所在地信息不足以唯一判断时，请手动选择门店时区。" : "No time zone set. Please choose your store’s time zone when the saved location is ambiguous."}
+                    </p> : null}
+                    <p className="mt-2 text-xs opacity-70">{locale.startsWith("es") ? "Solo afecta a reservas nuevas o reprogramadas explícitamente; no convierte el historial ni usa la zona del teléfono. La selección se guarda automáticamente." : locale.startsWith("zh") ? "只影响新预约和明确改期的预约，不换算历史记录，不使用访客手机的时区。手动选择后自动保存。" : "Only affects new or explicitly rescheduled bookings, not historical records or the visitor’s phone time zone. Manual selections save automatically."}</p>
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
                       <label className="min-w-0 space-y-1">
                         <span className="text-sm">最少提前分钟</span>
@@ -1657,13 +1724,15 @@ export default function BookingWorkbenchDialog({
                                 全天停约
                               </label>
                             </div>
-                            <input
-                              type="text"
-                              className={`${inputClassName} mt-3`}
-                              placeholder="例如 13:00-18:00,19:30-21:00"
-                              value={currentRule?.allDay ? "" : (currentRule?.timeRanges ?? []).join(", ")}
+                            <RecurringBookingTimeRanges
+                              key={`${siteId}:${weekday}:${currentRule?.allDay === true}`}
+                              weekdayLabel={label}
+                              timeRanges={currentRule?.timeRanges ?? []}
+                              inputClassName={inputClassName}
+                              mutedTextClassName={mutedTextClassName}
+                              darkMode={darkMode}
                               disabled={currentRule?.allDay === true}
-                              onChange={(event) => updateRecurringRule(weekday, { timeRangesText: event.target.value })}
+                              onChange={(timeRanges) => updateRecurringRule(weekday, { timeRanges })}
                             />
                           </div>
                         );

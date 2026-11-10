@@ -31,6 +31,58 @@ function makeSettings(): MerchantBookingWorkbenchSettings {
   };
 }
 
+function makeLocationSite(id = SITE_ID) {
+  return { id, location: { countryCode: "ES", provinceCode: "41", province: "Sevilla", city: "Sevilla" } } as
+    NonNullable<Awaited<ReturnType<MerchantBookingWorkbenchRouteDependencies["loadSnapshotSite"]>>>;
+}
+
+test("time-zone default is authorized merchant metadata, never a settings write or an override", async () => {
+  for (const savedZone of ["", "Atlantic/Canary"]) {
+    const stored = { ...makeSettings(), timeZone: savedZone };
+    const response = await handleMerchantBookingWorkbenchGet(getRequest(), {
+      async authorizeActor() { return makeEmployee(["bookings.view", "bookings.settings.manage"]); },
+      async loadSettings(siteId) { assert.equal(siteId, SITE_ID); return stored; },
+      async buildDashboard() { return { pushDeviceCount: 0, automation: getMerchantBookingAutomationRuntimeSnapshot() }; },
+      async loadSnapshotSite(siteId) { assert.equal(siteId, SITE_ID); return makeLocationSite(); },
+      async updateSettings() { assert.fail("GET must not persist defaults"); },
+    });
+    const json = await readJsonRecord(response);
+    assert.equal(response.status, 200);
+    assert.deepEqual(json.timeZoneDefault, { countryCode: "ES", timeZone: "Europe/Madrid" });
+    assert.equal((json.settings as Record<string, unknown>).timeZone, savedZone);
+    assert.equal(stored.timeZone, savedZone);
+    assert.equal(JSON.stringify(json).includes("Sevilla"), false);
+    assertPrivateHeaders(response);
+  }
+});
+
+test("time-zone defaults fail safely for unavailable or mismatched merchant metadata", async () => {
+  for (const failure of ["missing", "wrong-site", "unavailable"]) {
+    const response = await handleMerchantBookingWorkbenchGet(getRequest(), {
+      async authorizeActor() { return makeEmployee(["bookings.view", "bookings.settings.manage"]); },
+      async loadSettings() { return makeSettings(); },
+      async buildDashboard() { return { pushDeviceCount: 0, automation: getMerchantBookingAutomationRuntimeSnapshot() }; },
+      async loadSnapshotSite() {
+        if (failure === "unavailable") throw new Error("synthetic lookup failure");
+        return failure === "wrong-site" ? makeLocationSite("20000000") : null;
+      },
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await readJsonRecord(response)).timeZoneDefault, { countryCode: "", timeZone: "" });
+  }
+});
+
+test("view-only employees do not read merchant geography or receive time-zone defaults", async () => {
+  const response = await handleMerchantBookingWorkbenchGet(getRequest(), {
+    async authorizeActor() { return makeEmployee(["bookings.view"]); },
+    async loadSettings() { return makeSettings(); },
+    async buildDashboard() { return { pushDeviceCount: 0, automation: getMerchantBookingAutomationRuntimeSnapshot() }; },
+    async loadSnapshotSite() { assert.fail("requires settings permission"); },
+  });
+  assert.equal(response.status, 200);
+  assert.ok(!("timeZoneDefault" in await readJsonRecord(response)));
+});
+
 function makeEmployee(
   permissions: MerchantStaffBusinessPermission[],
 ): MerchantBusinessActor {
@@ -107,6 +159,7 @@ test("workbench GET projects settings, dashboard, and secrets by permission", as
     async loadSettings() {
       return makeSettings();
     },
+    async loadSnapshotSite() { return null; },
     async buildDashboard() {
       return {
         pushDeviceCount: 7,
@@ -187,6 +240,7 @@ test("owner workbench remains compatible and can read its calendar bearer token"
     async loadSettings() {
       return makeSettings();
     },
+    async loadSnapshotSite() { return null; },
     async buildDashboard() {
       return {
         pushDeviceCount: 0,
@@ -435,4 +489,29 @@ test("workbench PATCH rejects cross-origin requests before authorization", async
   assert.equal(response.status, 403);
   assert.equal(authorizations, 0);
   assertPrivateHeaders(response);
+});
+
+test("failed save exposes a safe diagnostic reference, not database or customer payloads", async () => {
+  const warnings: unknown[][] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args); };
+  try {
+    for (const message of ["booking_atomic_conflict", "private@example.invalid raw-secret-in-provider-body"]) {
+      const response = await handleMerchantBookingWorkbenchPatch(patchRequest({ siteId: SITE_ID, section: "settings", settings: makeSettings() }), {
+        async authorizeActor() { return makeEmployee(["bookings.view", "bookings.settings.manage"]); },
+        async loadSnapshotSite() { return null; },
+        async updateSettings() { throw new Error(message); },
+      });
+      const json = await readJsonRecord(response);
+      assert.equal(response.status, 503); assertPrivateHeaders(response);
+      assert.equal(json.error, "booking_workbench_failed");
+      assert.equal(json.reason, message === "booking_atomic_conflict" ? message : "booking_workbench_failed");
+      assert.match(String(json.reference), /^[a-f0-9]{16}$/);
+      const warning = warnings.at(-1)?.[1] as Record<string, unknown>;
+      assert.equal(warning.reference, json.reference);
+      assert.equal(warning.operation, "save"); assert.equal(warning.section, "settings");
+      assert.equal(JSON.stringify([warnings, json]).includes("raw-secret"), false);
+      assert.equal(JSON.stringify([warnings, json]).includes("private@example.invalid"), false);
+    }
+  } finally { console.warn = warn; }
 });

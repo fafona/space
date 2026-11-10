@@ -1,4 +1,4 @@
-import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertApplicationReleasePackage} from './application-release-policy.mjs';
+import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertApplicationReleasePackage,assertRecordedSchemaDatabase} from './application-release-compatibility.mjs';
 import {applicationPublicationProof} from './application-release-publication-proof.mjs';
 import {parseSourceTree,sourceGit,assertReviewFresh,inspectPinnedExecutionSource} from './release-toolchain-source.mjs';
 import {commitApplicationRetention} from './application-release-retention.mjs';
@@ -22,6 +22,7 @@ import {LOGIN_RELEASE_LANE,LOGIN_RELEASE_BASELINE,LOGIN_FOCUSED_TESTS,assertLogi
 import {merchantLoginReleaseProbeFetch} from './merchant-login-release-probe.mjs';
 import {LOGIN_UNBUILT_REPAIR,loginUnitTestEnvironment,resumeLoginUnbuiltCandidate,assertLoginUnbuiltRepairCandidate} from './merchant-login-unbuilt-repair.mjs';
 import {spawnSync} from 'node:child_process';
+import {latestBookingVerifierCertificate,REBOOT_WORKER_NAME} from './release-toolchain-host-reboot-contract.mjs';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {existsSync,readFileSync,writeFileSync,mkdirSync,renameSync,realpathSync,lstatSync,readdirSync,readlinkSync,copyFileSync,constants,statfsSync} from 'node:fs';
 import {fileURLToPath,pathToFileURL} from 'node:url';
@@ -32,7 +33,8 @@ import {planStaticPermissionRecovery} from './online-static-recovery.mjs';
 import {applyProductionDatabaseMigrations} from './apply-production-database-migrations.mjs';
 import {createProductionDatabaseBackup} from './create-production-database-backup.mjs';
 import {verifyProductionDatabaseBackup} from './verify-production-database-backup.mjs';
-import {normalizeRetirementProcess,readOnlineRetirementCertificates} from './online-release-retirement.mjs';
+import {readOnlineRetirementCertificates} from './online-release-retirement.mjs';
+import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess} from './release-toolchain-process-observation.mjs';
 import {assertRetainedOnlineProcesses} from './online-release-retirement-policy.mjs';
 import {readOnlineRollingRetentions,assertRollingRetainedProcesses,assertRollingStateHistory} from './online-release-rolling.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
@@ -664,6 +666,7 @@ function verifyApplicationRelease(s,buildRequired=false,p){
  if(s.target!==target||s.directory!==`${app}.web-releases/${target.slice(0,12)}-online`||s.name!==`merchant-space-online-${target.slice(0,12)}`||s.oldDirectory!==`${app}.web-releases/${s.baseline.slice(0,12)}-online`||s.previousActive?.target!==s.baseline)fail('application_release_state_identity');
  for(const directory of [s.directory,s.oldDirectory]){bookingResumeOwnedPath(directory);bookingResumeOwnedPath(`${directory}/node_modules`);}
  const closure=applicationReleaseClosure(s.target,s.baseline);
+ if(closure.manifest.schemaVersion===2)assertRecordedSchemaDatabase(closure.manifest);
  if(closure.manifestSha256!==s.applicationManifestSha256||run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail('application_release_source_changed');
  for(const directory of [s.directory,s.oldDirectory])if(hash(safeFile(`${directory}/package-lock.json`))!==s.applicationDependencyLockSha256)fail('application_release_dependencies_changed');
  const env=candidateEnvironment(s),prior=pm().find(item=>item.name===s.oldName);
@@ -686,8 +689,8 @@ function verifyApplicationRelease(s,buildRequired=false,p){
  }
 }
 function assertApplicationWorkerReady(all){
- const history=readOnlineRetentionHistory(),certificate=history.entries.filter(entry=>entry.kind==='booking-worker').at(-1);
- const worker=certificate&&all.find(item=>item.name===certificate.workerRelease.priorWorker.name);
+ const history=readOnlineRetentionHistory(),certificate=latestBookingVerifierCertificate(history);
+ const worker=certificate&&all.find(item=>item.name===(certificate.workerRelease?.priorWorker.name??REBOOT_WORKER_NAME));
  if(!worker||worker.pm2_env.status!=='online'||worker.pm2_env.pm_exec_path!==`/var/lib/faolla-online-code/${certificate.toolRevision}/scripts/booking-atomic-worker.mjs`)fail('application_release_worker_upgrade_required');
  const directory=`/var/lib/faolla-online-code/${certificate.toolRevision}`;
  for(const file of ['scripts/booking-atomic-worker.mjs','scripts/application-release-policy.mjs']){
@@ -699,8 +702,8 @@ async function finishApplicationRelease(s,heldLock){
  if(s.lane!==APPLICATION_RELEASE_LANE||s.status!=='active')fail('application_release_finish_phase');
  verifyApplicationRelease(s,true);verifyCandidate(s);configUnchanged(s,true);
  await settleOnlineRetention(s,heldLock);await verifyBase(s);
- const history=readOnlineRetentionHistory(),certificate=history.entries.at(-1),workerCertificate=history.entries.filter(entry=>entry.kind==='booking-worker').at(-1);
- const worker=pm().find(item=>item.name===workerCertificate?.workerRelease.priorWorker.name);
+ const history=readOnlineRetentionHistory(),certificate=history.entries.at(-1),workerCertificate=latestBookingVerifierCertificate(history);
+ const worker=workerCertificate&&pm().find(item=>item.name===(workerCertificate.workerRelease?.priorWorker.name??REBOOT_WORKER_NAME));
  if(!worker)fail('application_release_worker_missing');
  const started=Date.now();let cycle=null;
  while(Date.now()-started<160000){

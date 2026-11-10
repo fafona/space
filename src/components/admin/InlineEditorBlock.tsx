@@ -870,6 +870,7 @@ function InlineEditorBlock({
   onOpenOrderCatalog,
   europeLocationOptionsApi,
   onGoogleBusinessProfileRequest,
+  onFlushPendingChanges,
 }: {
   block: Block;
   publicBlockId: string;
@@ -883,6 +884,7 @@ function InlineEditorBlock({
   onLayerToBack: () => void;
   onSelect: () => void;
   onChange: (patch: Partial<Block["props"]>) => void;
+  onFlushPendingChanges?: () => void;
   onResizePreview: (heightDelta: number) => void;
   onResizeCommit: (patch: Partial<Block["props"]>, heightDelta: number) => void;
   previewOffsetY: number;
@@ -12142,6 +12144,7 @@ type GalleryEditorImage = {
                 runtimeSiteId={runtimeSiteId}
                 runtimeBlockId={block.id}
                 onChange={(patch) => onChange(patch)}
+                onFlushPendingChanges={onFlushPendingChanges}
               />
               <div className="grid gap-3 border-t border-slate-200 pt-4">
                 <div className="text-sm font-medium text-slate-700">前台预览</div>

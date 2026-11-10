@@ -21,7 +21,7 @@ import {
 import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import { cashierCheckoutBlocksNewSale } from "@/lib/merchantRedemptionCheckoutRecovery";
 import type { MemberCheckoutRecoveryAction } from "@/lib/merchantMemberCheckoutRecovery";
-import { memberOperationUsesProductCheckout, readMemberScopedKeyword } from "@/lib/merchantMemberCheckoutRecovery";
+import { memberOperationShowsCheckoutRecovery, memberOperationUsesProductCheckout, readMemberScopedKeyword } from "@/lib/merchantMemberCheckoutRecovery";
 import MerchantCheckoutRecoveryPanel from "@/components/admin/MerchantCheckoutRecoveryPanel";
 import { useMerchantMemberCheckoutRecovery } from "@/components/admin/useMerchantMemberCheckoutRecovery";
 import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
@@ -863,13 +863,12 @@ export default function MerchantMemberManager({
       invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-detail", normalizedSiteId));
       invalidateMerchantAdminDataCachePrefix(makeMerchantAdminDataCacheKey("merchant-membership-settings", normalizedSiteId));
     }
-    if (operationDialog && memberOperationUsesProductCheckout(operationDialog.type, operationRedemptionItemId)) {
-      setOperationDialog(null); setOperationError("");
-    }
+    // Keep an explicitly opened redemption dialog visible until its original
+    // receipt is acknowledged. There is deliberately no recovery banner on the list.
     void loadMemberships("reset", true);
     void loadMemberSettings(true);
   }, [productCheckoutRecovery.checkout, isCurrentMemberScope, effectiveCachePolicy.allowPersistentWrite,
-    normalizedSiteId, loadMemberships, loadMemberSettings, operationDialog, operationRedemptionItemId]);
+    normalizedSiteId, loadMemberships, loadMemberSettings]);
 
   useEffect(() => {
     const refreshOnVisible = () => {
@@ -1204,8 +1203,6 @@ export default function MerchantMemberManager({
 
   return (
     <section className={`space-y-4 ${className}`}>
-      {canRecoverProductCheckout && !(operationDialog && memberOperationUsesProductCheckout(operationDialog.type, operationRedemptionItemId)) ? <MerchantCheckoutRecoveryPanel snapshot={productCheckoutRecovery}
-        onRefresh={() => void productCheckoutController.refresh()} onAction={(action) => void handleProductRecoveryAction(action)} /> : null}
       {loadError ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{loadError}</div>
       ) : null}
@@ -1880,10 +1877,10 @@ export default function MerchantMemberManager({
                 </button>
               </div>
               <div className="space-y-4 px-5 py-4">
-                {canRecoverProductCheckout && memberOperationUsesProductCheckout(operationDialog.type, operationRedemptionItemId) ? <>
+                {canRecoverProductCheckout && memberOperationShowsCheckoutRecovery(operationDialog.type, operationRedemptionItemId, productCheckoutRecovery) ? <>
                   <MerchantCheckoutRecoveryPanel snapshot={productCheckoutRecovery}
                     onRefresh={() => void productCheckoutController.refresh()} onAction={(action) => void handleProductRecoveryAction(action)} />
-                  {!selectedRedemptionItem ? <p role="alert" className="text-sm text-rose-700">原选择的商品已停用或数据已更新。请先核对原单，不会自动转换为手工扣减。</p> : null}
+                  {memberOperationUsesProductCheckout(operationDialog.type, operationRedemptionItemId) && !selectedRedemptionItem ? <p role="alert" className="text-sm text-rose-700">原选择的商品已停用或数据已更新。请先核对原单，不会自动转换为手工扣减。</p> : null}
                 </> : null}
                 <div className="grid gap-2 sm:grid-cols-2">
                   <ProfileField label="当前积分" value={operationInsight.pointBalance} />
@@ -2019,6 +2016,22 @@ export default function MerchantMemberManager({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+      {operationDialog?.type === "redeem" && !operationMembership && canRecoverProductCheckout &&
+      (productCheckoutRecovery.checkout || productCheckoutRecovery.phase === "error") ? (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-slate-950/45 p-4" role="dialog" aria-modal="true" aria-label="兑换结算">
+          <div className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-[24px] bg-white p-5 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-950">兑换结算</h3>
+                <p className="mt-1 text-xs text-slate-500">当前会员已不可用，以下仅核对服务器保存的原单。</p>
+              </div>
+              <button type="button" className="rounded-xl border border-slate-200 px-3 py-2 text-sm" disabled={operationSaving || productCheckoutRecovery.busy} onClick={closeMemberOperation}>关闭</button>
+            </div>
+            <MerchantCheckoutRecoveryPanel snapshot={productCheckoutRecovery}
+              onRefresh={() => void productCheckoutController.refresh()} onAction={(action) => void handleProductRecoveryAction(action)} />
           </div>
         </div>
       ) : null}

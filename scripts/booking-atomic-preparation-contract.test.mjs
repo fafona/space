@@ -62,15 +62,15 @@ test("explicit real PostgreSQL acceptance is retained with pinned isolated depen
   assert.ok(acceptance.includes("actual capacity rule plus real concurrent adapter commands"));
 });
 
-test("both booking browser acceptances are mandatory in the existing browser CI job", () => {
+test("all booking browser acceptances are mandatory in the existing browser CI job", () => {
   const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
-  assert.equal(pkg.scripts["test:booking-browser"], "node --test --test-concurrency=1 scripts/booking-manage-browser-acceptance.mjs scripts/booking-flows-browser-acceptance.mjs");
+  assert.equal(pkg.scripts["test:booking-browser"], "node --test --test-concurrency=1 scripts/booking-manage-browser-acceptance.mjs scripts/booking-flows-browser-acceptance.mjs scripts/booking-recurring-ranges-browser-acceptance.mjs scripts/booking-list-alignment-browser-acceptance.mjs scripts/booking-timezone-browser-acceptance.mjs scripts/booking-workbench-save-browser-acceptance.mjs");
   const workflow = readFileSync(path.join(root, ".github/workflows/ci.yml"), "utf8").replace(/\r\n/g, "\n");
   const browser = workflow.slice(workflow.indexOf("  browser:\n"), workflow.indexOf("  qr-database:\n"));
   assert.ok(browser.includes("- name: Booking Browser Journeys\n"));
   assert.ok(browser.includes("run: npm run test:booking-browser"));
   assert.doesNotMatch(browser, /continue-on-error|\bif:|test-skip-pattern|test-name-pattern/);
-  for (const file of ["booking-manage-browser-acceptance.mjs", "booking-flows-browser-acceptance.mjs"]) {
+  for (const file of ["booking-manage-browser-acceptance.mjs", "booking-flows-browser-acceptance.mjs", "booking-recurring-ranges-browser-acceptance.mjs", "booking-list-alignment-browser-acceptance.mjs", "booking-timezone-browser-acceptance.mjs", "booking-workbench-save-browser-acceptance.mjs"]) {
     assert.doesNotMatch(readFileSync(path.join(root, "scripts", file), "utf8"), /\btest\.skip\b|\bskip\s*:/);
   }
 });

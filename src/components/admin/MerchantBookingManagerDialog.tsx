@@ -554,6 +554,7 @@ export default function MerchantBookingManagerDialog({
   onClose,
 }: MerchantBookingManagerDialogProps) {
   const { locale } = useI18n();
+  const compactBookingActionLabels = locale.toLowerCase().startsWith("zh");
   const isInline = mode === "inline";
   const employeeMode = isMerchantBookingEmployeeFrontend({
     apiClient,
@@ -1328,6 +1329,7 @@ export default function MerchantBookingManagerDialog({
           className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           onClick={() => void patchBooking(record.id, { status: "active" }, "restore")}
           disabled={busyKey === `restore:${record.id}`}
+          data-booking-action-slot="status"
         >
           {busyKey === `restore:${record.id}`
             ? getMerchantBookingActionText("processing", locale)
@@ -1344,6 +1346,7 @@ export default function MerchantBookingManagerDialog({
             className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "confirmed" }, "uncomplete")}
             disabled={busyKey === `uncomplete:${record.id}`}
+            data-booking-action-slot="completion"
           >
             {busyKey === `uncomplete:${record.id}`
               ? getMerchantBookingActionText("processing", locale)
@@ -1355,6 +1358,7 @@ export default function MerchantBookingManagerDialog({
             className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "active" }, "unconfirm")}
             disabled={busyKey === `unconfirm:${record.id}`}
+            data-booking-action-slot="status"
           >
             {busyKey === `unconfirm:${record.id}`
               ? getMerchantBookingActionText("processing", locale)
@@ -1366,6 +1370,7 @@ export default function MerchantBookingManagerDialog({
             className="rounded border border-sky-300 bg-sky-100 px-3 py-1.5 text-[13px] leading-5 text-sky-800 hover:bg-sky-200 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "confirmed" }, "confirm")}
             disabled={busyKey === `confirm:${record.id}`}
+            data-booking-action-slot="status"
           >
             {busyKey === `confirm:${record.id}`
               ? getMerchantBookingActionText("processing", locale)
@@ -1378,6 +1383,7 @@ export default function MerchantBookingManagerDialog({
             className="rounded border border-rose-300 bg-rose-100 px-3 py-1.5 text-[13px] leading-5 text-rose-800 hover:bg-rose-200 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "no_show" }, "noshow")}
             disabled={busyKey === `noshow:${record.id}`}
+            data-booking-action-slot="attendance"
           >
             {busyKey === `noshow:${record.id}`
               ? getMerchantBookingActionText("processing", locale)
@@ -1390,6 +1396,7 @@ export default function MerchantBookingManagerDialog({
             className="rounded border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[13px] leading-5 text-white hover:bg-emerald-700 disabled:opacity-50"
             onClick={() => void patchBooking(record.id, { status: "completed" }, "complete")}
             disabled={busyKey === `complete:${record.id}`}
+            data-booking-action-slot="completion"
           >
             {busyKey === `complete:${record.id}`
               ? getMerchantBookingActionText("processing", locale)
@@ -1401,6 +1408,7 @@ export default function MerchantBookingManagerDialog({
           className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           onClick={() => void patchBooking(record.id, { status: "cancelled" }, "cancel")}
           disabled={busyKey === `cancel:${record.id}`}
+          data-booking-action-slot="cancel"
         >
           {busyKey === `cancel:${record.id}`
             ? getMerchantBookingActionText("processing", locale)
@@ -2031,7 +2039,7 @@ export default function MerchantBookingManagerDialog({
                         </span>
                       ) : null}
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-5 gap-y-2">
+                      <div className="flex min-w-0 flex-[1_1_36rem] flex-wrap items-start gap-x-5 gap-y-2">
                         <div className="min-w-[240px] flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
@@ -2047,7 +2055,7 @@ export default function MerchantBookingManagerDialog({
                         </div>
 
                         {canViewCustomerData ? (
-                        <div className="grid min-w-[580px] grid-cols-[5.75rem_2rem_minmax(12rem,1fr)_2rem_9rem_2rem] items-center gap-2 text-[13px] leading-5 text-slate-700">
+                        <div className="grid w-[580px] max-w-full min-w-0 shrink-0 grid-cols-[5.75rem_2rem_minmax(0,1fr)_2rem_minmax(0,9rem)_2rem] items-center gap-2 text-[13px] leading-5 text-slate-700" data-booking-contact-columns="true">
                           <span
                             className={`inline-flex h-8 w-[5.75rem] items-center justify-center rounded-full bg-white px-2 text-xs font-semibold text-slate-600 shadow-sm ${record.customerAccountId ? "" : "invisible"}`}
                             aria-hidden={!record.customerAccountId}
@@ -2121,10 +2129,25 @@ export default function MerchantBookingManagerDialog({
                         ) : null}
                       </div>
 
-                      <div className="flex flex-wrap gap-1.5">{renderStatusActions(record)}</div>
+                      <div
+                        className={[
+                          "grid max-w-full shrink-0 grid-cols-2 gap-1.5",
+                          compactBookingActionLabels
+                            ? "w-[23.125rem] h-[74px] auto-rows-[34px] sm:h-[34px] sm:grid-cols-[6rem_6rem_5rem_5rem] [&>button]:whitespace-nowrap"
+                            : "w-[41.125rem] h-[154px] auto-rows-[74px] sm:h-[74px] sm:grid-cols-4 [&>button]:whitespace-normal [&>button]:break-words",
+                          "[&>button]:h-full [&>button]:w-full",
+                          "[&>[data-booking-action-slot=status]]:col-start-1 [&>[data-booking-action-slot=status]]:row-start-1",
+                          "[&>[data-booking-action-slot=attendance]]:col-start-2 [&>[data-booking-action-slot=attendance]]:row-start-1",
+                          "[&>[data-booking-action-slot=completion]]:col-start-1 [&>[data-booking-action-slot=completion]]:row-start-2",
+                          "[&>[data-booking-action-slot=cancel]]:col-start-2 [&>[data-booking-action-slot=cancel]]:row-start-2",
+                          "sm:[&>[data-booking-action-slot=completion]]:col-start-3 sm:[&>[data-booking-action-slot=completion]]:row-start-1",
+                          "sm:[&>[data-booking-action-slot=cancel]]:col-start-4 sm:[&>[data-booking-action-slot=cancel]]:row-start-1",
+                        ].join(" ")}
+                        data-booking-action-grid="true"
+                      >{renderStatusActions(record)}</div>
                     </div>
 
-                    <div className="mt-3 grid gap-y-2.5 gap-x-4 md:grid-cols-2 xl:grid-cols-[12rem_12rem_12rem_minmax(0,1fr)_auto] xl:gap-x-[4.8rem]">
+                    <div className="mt-3 grid min-w-0 gap-y-2.5 gap-x-4 md:grid-cols-3 xl:grid-cols-[12rem_12rem_12rem_minmax(0,1fr)] 2xl:gap-x-[4.8rem]">
                       <ReadOnlyBookingField
                         fieldKey="appointmentAt"
                         value={[appointmentParts.date || "-", appointmentParts.time || "-"].join(" ")}
@@ -2147,7 +2170,7 @@ export default function MerchantBookingManagerDialog({
                         colorStyle={itemColorStyle}
                         labelOverride={itemLabel}
                       />
-                      <div className="flex items-end justify-end gap-2 xl:col-start-5">
+                      <div className="flex min-w-0 items-end justify-end gap-2 md:col-span-3 xl:col-span-1 xl:col-start-4" data-booking-detail-row="true">
                         {canViewCustomerData && record.customerEmailLogs?.length ? (
                           <span
                             className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-medium text-sky-700"
@@ -2158,13 +2181,14 @@ export default function MerchantBookingManagerDialog({
                             <span>{record.customerEmailLogs.length}</span>
                           </span>
                         ) : null}
-                        <span className="inline-flex max-w-[16rem] items-center rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
+                        <span className="inline-flex min-w-0 max-w-[16rem] items-center rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
                           <span className="truncate">{`${getMerchantBookingFieldText("bookingId", locale)}: ${record.id}`}</span>
                         </span>
                         <button
                           type="button"
-                          className="rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50"
+                          className={`h-[34px] shrink-0 rounded border bg-white px-3 py-1.5 text-[13px] leading-5 hover:bg-slate-50 ${compactBookingActionLabels ? "w-14" : "min-w-24 whitespace-nowrap"}`}
                           onClick={() => openDetailDialog(record)}
+                          data-booking-action-slot="details"
                         >
                           {getMerchantBookingActionText("detail", locale)}
                         </button>

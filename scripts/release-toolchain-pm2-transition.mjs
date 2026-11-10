@@ -27,11 +27,14 @@ export function assertCompletePm2DumpSet(rawRows,filtered){
  const observed=[];for(let i=0;i<rawRows.length;i++){
   const entry=Object.getOwnPropertyDescriptor(rawRows,String(i));need(entry&&Object.hasOwn(entry,'value'),'dump_process_set');const row=entry.value;
   need(object(row)&&!types.isProxy(row)&&[Object.prototype,null].includes(Object.getPrototypeOf(row)),'dump_process_set');
-  const d=Object.getOwnPropertyDescriptors(row);need(['name','pid','pm_id','pm2_env'].every(k=>d[k]?.enumerable&&Object.hasOwn(d[k],'value')),'dump_process_set');
-  need(typeof d.name.value==='string'&&/^[A-Za-z0-9._-]{1,150}$/.test(d.name.value)&&Number.isSafeInteger(d.pid.value)&&d.pid.value>=0&&Number.isSafeInteger(d.pm_id.value)&&d.pm_id.value>=0,'dump_process_set');
+  const d=Object.getOwnPropertyDescriptors(row);need(['name','pm_id','pm2_env'].every(k=>d[k]?.enumerable&&Object.hasOwn(d[k],'value')),'dump_process_set');
+  const status=Object.getOwnPropertyDescriptor(d.pm2_env.value??{},'status');
+  const pid=!Object.hasOwn(d,'pid')&&status&&Object.hasOwn(status,'value')&&status.value==='stopped'?0:d.pid?.value;
+  need(!d.pid||d.pid.enumerable&&Object.hasOwn(d.pid,'value'),'dump_process_set');
+  need(typeof d.name.value==='string'&&/^[A-Za-z0-9._-]{1,150}$/.test(d.name.value)&&Number.isSafeInteger(pid)&&pid>=0&&Number.isSafeInteger(d.pm_id.value)&&d.pm_id.value>=0,'dump_process_set');
   const env=d.pm2_env.value;need(object(env)&&!types.isProxy(env)&&[Object.prototype,null].includes(Object.getPrototypeOf(env)),'dump_process_set');
   const moduleFlag=Object.getOwnPropertyDescriptor(env,'pmx_module');need(!moduleFlag||Object.hasOwn(moduleFlag,'value')&&!moduleFlag.value,'dump_module_process_excluded');
-  observed.push({name:d.name.value,pid:d.pid.value,pm_id:d.pm_id.value});
+  observed.push({name:d.name.value,pid,pm_id:d.pm_id.value});
  }
  equal(observed.sort((a,b)=>a.pm_id-b.pm_id),registry.map(({name,pid,pm_id})=>({name,pid,pm_id})).sort((a,b)=>a.pm_id-b.pm_id),'dump_process_set');return true;
 }

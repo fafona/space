@@ -1,5 +1,6 @@
 import { isMerchantRedemptionCheckoutReceipt, type MerchantRedemptionCheckoutReceipt, type MerchantRedemptionCheckoutSummary } from "@/lib/merchantRedemptionCheckout";
 import type { MerchantRedemptionReceiptData } from "@/lib/merchantReceiptPrint";
+import { isMerchantRedemptionPendingCart } from "@/lib/merchantRedemptionPendingCart";
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -30,8 +31,17 @@ export function readCashierCheckoutSummary(payload: unknown, siteId: string): Me
     ? readCashierCheckoutReceipt(data.result, siteId, data.operationId)
     : null;
   if (data.status !== "committed" && data.result !== null) throw new Error("redemption_checkout_response_invalid");
+  let pendingCart: MerchantRedemptionCheckoutSummary["pendingCart"];
+  if (data.pendingCart !== undefined) {
+    if (data.status !== "pending" || !isMerchantRedemptionPendingCart(data.pendingCart, siteId, data.operationId)) {
+      throw new Error("redemption_checkout_response_invalid");
+    }
+    pendingCart = structuredClone(data.pendingCart);
+  }
   return { operationId: data.operationId, status: data.status as MerchantRedemptionCheckoutSummary["status"],
-    createdAt: data.createdAt, acknowledgedAt: data.acknowledgedAt as string | null, result };
+    createdAt: data.createdAt, acknowledgedAt: data.acknowledgedAt as string | null, result,
+    ...(pendingCart ? { pendingCart } : {}),
+  };
 }
 
 export function cashierCheckoutBlocksNewSale(phase: "checking" | "ready" | "error", checkout: MerchantRedemptionCheckoutSummary | null) {

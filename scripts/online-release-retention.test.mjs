@@ -11,6 +11,7 @@ import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {ROLLING_BASE_NAMES, rollingCanonicalText} from './online-release-rolling-policy.mjs';
 import {WEB_RELEASE_FILES} from './web-presentation-release-policy.mjs';
 import {bookingHandoffFixture} from './test-support/booking-handoff-retention-fixture.mjs';
+import {hostRebootFixture} from './test-support/release-toolchain-host-reboot-fixture.mjs';
 import {BOOKING_HANDOFF_BASELINE,BOOKING_HANDOFF_LEGACY_DIRECTORY} from './booking-handoff-policy.mjs';
 
 // The real v2 reader calls the unchanged real rolling and legacy readers. All
@@ -247,6 +248,19 @@ test('worker-only successor round-trips through the actual five-file reader with
  assert.deepEqual(readOnlineRetentionHistory('/retention',memory.io,'/rolling','/legacy'),history);
  for(const [name,bytes]of original)if(name!=='/retention.head.json')assert.deepEqual(memory.files.get(name),bytes);
  const prepared=JSON.parse(memory.files.get(directory+'/prepared.json'));delete prepared.workerRelease;memory.put(directory+'/prepared.json',canonical(prepared));const certificate=clone(next.certificate);certificate.preparedSha256=hash(canonical(prepared));memory.put(directory+'/certificate.json',canonical(certificate));assert.throws(()=>readOnlineRetentionHistory('/retention',memory.io,'/rolling','/legacy'),/preparation_changed/);assert.equal(memory.fds.size,0);
+});
+
+test('host reboot round-trips through the unchanged strict five-file reader and preserves every prior proof',()=>{
+ const old=legacyFixture([],{activeTarget:BOOKING_HANDOFF_BASELINE,bookingLegacy:true}),memory=memoryFs(old.files),history=createOnlineRetentionHistory(readOnlineRollingRetentions('/rolling',memory.io,'/legacy'));
+ addReceipt(memory,history,observation(history,'initialize',old.processes,[BOOKING_HANDOFF_BASELINE,sha('b')]));
+ const f=hostRebootFixture(bookingHandoffFixture({history,current:old.processes}));
+ const append=receipt=>{const directory='/retention/'+String(receipt.certificate.sequence).padStart(6,'0');memory.directories.add(directory);for(const [name,text]of receipt.files)memory.put(directory+'/'+name,text);};
+ const handoff=buildOnlineRetentionReceipt(bookingHandoffFixture({history,current:old.processes}).before,clone(bookingHandoffFixture({history,current:old.processes}).before),{version:2,process:null},history,{preparedAt:'2026-10-26T10:01:00.000Z',completedAt:'2026-10-26T10:01:00.000Z'});append(handoff);memory.put('/retention.head.json',canonical(onlineRetentionHeadRecord(f.history)));
+ const original=new Map([...memory.files].map(([name,b])=>[name,Buffer.from(b)])),receipt=buildOnlineRetentionReceipt(f.before,f.after,{version:2,process:null},f.history,{preparedAt:f.before.hostReboot.window.startedAt,completedAt:'2026-11-10T10:01:00.000Z'});append(receipt);
+ const next={...clone(f.history),entries:[...clone(f.history.entries),receipt.certificate],headSha256:retentionHash(receipt.certificate)};memory.put('/retention.head.json',canonical(onlineRetentionHeadRecord(next)));
+ assert.deepEqual(readOnlineRetentionHistory('/retention',memory.io,'/rolling','/legacy'),next);
+ for(const [name,b]of original)if(name!=='/retention.head.json')assert.deepEqual(memory.files.get(name),b);
+ const directory='/retention/'+String(receipt.certificate.sequence).padStart(6,'0'),prepared=JSON.parse(memory.files.get(directory+'/prepared.json'));delete prepared.hostReboot;memory.put(directory+'/prepared.json',canonical(prepared));const changed=clone(receipt.certificate);changed.preparedSha256=hash(canonical(prepared));memory.put(directory+'/certificate.json',canonical(changed));assert.throws(()=>readOnlineRetentionHistory('/retention',memory.io,'/rolling','/legacy'),/preparation_changed/);assert.equal(memory.fds.size,0);
 });
 
 test('old retirement and rolling source files retain their original full LF-normalized hashes', () => {

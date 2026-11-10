@@ -3,7 +3,7 @@
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import path from 'node:path';
 import {parseSourceTree,sourceGit} from './release-toolchain-source.mjs';
-import {createApplicationReleaseManifest,assertApplicationReleasePackage} from './application-release-policy.mjs';
+import {createApplicationReleaseManifest,assertApplicationReleasePackage} from './application-release-compatibility.mjs';
 export function planApplicationReleaseManifest({directory,baseline,target,purpose,focusedTests}){
  if(!/^[a-f0-9]{40}$/.test(baseline??'')||!(target==='HEAD'||/^[a-f0-9]{40}$/.test(target??'')))throw Error('application_manifest_revision');
  const resolved=sourceGit(directory,['rev-parse',target+'^{commit}']).toString().trim();

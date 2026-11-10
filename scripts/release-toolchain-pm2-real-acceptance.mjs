@@ -18,6 +18,7 @@ import{acceptBookingWorkerDatabaseKernel}from'./online-release-retention-writer.
 import{assertWorkerApplicationInputs}from'./release-toolchain-worker-application-acceptance.mjs';
 import{bookingReadyWorkerConfiguration,assertBookingReadyWorkerRawTransition}from'./booking-ready-worker.mjs';
 import{assertActiveBookingWorkerConfigurationTransition,waitForActiveBookingWorkerSettlement,activeBookingWorkerObservation}from'./release-toolchain-active-generation-worker-settlement.mjs';
+import{acceptRealPm2Resurrection}from'./release-toolchain-host-reboot-native.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex'),need=(v,c)=>{if(!v)throw Error('equivalence_'+c);},sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),ANCHORS=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
 need(process.platform==='linux'&&process.getuid?.()===0&&process.version==='v20.20.1'&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'&&process.env.FAOLLA_RELEASE_PRODUCTION_EQ==='1'&&process.argv.length===2&&!ANCHORS.some(f=>fs.existsSync(f)),'ci_only');
@@ -248,4 +249,5 @@ try{
  if(fs.existsSync(home+'/pm2.pid')){need(Boolean(daemon),'untracked_fixture_daemon');need(!alive(daemon),'missing_daemon_read_booted_process');}
  seal('cleanup-verified.json',{allOwnedProcessesStopped:true,formalHostTouched:false,passed,at:new Date().toISOString()});
 }
+await acceptRealPm2Resurrection(root);
 console.log(JSON.stringify({kind:'release-toolchain-real-pm2-next-transition-acceptance',root,revision,realNextVersion:'16.3.4',realPm2Version:'6.0.14',nodeVersion:process.version,actualExitCode:130,signal:'SIGINT',sharedProductionPeerFraming:true,unrelatedProcessUnchanged:true,staleAttemptRefused:true,allOwnedProcessesStopped:true,formalHostTouched:false,fullPublicationAuthority:false,mailEnabled:false}));

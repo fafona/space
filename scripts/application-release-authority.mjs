@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {isDeepStrictEqual} from 'node:util';
-import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,applicationReleaseHash,assertApplicationReleaseManifest,assertApplicationReleasePackage} from './application-release-policy.mjs';
+import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,applicationReleaseHash,assertApplicationReleaseManifest,assertApplicationReleasePackage,assertRecordedSchemaDatabase} from './application-release-compatibility.mjs';
 import {inspectPinnedExecutionSource,collectRemoteReleaseReview,assertReviewFresh,ownedReleasePath,sourceGit,parseSourceTree} from './release-toolchain-source.mjs';
 import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
 import {bookingHostRead} from './booking-handoff-host-io.mjs';
@@ -73,6 +73,7 @@ export async function withReviewedApplicationExecution({target,baseline,lock},wo
  const review=await collectRemoteReleaseReview(target),source=inspectPinnedExecutionSource({revision:target,directory});
  const manifest=JSON.parse(sourceGit(REPOSITORY,['show',target+':'+APPLICATION_RELEASE_MANIFEST]));
  const proof=assertApplicationReleaseManifest(manifest,{baseline,baselineRows:parseSourceTree(sourceGit(REPOSITORY,['ls-tree','-r','-z',baseline])),targetRows:source.rows});
+ assertRecordedSchemaDatabase(manifest);
  assertApplicationReleasePackage(JSON.parse(sourceGit(REPOSITORY,['show',baseline+':package.json'])),JSON.parse(sourceGit(REPOSITORY,['show',target+':package.json'])));
  const prior=priorStates(target),state=ROOT+'/'+target+'/state.json';
  if(fs.existsSync(state))need(JSON.parse(bookingHostRead(state)).applicationPriorStatesSha256===prior.sha256,'prior_states_changed');

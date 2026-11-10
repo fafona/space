@@ -21287,6 +21287,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                               onLayerToBack={() => moveBlockToLayerEdge(block.id, "back")}
                               onSelect={() => setSelectedId(block.id)}
                               onChange={(patch) => updateBlockProps(block.id, patch)}
+                              onFlushPendingChanges={flushPendingEditorChanges}
                               onResizePreview={(heightDelta) => previewResizeWithoutAffectingOthers(block.id, heightDelta)}
                               onResizeCommit={(patch, heightDelta) => resizeBlockWithoutAffectingOthers(block.id, patch, heightDelta)}
                               previewOffsetY={previewOffsetY}
@@ -21357,6 +21358,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       onLayerToBack={() => moveBlockToLayerEdge(block.id, "back")}
                       onSelect={() => setSelectedId(block.id)}
                       onChange={(patch) => updateBlockProps(block.id, patch)}
+                      onFlushPendingChanges={flushPendingEditorChanges}
                       onResizePreview={(heightDelta) => previewResizeWithoutAffectingOthers(block.id, heightDelta)}
                       onResizeCommit={(patch, heightDelta) => resizeBlockWithoutAffectingOthers(block.id, patch, heightDelta)}
                       previewOffsetY={previewOffsetY}

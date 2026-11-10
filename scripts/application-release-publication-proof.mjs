@@ -7,7 +7,7 @@ export function applicationPublicationProof(history,target){
  assertOnlineRetentionHistory(history);
  const index=history.entries.findIndex(entry=>entry.kind==='converge'&&entry.active.target===target&&entry.applicationRelease?.target===target);
  need(index>=0,'missing');const introduced=history.entries[index];
- for(const entry of history.entries.slice(index+1))need(['retire','booking-worker'].includes(entry.kind)&&
+ for(const entry of history.entries.slice(index+1))need(['retire','booking-worker','host-reboot'].includes(entry.kind)&&
   entry.active.target===target&&entry.rollback.target===introduced.rollback.target,'successor');
  return{introduced,manifestSha256:introduced.applicationRelease.manifestSha256,
   completionCertificates:history.entries.slice(index).map(retentionHash)};

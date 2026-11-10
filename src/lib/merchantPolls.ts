@@ -220,7 +220,7 @@ export function normalizePollConfig(value: PollProps | Record<string, unknown> |
     legacyPollIds,
     heading: trimText(record.heading, 1000) || "在线投票",
     text: trimText(record.text, 4000),
-    status: record.pollStatus === "closed" ? "closed" : "open",
+    status: record.pollRoundDeleted === true || record.pollStatus === "closed" ? "closed" : "open",
     audience:
       record.pollAudience === "merchant-members" || record.pollAudience === "registered-users"
         ? record.pollAudience
@@ -294,7 +294,9 @@ function collectNestedBlocks(value: unknown, output: Block[], visited: Set<unkno
 export function collectPublishedPollBlocks(blocks: Block[]) {
   const output: Block[] = [];
   collectNestedBlocks(blocks, output, new Set<unknown>());
-  return output.filter((block): block is Extract<Block, { type: "poll" }> => block.type === "poll");
+  return output.filter((block): block is Extract<Block, { type: "poll" }> => (
+    block.type === "poll" && block.props.pollRoundDeleted !== true
+  ));
 }
 
 export function getPollIdentityIds(config: Pick<NormalizedPollConfig, "pollId" | "legacyPollIds">) {

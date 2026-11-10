@@ -2085,6 +2085,7 @@ export default function MerchantOrderManagerDialog({
               onClick={() => void patchOrderStatus(record, "pending", "unconfirm")}
               disabled={disabled}
               data-skip-selection-toggle="true"
+              data-order-action-slot="status"
             >
               {isBusy("unconfirm") ? "处理中" : "取消确认"}
             </button>
@@ -2095,6 +2096,7 @@ export default function MerchantOrderManagerDialog({
               onClick={() => void patchOrderStatus(record, "pending", "restore")}
               disabled={disabled}
               data-skip-selection-toggle="true"
+              data-order-action-slot="status"
             >
               {isBusy("restore") ? "处理中" : "恢复待确认"}
             </button>
@@ -2105,6 +2107,7 @@ export default function MerchantOrderManagerDialog({
               onClick={() => void patchOrderStatus(record, "confirmed", "confirm")}
               disabled={disabled}
               data-skip-selection-toggle="true"
+              data-order-action-slot="status"
             >
               {isBusy("confirm") ? "处理中" : "确认"}
             </button>
@@ -2116,6 +2119,7 @@ export default function MerchantOrderManagerDialog({
               onClick={() => void patchOrderStatus(record, "completed", "complete")}
               disabled={disabled}
               data-skip-selection-toggle="true"
+              data-order-action-slot="completion"
             >
               {isBusy("complete") ? "处理中" : "完成"}
             </button>
@@ -2126,6 +2130,7 @@ export default function MerchantOrderManagerDialog({
               onClick={() => void patchOrderStatus(record, "confirmed", "uncomplete")}
               disabled={disabled}
               data-skip-selection-toggle="true"
+              data-order-action-slot="completion"
             >
               {isBusy("uncomplete") ? "处理中" : "取消完成"}
             </button>
@@ -2137,6 +2142,7 @@ export default function MerchantOrderManagerDialog({
               onClick={() => void patchOrderStatus(record, "cancelled", "cancel")}
               disabled={disabled}
               data-skip-selection-toggle="true"
+              data-order-action-slot="cancel"
             >
               {isBusy("cancel") ? "处理中" : "取消"}
             </button>
@@ -2649,7 +2655,7 @@ export default function MerchantOrderManagerDialog({
                       onClick={(event) => handleSelectionCardClick(event, record.id)}
                     >
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-5 gap-y-2">
+                      <div className="flex min-w-0 flex-[1_1_36rem] flex-wrap items-start gap-x-5 gap-y-2">
                         <div className="min-w-[240px] flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className={`rounded-full px-2 py-0.5 text-[11px] ${getStatusBadgeClass(record.status)}`}>
@@ -2663,7 +2669,7 @@ export default function MerchantOrderManagerDialog({
                           </div>
                         </div>
                         {canViewCustomerData && (record.customerAccountId || canOpenConversation || record.customer.email || record.customer.phone) ? (
-                          <div className="grid min-w-[580px] grid-cols-[5.75rem_2rem_minmax(12rem,1fr)_2rem_9rem_2rem] items-center gap-2 text-[13px] leading-5 text-slate-700">
+                          <div className="grid w-[580px] max-w-full min-w-0 shrink-0 grid-cols-[5.75rem_2rem_minmax(0,1fr)_2rem_minmax(0,9rem)_2rem] items-center gap-2 text-[13px] leading-5 text-slate-700" data-order-contact-columns="true">
                             <span
                               className={`inline-flex h-8 w-[5.75rem] items-center justify-center rounded-full bg-white px-2 text-xs font-semibold text-slate-600 shadow-sm ${record.customerAccountId ? "" : "invisible"}`}
                               aria-hidden={!record.customerAccountId}
@@ -2723,17 +2729,30 @@ export default function MerchantOrderManagerDialog({
                         ) : null}
                       </div>
 
-                      <div className="flex shrink-0 flex-col items-end gap-2">
+                      <div className="flex w-[19.125rem] max-w-full shrink-0 flex-col items-end gap-2" data-order-action-column="true">
                         <div className="text-right text-lg font-semibold text-slate-900">
                           {formatMerchantOrderAmount(record.totalAmount, record.pricePrefix)}
                         </div>
-                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        <div
+                          className={[
+                            "grid w-full auto-rows-[34px] grid-cols-2 gap-1.5 sm:grid-cols-[6rem_5rem_3.5rem_3.5rem]",
+                            "[&>button]:h-full [&>button]:w-full [&>button]:whitespace-nowrap",
+                            "[&>[data-order-action-slot=status]]:col-start-1 [&>[data-order-action-slot=status]]:row-start-1",
+                            "[&>[data-order-action-slot=completion]]:col-start-2 [&>[data-order-action-slot=completion]]:row-start-1",
+                            "[&>[data-order-action-slot=cancel]]:col-start-1 [&>[data-order-action-slot=cancel]]:row-start-2",
+                            "[&>[data-order-action-slot=details]]:col-start-2 [&>[data-order-action-slot=details]]:row-start-2",
+                            "sm:[&>[data-order-action-slot=cancel]]:col-start-3 sm:[&>[data-order-action-slot=cancel]]:row-start-1",
+                            "sm:[&>[data-order-action-slot=details]]:col-start-4 sm:[&>[data-order-action-slot=details]]:row-start-1",
+                          ].join(" ")}
+                          data-order-action-grid="true"
+                        >
                           {renderStatusActions(record)}
                           <button
                             type="button"
                             className="rounded border border-slate-200 bg-white px-3 py-1.5 text-[13px] leading-5 text-slate-700 hover:bg-slate-50"
                             onClick={() => openDetailDialog(record)}
                             data-skip-selection-toggle="true"
+                            data-order-action-slot="details"
                           >
                             详情
                           </button>
