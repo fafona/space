@@ -14,7 +14,7 @@ import {assertOnlineToolOwnedPath,createOnlineReleaseToolPlan,readOnlineToolInve
 import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess} from './release-toolchain-process-observation.mjs';
 import {bookingWorkerEntryMode} from './release-toolchain-worker-entry.mjs';
 import {assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
-import {assertApplicationWorkerSuccessor} from './application-release-policy.mjs';
+import {assertRebootAwareApplicationWorkerSuccessor as assertApplicationWorkerSuccessor} from './application-release-worker-compatibility.mjs';
 
 const ROOT='/var/lib/faolla-booking-handoff/'+CANDIDATE;
 const SOURCE='/www/wwwroot/merchant-space.web-releases/'+CANDIDATE.slice(0,12)+'-online';

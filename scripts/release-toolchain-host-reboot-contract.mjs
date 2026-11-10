@@ -74,13 +74,15 @@ const OBS=['version','policy','kind','sequence','previousSha256','legacySha256',
 export function assertHostRebootPlan(before,history){
  keys(before,OBS);const prior=history.entries.at(-1);need(prior&&before.version===2&&before.policy===history.policy&&before.kind===HOST_REBOOT_KIND&&before.sequence===history.entries.length+1&&before.previousSha256===history.headSha256&&sha(before.toolRevision)&&before.victim===null,'plan');
  assertHostRebootContext(before.hostReboot,prior,history.headSha256);
+ const previousBoot=history.entries.filter(c=>c.kind===HOST_REBOOT_KIND).at(-1)?.hostReboot.bootId;
+ if(previousBoot!==undefined)need(before.hostReboot.previousBootId===previousBoot,'boot_chain');
  for(const k of ['legacySha256','rollingHeadSha256','rollingHistorySha256'])same(before[k],prior[k],'root');
  for(const k of ['active','rollback']){same(location(before[k]),location(prior[k]),'website');same(before[k].process,before.hostReboot.resurrectedProcesses.find(p=>p.name===before[k].name),'website');}
  same(before.processes,before.hostReboot.resurrectedProcesses,'plan');same(before.workerIdentity,before.hostReboot.identities.find(p=>p.name===REBOOT_WORKER_NAME),'identity');need(before.persistenceSha256===null,'plan');return true;
 }
 export function assertHostRebootCompletion(before,after,history){
  assertHostRebootPlan(before,history);keys(after,OBS);assertHostRebootOnlyWorkerDelta(before.hostReboot,after.processes,before.toolRevision);
- const worker=after.processes.find(p=>p.name===REBOOT_WORKER_NAME);need(after.workerIdentity?.pid===worker.pid&&after.workerIdentity.uid===0&&after.workerIdentity.parentPid===before.hostReboot.daemon.pid&&after.workerIdentity.startTicks!==before.workerIdentity.startTicks&&/^[1-9]\d*$/.test(after.workerIdentity.startTicks??'')&&hash(after.persistenceSha256),'completion');
+ const worker=after.processes.find(p=>p.name===REBOOT_WORKER_NAME);need(after.workerIdentity?.name===REBOOT_WORKER_NAME&&after.workerIdentity.pid===worker.pid&&after.workerIdentity.uid===0&&after.workerIdentity.parentPid===before.hostReboot.daemon.pid&&after.workerIdentity.cwd===worker.cwd&&after.workerIdentity.executable==='/usr/bin/node'&&hash(after.workerIdentity.commandSha256)&&hash(after.workerIdentity.environmentSha256)&&after.workerIdentity.startTicks!==before.workerIdentity.startTicks&&/^[1-9]\d*$/.test(after.workerIdentity.startTicks??'')&&hash(after.persistenceSha256),'completion');
  same({...after,processes:before.processes,workerIdentity:before.workerIdentity,persistenceSha256:null},before,'completion');return true;
 }
 // Resolve ALL certified identity edges in chronological order, including
