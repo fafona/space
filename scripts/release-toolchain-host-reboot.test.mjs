@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
 import {buildOnlineRetentionReceipt} from './online-release-retention.mjs';
 import {retentionHash,retentionCanonicalText,assertOnlineRetentionHistory,inspectOnlineRetentionWindow,assertOnlineRetentionPublication} from './online-release-retention-policy.mjs';
-import {assertHostRebootPlan,assertHostRebootCompletion,resolveCertifiedProcess,REBOOT_WORKER_NAME as NAME} from './release-toolchain-host-reboot-contract.mjs';
+import {assertHostBootChain,assertHostRebootPlan,assertHostRebootCompletion,resolveCertifiedProcess,REBOOT_WORKER_NAME as NAME} from './release-toolchain-host-reboot-contract.mjs';
 import {assertBookingAtomicWorkerGate} from './booking-atomic-worker.mjs';
 import {assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
 import {executeHostRebootRecovery} from './release-toolchain-host-reboot-state.mjs';
@@ -27,6 +27,18 @@ test('a recovery cannot change any other process, source binding, environment, p
 });
 test('process replacement composes chronological boot/source edges; unchanged stopped edges work and cycles fail',()=>{
  const a={pid:1},b={pid:2},c={pid:3};assert.deepEqual(resolveCertifiedProcess(a,[{before:a,after:b},{before:b,after:c}]),c);assert.deepEqual(resolveCertifiedProcess(a,[{before:a,after:a}]),a);assert.throws(()=>resolveCertifiedProcess(a,[{before:a,after:b},{before:b,after:a}]),/replacement_cycle/);
+});
+test('a later reboot retains an already compatible verifier without an unnecessary second restart',()=>{
+ const f=fixture(),before=clone(f.before);before.hostReboot.verifierAction='retain';before.toolRevision=before.processes.find(p=>p.name===NAME).executable.split('/')[4];const after={...clone(before),persistenceSha256:H('4')};
+ assertHostRebootCompletion(before,after,f.history);
+ const receipt=buildOnlineRetentionReceipt(before,after,{version:2,process:null},f.history,{preparedAt:before.hostReboot.window.startedAt,completedAt:'2026-11-10T10:01:00.000Z'});assert.equal(receipt.certificate.hostReboot.verifierAction,'retain');
+ for(const change of [v=>v.processes.find(p=>p.name===NAME).pid++,v=>v.processes.find(p=>p.name===NAME).restartCount++,v=>v.workerIdentity.startTicks='70000']){const bad=clone(after);change(bad);assert.throws(()=>assertHostRebootCompletion(before,bad,f.history));}
+});
+test('successive boot receipts must advance from the exact last boot and cannot replay any earlier kernel identity',()=>{
+ const f=fixture(),r=f.before.hostReboot,history={entries:[{kind:'host-reboot',hostReboot:r}]};
+ assertHostBootChain({previousBootId:r.bootId,bootId:r.bootId.replace(/2$/,'4')},history);
+ assert.throws(()=>assertHostBootChain({previousBootId:r.previousBootId,bootId:r.bootId.replace(/2$/,'4')},history),/boot_chain/);
+ for(const bootId of [r.bootId,r.previousBootId])assert.throws(()=>assertHostBootChain({previousBootId:r.bootId,bootId},history),/boot_replay/);
 });
 test('missing PID means zero only for a specifically stopped PM2 registration',()=>{
  const f=fixture(),p=f.prior.processes.find(p=>p.status==='stopped');

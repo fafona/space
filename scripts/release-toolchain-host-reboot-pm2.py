@@ -63,7 +63,7 @@ def witness(value):
     if binding.get('kind') != 'host-reboot-restart-binding' or binding.get('revision') != revision or hashlib.sha256(binding_raw).hexdigest() != attempt.get('bindingSha256'):
         raise ValueError('boot_binding')
     r = binding['before']['hostReboot']
-    if (r['bootId'] != boot or r['previousBootId'] == boot or binding['before']['toolRevision'] != revision
+    if (r['bootId'] != boot or r['previousBootId'] == boot or r.get('verifierAction') != 'upgrade' or binding['before']['toolRevision'] != revision
             or r['mailEnabled'] is not False or r['window'] != attempt['window']
             or open('/proc/sys/kernel/random/boot_id', 'r').read().strip() != boot):
         raise ValueError('boot_identity')

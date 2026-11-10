@@ -42,9 +42,9 @@ export function assertHostBootCohort(before,after,proofs){
  return true;
 }
 export function assertHostRebootContext(r,prior,head){
- keys(r,['version','kind','previousBootId','bootId','priorHistoryHead','oldDumpSha256','oldBootReceiptSha256','sourceInventorySha256','nativeEvidenceSha256','gateSha256','publicationCertificateSha256','protectedHostSha256','environmentProofs','resurrectedProcesses','identities','daemon','window','mailEnabled']);
+ keys(r,['version','kind','verifierAction','previousBootId','bootId','priorHistoryHead','oldDumpSha256','oldBootReceiptSha256','sourceInventorySha256','nativeEvidenceSha256','gateSha256','publicationCertificateSha256','protectedHostSha256','environmentProofs','resurrectedProcesses','identities','daemon','window','mailEnabled']);
  assertDifferentHostBoot(r.previousBootId,r.bootId);
- need(r.version===1&&r.kind==='verified-host-boot-rebind'&&r.priorHistoryHead===head&&r.mailEnabled===false,'boot');
+ need(r.version===1&&r.kind==='verified-host-boot-rebind'&&['retain','upgrade'].includes(r.verifierAction)&&r.priorHistoryHead===head&&r.mailEnabled===false,'boot');
  for(const key of ['oldDumpSha256','oldBootReceiptSha256','sourceInventorySha256','nativeEvidenceSha256','gateSha256','publicationCertificateSha256','protectedHostSha256'])need(hash(r[key]),'evidence');
  const w=r.window;keys(w,['id','startedAt','deadlineAt']);need(uuid(w.id)&&instant(w.startedAt)&&instant(w.deadlineAt)&&Date.parse(w.deadlineAt)-Date.parse(w.startedAt)===600000,'window');
  assertHostBootCohort(prior.processes,r.resurrectedProcesses,r.environmentProofs);
@@ -56,6 +56,10 @@ export function assertHostRebootContext(r,prior,head){
 }
 export function assertHostRebootOnlyWorkerDelta(r,after,revision){
  cohort(after);need(sha(revision)&&after.length===r.resurrectedProcesses.length,'worker');
+ if(r.verifierAction==='retain'){
+  need(r.resurrectedProcesses.find(p=>p.name===REBOOT_WORKER_NAME)?.executable===script(revision),'retained_verifier_source');
+  same(after,r.resurrectedProcesses,'retained_verifier_changed');return true;
+ }
  const old=r.resurrectedProcesses.find(p=>p.name===REBOOT_WORKER_NAME),next=after.find(p=>p.name===REBOOT_WORKER_NAME);need(next&&next.pid>0&&next.pid!==old.pid&&next.restartCount===old.restartCount+1&&next.executable===script(revision)&&next.executable!==old.executable,'worker_delta');
  need(Number.isSafeInteger(next.createdAt)&&(next.createdAt===old.createdAt||next.createdAt>=Date.parse(r.window.startedAt)&&next.createdAt<=Date.parse(r.window.deadlineAt)),'worker_delta');
  same(next,{...old,pid:next.pid,restartCount:old.restartCount+1,executable:script(revision),createdAt:next.createdAt},'worker_delta');
@@ -70,18 +74,25 @@ export function assertHostRebootTransition(c,prior,head){
  if(c.completedAt!==undefined)need(instant(c.completedAt)&&Date.parse(c.completedAt)>=Date.parse(r.window.startedAt)&&Date.parse(c.completedAt)<=Date.parse(r.window.deadlineAt),'completion_time');
  return true;
 }
+export function assertHostBootChain(r,history){
+ const boots=history.entries.filter(c=>c.kind===HOST_REBOOT_KIND);
+ if(boots.length)need(r.previousBootId===boots.at(-1).hostReboot.bootId,'boot_chain');
+ need(!boots.some(c=>[c.hostReboot.bootId,c.hostReboot.previousBootId].includes(r.bootId)),'boot_replay');return true;
+}
 const OBS=['version','policy','kind','sequence','previousSha256','legacySha256','rollingHeadSha256','rollingHistorySha256','toolRevision','active','rollback','victim','hostReboot','processes','workerIdentity','persistenceSha256'];
 export function assertHostRebootPlan(before,history){
  keys(before,OBS);const prior=history.entries.at(-1);need(prior&&before.version===2&&before.policy===history.policy&&before.kind===HOST_REBOOT_KIND&&before.sequence===history.entries.length+1&&before.previousSha256===history.headSha256&&sha(before.toolRevision)&&before.victim===null,'plan');
  assertHostRebootContext(before.hostReboot,prior,history.headSha256);
- const previousBoot=history.entries.filter(c=>c.kind===HOST_REBOOT_KIND).at(-1)?.hostReboot.bootId;
- if(previousBoot!==undefined)need(before.hostReboot.previousBootId===previousBoot,'boot_chain');
+ assertHostBootChain(before.hostReboot,history);
  for(const k of ['legacySha256','rollingHeadSha256','rollingHistorySha256'])same(before[k],prior[k],'root');
  for(const k of ['active','rollback']){same(location(before[k]),location(prior[k]),'website');same(before[k].process,before.hostReboot.resurrectedProcesses.find(p=>p.name===before[k].name),'website');}
  same(before.processes,before.hostReboot.resurrectedProcesses,'plan');same(before.workerIdentity,before.hostReboot.identities.find(p=>p.name===REBOOT_WORKER_NAME),'identity');need(before.persistenceSha256===null,'plan');return true;
 }
 export function assertHostRebootCompletion(before,after,history){
  assertHostRebootPlan(before,history);keys(after,OBS);assertHostRebootOnlyWorkerDelta(before.hostReboot,after.processes,before.toolRevision);
+ if(before.hostReboot.verifierAction==='retain'){
+  need(hash(after.persistenceSha256),'persistence');same({...after,persistenceSha256:null},before,'retained_verifier_changed');return true;
+ }
  const worker=after.processes.find(p=>p.name===REBOOT_WORKER_NAME);need(after.workerIdentity?.name===REBOOT_WORKER_NAME&&after.workerIdentity.pid===worker.pid&&after.workerIdentity.uid===0&&after.workerIdentity.parentPid===before.hostReboot.daemon.pid&&after.workerIdentity.cwd===worker.cwd&&after.workerIdentity.executable==='/usr/bin/node'&&hash(after.workerIdentity.commandSha256)&&hash(after.workerIdentity.environmentSha256)&&after.workerIdentity.startTicks!==before.workerIdentity.startTicks&&/^[1-9]\d*$/.test(after.workerIdentity.startTicks??'')&&hash(after.persistenceSha256),'completion');
  same({...after,processes:before.processes,workerIdentity:before.workerIdentity,persistenceSha256:null},before,'completion');return true;
 }

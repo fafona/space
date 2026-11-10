@@ -8,7 +8,7 @@ import {WEB_RELEASE_FILES} from './web-presentation-release-policy.mjs';
 import {BOOKING_RETENTION_KIND, assertBookingRetentionHandoff, bookingHandoffReplacements,
   assertBookingReadyReleaseProof} from './booking-handoff-retention.mjs';
 import {BOOKING_WORKER_RELEASE_KIND,assertBookingWorkerReleaseTransition,assertBookingWorkerPublicationBinding,assertBookingWorkerReleasePlan,assertBookingWorkerReleaseCompletion,bookingWorkerReleaseReplacements} from './release-toolchain-worker-release-contract.mjs';
-import {HOST_REBOOT_KIND,assertHostRebootTransition,assertHostRebootPlan,assertHostRebootCompletion,hostRebootReplacements,resolveCertifiedProcess} from './release-toolchain-host-reboot-contract.mjs';
+import {HOST_REBOOT_KIND,assertHostBootChain,assertHostRebootTransition,assertHostRebootPlan,assertHostRebootCompletion,hostRebootReplacements,resolveCertifiedProcess} from './release-toolchain-host-reboot-contract.mjs';
 
 // Inactive, pure evidence contract. No stop, publication, cleanup or authorization
 // is performed here. The eventual host adapter must collect these facts itself.
@@ -191,6 +191,7 @@ function checkTransition(c, history, {planning = false} = {}) {
         active:c.active,rollback:c.rollback,processes:c.processes,toolRevision:c.toolRevision,
         completedAt:planning ? undefined : c.completedAt});
     } else if(c.kind===HOST_REBOOT_KIND){
+      assertHostBootChain(c.hostReboot,history);
       assertBookingWorkerPublicationBinding(c.hostReboot,history);
       assertHostRebootTransition(planning?{...c,completedAt:undefined}:c,prior,history.headSha256);
     } else if(c.kind===BOOKING_WORKER_RELEASE_KIND){
