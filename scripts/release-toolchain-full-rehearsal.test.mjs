@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';
-import {FULL_REHEARSAL_SOURCES,bookingNativeConfigText,cleanupBookingNativeFixtures,bookingNativeNodeSpawnReady,stopBookingNativeStartingNode} from './release-toolchain-full-rehearsal.mjs';
+import {FULL_REHEARSAL_SOURCES,bookingNativeConfigText,cleanupBookingNativeFixtures,bookingNativeNodeSpawnReady,stopBookingNativeStartingNode,bookingNativeProcessAlive} from './release-toolchain-full-rehearsal.mjs';
 import {createHash} from 'node:crypto';
 test('the reusable full runner uses owned new PG, exact shared sequences and never writes the old admission receipt',()=>{
  const source=readFileSync(new URL('./release-toolchain-full-rehearsal.mjs',import.meta.url),'utf8');
@@ -25,7 +25,16 @@ test('empty Linux startup argv cannot become the saved process identity; readine
  for(const patch of [{pid:0},{executable:'/bin/sh'},{cwd:'/production'}])assert.throws(()=>bookingNativeNodeSpawnReady({expected:{...expected,...patch},actual:expected,commandSha256}));
  const source=readFileSync(new URL('./release-toolchain-full-rehearsal.mjs',import.meta.url),'utf8');
  assert.match(source,/const expected=fact\(child.pid\)/);assert.match(source,/child.spawnargs\[1\]===FILE/);assert.match(source,/actual=inspect\(\);return actual.commandSha256===commandSha256/);
- assert.match(source,/need\(isDeepStrictEqual\(binding\(actual\),binding\(expected\)\),'fixture_process_identity_changed'\)/);
+ assert.match(source,/isDeepStrictEqual\(actualBirth,expectedBirth\)&&\[emptyCommandSha256,expectedCommand\].includes\(actualCommand\)/);
+});
+
+test('cleared argv during exit is still live until disappearance, not an identity failure or a stopped-process certificate',()=>{
+ const digest=value=>createHash('sha256').update(value).digest('hex'),expected={pid:18590,startTicks:'19689',state:'R',executable:'/usr/bin/node',cwd:'/owned',commandSha256:digest('actual-command')};
+ assert.equal(bookingNativeProcessAlive(expected,{...expected,state:'S'}),true);
+ assert.equal(bookingNativeProcessAlive(expected,{...expected,commandSha256:digest('')}),true);
+ assert.equal(bookingNativeProcessAlive(expected,{...expected,state:'Z',commandSha256:digest('')}),false);
+ for(const patch of [{pid:18591},{startTicks:'19690'},{executable:'/bin/sh'},{cwd:'/production'},{commandSha256:digest('foreign')}])assert.throws(()=>bookingNativeProcessAlive(expected,{...expected,...patch}));
+ for(const patch of [{pid:18591},{startTicks:'19690'},{executable:'/bin/sh'},{cwd:'/production'}])assert.throws(()=>bookingNativeProcessAlive(expected,{...expected,...patch,commandSha256:digest('')}));
 });
 
 test('startup failure reaps only the owned child and never calls a foreign or unconfirmed birth stopped',async()=>{

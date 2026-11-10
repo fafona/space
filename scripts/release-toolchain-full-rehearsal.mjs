@@ -45,7 +45,17 @@ function write(file,value){bookingHostWriteOnce(file,typeof value==='string'?val
 function fact(pid){const root='/proc/'+pid,text=fs.readFileSync(root+'/stat','utf8'),f=text.slice(text.lastIndexOf(')')+2).trim().split(/\s+/);need(fs.lstatSync(root).uid===0,'process_owner');
  return {pid,startTicks:f[19],state:f[0],executable:f[0]==='Z'?null:fs.realpathSync(root+'/exe'),cwd:f[0]==='Z'?null:fs.realpathSync(root+'/cwd'),commandSha256:hash(fs.readFileSync(root+'/cmdline'))};}
 const binding=f=>Object.fromEntries(Object.entries(f).filter(([k])=>k!=='state'));
-function alive(expected){try{const actual=fact(expected.pid);if(actual.state==='Z')return false;need(isDeepStrictEqual(binding(actual),binding(expected)),'fixture_process_identity_changed');return true;}catch(e){if(['ENOENT','ESRCH'].includes(e.code))return false;throw e;}}
+export function bookingNativeProcessAlive(expected,actual){
+ if(actual.state==='Z')return false;
+ // Linux also clears argv just before an exiting task becomes a zombie.
+ // Keep that SAME birth/executable/cwd live until actual disappearance/close;
+ // never certify a cleared command as absence or accept another command.
+ const {commandSha256:actualCommand,...actualBirth}=binding(actual),{commandSha256:expectedCommand,...expectedBirth}=binding(expected);
+ need(isDeepStrictEqual(actualBirth,expectedBirth)&&[emptyCommandSha256,expectedCommand].includes(actualCommand),'fixture_process_identity_changed');return true;
+}
+function alive(expected){let actual;try{actual=fact(expected.pid);return bookingNativeProcessAlive(expected,actual);}catch(e){if(['ENOENT','ESRCH'].includes(e.code))return false;
+ if(actual&&e.message==='booking_native_fixture_process_identity_changed'&&diagnosticRoot)try{write(diagnosticRoot+'/process-identity-mismatch-'+randomUUID()+'.json',{kind:'owned-native-process-identity-mismatch',expected,actual,observationOnly:true,publicationAuthority:false,at:now()});}catch{}
+ throw e;}}
 async function stop(expected){if(!alive(expected))return;need(expected.cwd.startsWith('/var/lib/faolla-booking-full-rehearsal-')||expected.executable===NGINX&&
  fs.readFileSync('/proc/'+expected.pid+'/cmdline','utf8').includes('/var/lib/faolla-booking-full-rehearsal-'),'stop_not_owned');process.kill(expected.pid,'SIGTERM');
  for(let i=0;i<100&&alive(expected);i++)await wait(20);if(alive(expected)){process.kill(expected.pid,'SIGKILL');for(let i=0;i<100&&alive(expected);i++)await wait(20);}need(!alive(expected),'fixture_not_stopped');}
