@@ -11,7 +11,7 @@ import {BOOKING_RETENTION_KIND} from './booking-handoff-retention.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {assertOnlineRetentionHistory,inspectOnlineRetentionWindow,retentionHash,retentionCanonicalText} from './online-release-retention-policy.mjs';
 import {assertOnlineToolOwnedPath,createOnlineReleaseToolPlan,readOnlineToolInventory,runOnlineToolGit} from './prepare-online-release-tool.mjs';
-import {normalizeRetirementProcess} from './online-release-retirement.mjs';
+import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess} from './release-toolchain-process-observation.mjs';
 import {bookingWorkerEntryMode} from './release-toolchain-worker-entry.mjs';
 import {assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
 import {assertApplicationWorkerSuccessor} from './application-release-policy.mjs';

@@ -127,7 +127,10 @@ export async function runOrdinaryApplicationPublication(target,baseline){
  const selected=ordinaryPublicationSteps(target,baseline,readState()),attemptId=randomUUID(),attempt=root+'/attempt-'+attemptId;
  fs.mkdirSync(attempt,{mode:0o700});bookingHostSync(root);
  return executeOrdinaryApplicationPublication({target,
-  admit:async()=>{const review=await collectRemoteReleaseReview(target);assertReviewFresh(review,target);seal(attempt,'admission.json',{kind:'ordinary-application-publication-admitted',target,baseline,attemptId,selected,review,inventorySha256:plan.inventorySha256,mailEnabled:false,at:new Date().toISOString()});},
+  admit:async()=>{const review=await collectRemoteReleaseReview(target);assertReviewFresh(review,target);seal(attempt,'admission.json',{kind:'ordinary-application-publication-admitted',target,baseline,attemptId,selected,review,inventorySha256:plan.inventorySha256,mailEnabled:false,at:new Date().toISOString()});
+   const log=attempt+'/host-boot.log',fd=fs.openSync(log,fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);
+   try{const result=spawnSync('/usr/bin/node',[plan.source+'/scripts/application-release-host-reboot.mjs','reconcile'],{cwd:plan.source,env:bookingHostEnvironment(),stdio:['ignore',fd,fd],timeout:900000});need(result.status===0&&!result.signal&&!result.error,'host_boot_recovery_unconfirmed');}finally{fs.fsyncSync(fd);fs.closeSync(fd);}
+  },
   stage:async()=>{
    const args=ordinaryPublicationSteps(target,baseline,readState()).stage;
    if(args)await child(plan.source,args,attempt+'/stage.log',1500000);

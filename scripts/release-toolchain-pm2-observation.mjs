@@ -7,7 +7,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {ACTIVE_BOOKING_INCIDENT as P} from './release-toolchain-active-generation-contract.mjs';
 import {BOOKING_HANDOFF_PM2_PROVENANCE as FRAMEWORK,BOOKING_HANDOFF_LEGACY_DIRECTORY as LEGACY} from './booking-handoff-policy.mjs';
 import {ownedReleasePath} from './release-toolchain-source.mjs';
-import {normalizeRetirementProcess} from './online-release-retirement.mjs';
+import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess} from './release-toolchain-process-observation.mjs';
 import {bookingLegacyRpcExpected} from './booking-handoff-legacy.mjs';
 import {captureTrustedPython,verifyTrustedPython} from './production-maintenance-trusted-python.mjs';
 import {sha256,requireToolchain as need} from './release-toolchain-contracts.mjs';
@@ -26,13 +26,14 @@ const bridge=String.raw`import importlib.util,json,os,socket,sys,time
 v=json.loads(sys.stdin.buffer.read(65537))
 if type(v) is not dict or set(v)!={'socket','daemon'} or os.getuid()!=0: raise RuntimeError('read_only_registry_request')
 s=importlib.util.spec_from_file_location('fixed_read_only_pm2',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+r=importlib.util.spec_from_file_location('resurrection_read_schema',sys.argv[2]);adapter=importlib.util.module_from_spec(r);r.loader.exec_module(adapter)
 d=m._peer._validate_expected(v['daemon']);p=v['socket'];chain=m._peer._path_chain(p,0)
 with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as c:
  deadline=time.monotonic()+10;c.settimeout(10);c.connect(p);session=m._Session(c,d,p,chain,deadline)
  if session.call('getVersion',{})!='6.0.14': raise RuntimeError('read_only_registry_version')
  rows=session.call('getMonitorData',{});session.verify()
  if type(rows) is not list or not 1<=len(rows)<=128: raise RuntimeError('read_only_registry_shape')
- print(json.dumps({'version':1,'pm2Version':'6.0.14','peerVerified':True,'registry':rows,'filteredRegistry':m._filter_registry(rows)},separators=(',',':'),allow_nan=False))
+ print(json.dumps({'version':1,'pm2Version':'6.0.14','peerVerified':True,'registry':rows,'filteredRegistry':m._filter_registry(adapter.project(rows))},separators=(',',':'),allow_nan=False))
 `;
 function collect({home,source}){
  need(process.platform==='linux'&&process.getuid?.()===0&&process.version===FRAMEWORK.nodeVersion,'unsupported_runtime');ownedReleasePath(home,{directory:true});ownedReleasePath(home+'/pm2.pid');
@@ -40,7 +41,9 @@ function collect({home,source}){
  const pidText=fs.readFileSync(home+'/pm2.pid','utf8');need(/^[1-9][0-9]{0,9}\n?$/.test(pidText),'evidence_invalid');const pid=Number(pidText.trim()),daemon=fact(pid),expected=peer(pid);
  need(daemon.executable==='/usr/bin/node'&&fs.readFileSync('/proc/'+pid+'/cmdline','utf8').replace(/\0+$/,'')==='PM2 v6.0.14: God Daemon ('+home+')','owned_resource_changed');
  const code=sourceProof(source),python=captureTrustedPython();verifyTrustedPython(python);
- const r=spawnSync(python.target.path,['-I','-S','-B','-c',bridge,source+'/production-maintenance-pm2-control.py'],{input:JSON.stringify({socket:home+'/rpc.sock',daemon:expected}),encoding:'utf8',timeout:15000,killSignal:'SIGKILL',maxBuffer:4*1024**2,cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},windowsHide:true});
+ const representation=fileURLToPath(new URL('./release-toolchain-resurrection-pm2.py',import.meta.url));ownedReleasePath(representation);const representationHash=sha256(fs.readFileSync(representation));
+ const r=spawnSync(python.target.path,['-I','-S','-B','-c',bridge,source+'/production-maintenance-pm2-control.py',representation],{input:JSON.stringify({socket:home+'/rpc.sock',daemon:expected}),encoding:'utf8',timeout:15000,killSignal:'SIGKILL',maxBuffer:4*1024**2,cwd:'/',env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'},windowsHide:true});
+ ownedReleasePath(representation);same(sha256(fs.readFileSync(representation)),representationHash);
  verifyTrustedPython(python);same(sourceProof(source),code);same(fact(pid),daemon);same(peer(pid),expected);same(fs.readFileSync(home+'/pm2.pid','utf8'),pidText);
  // Do not include stdout/stderr in an exception: the full registry contains
  // credentials. A refused read has no side effects and no fallback CLI path.

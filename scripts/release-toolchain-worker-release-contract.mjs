@@ -2,6 +2,7 @@
 // website certificates, gate bytes, active/rollback files and builds stay put.
 import {isDeepStrictEqual} from 'node:util';
 import {createHash} from 'node:crypto';
+import {HOST_REBOOT_KIND,latestBookingVerifierCertificate} from './release-toolchain-host-reboot-contract.mjs';
 export const BOOKING_WORKER_RELEASE_KIND='booking-worker';
 const C='f274ad615550c83717aa7af2ad32339608e6f8aa',NAME='merchant-space-booking-atomic-'+C.slice(0,12);
 const need=(v,c)=>{if(!v)throw Error('booking_worker_release_'+c);},same=(a,b)=>need(isDeepStrictEqual(a,b),'changed');
@@ -58,6 +59,6 @@ export function bookingWorkerReleaseReplacements(history){
 }
 export function assertBookingWorkerExecutionRevision({gate,history,toolRevision}){
  need(sha(toolRevision),'execution');if(toolRevision===gate.toolRevision)return true;
- const c=history.entries.filter(c=>c.kind===BOOKING_WORKER_RELEASE_KIND).at(-1);need(c&&c.toolRevision===toolRevision&&c.workerRelease.toolRevision===toolRevision&&c.workerRelease.gateSha256===createHash('sha256').update(JSON.stringify(canonical(gate))+'\n').digest('hex')&&c.workerRelease.publicationCertificateSha256===gate.certificateSha256,'execution');return true;
+ const c=latestBookingVerifierCertificate(history),r=c?.kind===HOST_REBOOT_KIND?c.hostReboot:c?.workerRelease;need(c&&c.toolRevision===toolRevision&&(c.kind===HOST_REBOOT_KIND||r.toolRevision===toolRevision)&&r.gateSha256===createHash('sha256').update(JSON.stringify(canonical(gate))+'\n').digest('hex')&&r.publicationCertificateSha256===gate.certificateSha256,'execution');return true;
 }
 function canonical(v){return Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;}

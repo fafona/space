@@ -33,7 +33,9 @@ with zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read(134217729))) as z:
   root=rows[0].name.rsplit('/reports/',1)[0]
   cleanup=tar.getmember(root+'/reports/cleanup-verified.json')
   if not cleanup.isfile() or cleanup.size>65536: raise ValueError('cleanup')
-  result={'entry':json.load(tar.extractfile(rows[0])),'cleanup':json.load(tar.extractfile(cleanup))}
+  boot=tar.getmember(root+'/reports/host-reboot-resurrection-verified.json')
+  if not boot.isfile() or boot.size>65536: raise ValueError('host_boot')
+  result={'entry':json.load(tar.extractfile(rows[0])),'cleanup':json.load(tar.extractfile(cleanup)),'hostReboot':json.load(tar.extractfile(boot))}
   print(json.dumps(result,separators=(',',':')))
 `;
  const runtime=captureTrustedPython();verifyTrustedPython(runtime);const result=spawnSync(runtime.target.path,['-I','-S','-B','-c',python],{input:bytes,encoding:'utf8',timeout:15000,maxBuffer:262144,env:{PATH:'/usr/bin:/bin',LANG:'C',LC_ALL:'C'}});verifyTrustedPython(runtime);need(result.status===0&&!result.signal&&!result.error&&result.stderr==='','evidence_invalid');const report=JSON.parse(result.stdout),sourceHashes=Object.fromEntries(SOURCES.map(name=>[name,sha256(fs.readFileSync(source+'/scripts/'+name))]));

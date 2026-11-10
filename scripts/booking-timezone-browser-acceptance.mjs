@@ -69,7 +69,7 @@ async function mount(browser, { width = 1280, locale = "zh-CN", timeZone = "", d
   const { css, script } = await assets();
   await page.addStyleTag({ content: css }); await page.addScriptTag({ content: script });
   const rules = async () => page.getByRole("button").filter({ hasText: await page.evaluate(() => window.__rulesLabel) }).click();
-  const select = page.getByRole("combobox");
+  const select = page.getByRole("combobox", { name: /IANA/ });
   const search = page.getByRole("searchbox");
   return { context, page, errors, unexpected, writes, reads, rules, select, search, firstRead, release: () => releaseFirst?.(),
     async verify() { assert.deepEqual(errors, []); assert.deepEqual(unexpected, []); await context.close(); } };

@@ -40,7 +40,7 @@ settings absent from ballot snapshots could not be recovered that way.
 - `npm run test:polls`: 32 tests passed, covering existing polling behavior and
   new archive, storage/sanitizer round-trip, alias deduplication, exact draft
   retention, deletion/restore and legacy recovery.
-- `npm run test:polls:browser`: 4 isolated Chromium acceptance cases, including
+- `npm run test:polls-browser`: 4 isolated Chromium acceptance cases, including
   desktop/mobile real components, RAF-queued parent patches, buffered text,
   refresh/restore, cancelled/failed actions, legacy scoping and late results.
   Every request is intercepted; unexpected requests fail the case. Synthetic

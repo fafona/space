@@ -4,14 +4,15 @@ import {spawnSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 import {fileURLToPath} from 'node:url';
-import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertApplicationReleasePackage} from './application-release-policy.mjs';
+import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertApplicationReleasePackage} from './application-release-compatibility.mjs';
 import {parseSourceTree,sourceGit} from './release-toolchain-source.mjs';
 import {reviewedApplicationExecution,reviewedApplicationStandbyExecution} from './application-release-authority.mjs';
 import {readOnlineRetentionHistory, ONLINE_RETENTION_ROOT, ONLINE_RETENTION_FILES,
   buildOnlineRetentionPreparation, buildOnlineRetentionReceipt} from './online-release-retention.mjs';
 import {ONLINE_RETENTION_POLICY, assertOnlineRetentionPlan, assertOnlineRetentionCompletion,
   assertOnlineRetentionHistory, retentionHash, retentionCanonicalText, onlineRetentionHeadRecord} from './online-release-retention-policy.mjs';
-import {normalizeRetirementProcess, parseRetirementSockets, assertExistingPm2Directory} from './online-release-retirement.mjs';
+import {parseRetirementSockets, assertExistingPm2Directory} from './online-release-retirement.mjs';
+import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess} from './release-toolchain-process-observation.mjs';
 import {WEB_RELEASE_FILES, WEB_RELEASE_PROXY, WEB_RELEASE_MARKER} from './web-presentation-release-policy.mjs';
 import {assertOnlineToolOwnedPath, createOnlineReleaseToolPlan, verifyOnlineReleaseTool,
   runOnlineToolGit, assertOnlineToolNoPending} from './prepare-online-release-tool.mjs';

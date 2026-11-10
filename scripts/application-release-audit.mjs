@@ -1,11 +1,12 @@
 // Independent read-only acceptance. No process control, RPC mutation, database
 // write, lock cleanup, route replacement or success-marker creation is exposed.
 import * as fs from 'node:fs';
+import {latestBookingVerifierCertificate,REBOOT_WORKER_NAME} from './release-toolchain-host-reboot-contract.mjs';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createHash,randomUUID} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
-import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest} from './application-release-policy.mjs';
+import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertRecordedSchemaDatabase} from './application-release-compatibility.mjs';
 import {applicationPublicationProof} from './application-release-publication-proof.mjs';
 import {inspectPinnedExecutionSource,parseSourceTree,sourceGit,ownedReleasePath} from './release-toolchain-source.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
@@ -13,7 +14,7 @@ import {inspectOnlineRetentionWindow} from './online-release-retention-policy.mj
 import {assertOnlineRetentionPersistedProcesses} from './online-release-retention-writer.mjs';
 import {withPinnedFormalPm2Process} from './release-toolchain-proc-witness.mjs';
 import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
-import {normalizeRetirementProcess} from './online-release-retirement.mjs';
+import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess} from './release-toolchain-process-observation.mjs';
 import {assertBookingAtomicWorkerGate,assertBookingAtomicWorkerEnvironment} from './booking-atomic-worker.mjs';
 import {assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
 import {readNaturalWorkerCycle} from './release-toolchain-worker-release-host.mjs';
@@ -46,23 +47,25 @@ export async function observeApplicationRelease(target,{requireCompletion=true}=
     digest(bookingHostRead(state.directory+'/.env.local'))===state.applicationEnvironmentFileSha256,'runtime');
   const manifest=JSON.parse(sourceGit(REPOSITORY,['show',target+':'+APPLICATION_RELEASE_MANIFEST]));
   const proof=assertApplicationReleaseManifest(manifest,{baseline:state.baseline,baselineRows:parseSourceTree(sourceGit(REPOSITORY,['ls-tree','-r','-z',state.baseline])),targetRows:tool.rows});
+  const recordedSchema=assertRecordedSchemaDatabase(manifest);
   const publication=applicationPublicationProof(history,target);
   need(publication.manifestSha256===proof.manifestSha256&&state.applicationManifestSha256===proof.manifestSha256,'manifest');
   if(requireCompletion)need(state.applicationCompletion?.status==='completed'&&publication.completionCertificates.includes(state.applicationCompletion.certificateSha256)&&state.applicationCompletion.workerPid>0,'completion_missing');
   const snapshot=collectFormalBookingPm2Registry(),current=snapshot.rows.map(normalizeRetirementProcess);
   const window=inspectOnlineRetentionWindow({history,actualActive:active,current});
   need(window.phase==='stable'&&window.active.target===target&&window.stableRollback.target===state.baseline,'retained_window');
-  const workerCertificate=history.entries.filter(entry=>entry.kind==='booking-worker').at(-1);
+  const workerCertificate=latestBookingVerifierCertificate(history);
   need(workerCertificate,'worker_certificate');
-  const worker=snapshot.rows.find(row=>row.name===workerCertificate.workerRelease.priorWorker.name);
+  const worker=snapshot.rows.find(row=>row.name===(workerCertificate.workerRelease?.priorWorker.name??REBOOT_WORKER_NAME));
   need(worker?.pid>0&&worker.pm2_env.status==='online'&&worker.pm2_env.pm_exec_path==='/var/lib/faolla-online-code/'+workerCertificate.toolRevision+'/scripts/booking-atomic-worker.mjs','worker');
   assertBookingAtomicWorkerEnvironment(worker.pm2_env);
-  const gateFile='/var/lib/faolla-booking-handoff/'+workerCertificate.workerRelease.candidate+'/worker-enabled.json';
+  const gateFile='/var/lib/faolla-booking-handoff/'+(workerCertificate.workerRelease?.candidate??'f274ad615550c83717aa7af2ad32339608e6f8aa')+'/worker-enabled.json';
   const gate=read(gateFile);assertBookingWorkerExecutionRevision({gate,history,toolRevision:workerCertificate.toolRevision});
   assertBookingAtomicWorkerGate({gate,history,actualActive:active,current,toolRevision:gate.toolRevision});
-  need(digest(bookingHostRead(gateFile))===workerCertificate.workerRelease.gateSha256,'worker_gate');
+  const verifierContext=workerCertificate.workerRelease??workerCertificate.hostReboot;
+  need(digest(bookingHostRead(gateFile))===verifierContext.gateSha256,'worker_gate');
   const workerSource=inspectPinnedExecutionSource({revision:workerCertificate.toolRevision,directory:'/var/lib/faolla-online-code/'+workerCertificate.toolRevision});
-  need(workerSource.inventorySha256===workerCertificate.workerRelease.inventorySha256,'worker_source');
+  need(workerSource.inventorySha256===(verifierContext.inventorySha256??verifierContext.sourceInventorySha256),'worker_source');
   for(const file of WEB_RELEASE_FILES)need(digest(bookingHostRead(WEB_RELEASE_PROXY+'/'+file,{privateMode:false}))===state.configs[file]?.newHash,'routing');
   const dump=read('/root/.pm2/dump.pm2');assertOnlineRetentionPersistedProcesses(snapshot.rows,dump,{processes:current.slice().sort((a,b)=>a.pmId-b.pmId)});
   const identity=fs.readFileSync('/proc/'+worker.pid+'/stat','utf8').split(')').slice(1).join(')').trim().split(/\s+/)[19];
@@ -78,7 +81,7 @@ export async function observeApplicationRelease(target,{requireCompletion=true}=
   if(requireCompletion)need(state.applicationCompletion.workerPid===worker.pid,'completion_worker');
   return{kind:'ordinary-application-release-readonly-verified',target,baseline:state.baseline,certificateSha256:history.headSha256,
    manifestSha256:proof.manifestSha256,workerPid:worker.pid,naturalCycle:cycle,publicProof,savedProcessConfigurationVerified:true,
-   rollbackRetained:true,otherProcessesUnchanged:true,businessDataWrittenByAudit:false,mailEnabled:false,at:new Date().toISOString()};
+   rollbackRetained:true,otherProcessesUnchanged:true,businessDataWrittenByAudit:false,mailEnabled:false,recordedSchema,at:new Date().toISOString()};
  });
 }
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){

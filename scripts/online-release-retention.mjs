@@ -109,7 +109,7 @@ export function readOnlineRetentionHistory(root = ONLINE_RETENTION_ROOT, io = fs
       if (hash(files[file].text) !== c[key]) fail('proof_hash_changed');
     assertOnlineRetentionCompletion(before, after, history);
     for (const key of ['kind', 'sequence', 'previousSha256', 'legacySha256', 'rollingHeadSha256', 'rollingHistorySha256',
-      'toolRevision', 'active', 'rollback', 'victim', 'rollbackProof', 'bookingHandoff', 'workerRelease', 'applicationRelease']) equal(c[key], before[key], 'certificate_context_changed');
+      'toolRevision', 'active', 'rollback', 'victim', 'rollbackProof', 'bookingHandoff', 'workerRelease', 'hostReboot', 'applicationRelease']) equal(c[key], before[key], 'certificate_context_changed');
     equal(c.processes, after.processes, 'certificate_processes_changed');
     equal(c.stoppedProcess, c.kind === 'retire' ? after.processes.find(p => p.name === c.victim.process.name) : null, 'certificate_stopped_changed');
     const expectedPrepared = {version: 2, policy: ONLINE_RETENTION_POLICY, status: 'prepared',
@@ -118,12 +118,13 @@ export function readOnlineRetentionHistory(root = ONLINE_RETENTION_ROOT, io = fs
       ...(c.rollbackProof !== undefined ? {rollbackProof: c.rollbackProof} : {}), preparedAt: prepared.preparedAt};
     if (c.bookingHandoff !== undefined) expectedPrepared.bookingHandoff = c.bookingHandoff;
     if (c.workerRelease !== undefined) expectedPrepared.workerRelease = c.workerRelease;
+    if (c.hostReboot !== undefined) expectedPrepared.hostReboot = c.hostReboot;
     if (c.applicationRelease !== undefined) expectedPrepared.applicationRelease = c.applicationRelease;
     equal(prepared, expectedPrepared, 'preparation_changed');
     if (typeof prepared.preparedAt !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(prepared.preparedAt) ||
         !Number.isFinite(Date.parse(prepared.preparedAt)) || new Date(prepared.preparedAt).toISOString() !== prepared.preparedAt ||
         Date.parse(prepared.preparedAt) > Date.parse(c.completedAt) ||
-        Date.parse(prepared.preparedAt) < Date.parse(before.activeState?.activatedAt??before.workerRelease?.window.startedAt)) fail('preparation_time_invalid');
+        Date.parse(prepared.preparedAt) < Date.parse(before.activeState?.activatedAt??before.workerRelease?.window.startedAt??before.hostReboot?.window.startedAt)) fail('preparation_time_invalid');
     if (!recovery || recovery.version !== 2 || Object.keys(recovery).sort().join(',') !== 'process,version') fail('recovery_invalid');
     if (c.kind === 'retire') equal(normalizeRetirementProcess(recovery.process), c.victim.process, 'recovery_process_changed');
     else if (recovery.process !== null) fail('unexpected_recovery_process');
@@ -142,6 +143,7 @@ const context = before => ({...Object.fromEntries(CONTEXT_KEYS.map(key => [key, 
   ...(before.rollbackProof !== undefined ? {rollbackProof: structuredClone(before.rollbackProof)} : {}),
   ...(before.bookingHandoff !== undefined ? {bookingHandoff: structuredClone(before.bookingHandoff)} : {}),
   ...(before.workerRelease !== undefined ? {workerRelease: structuredClone(before.workerRelease)} : {}),
+  ...(before.hostReboot !== undefined ? {hostReboot: structuredClone(before.hostReboot)} : {}),
   ...(before.applicationRelease !== undefined ? {applicationRelease: structuredClone(before.applicationRelease)} : {})});
 function timestamp(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) ||
@@ -150,7 +152,7 @@ function timestamp(value) {
 /** Pure serializers shared by the future writer and tests. No filesystem write. */
 export function buildOnlineRetentionPreparation(before, recovery, history, preparedAt) {
   assertOnlineRetentionPlan(before, history); timestamp(preparedAt);
-  if (Date.parse(preparedAt) < Date.parse(before.activeState?.activatedAt??before.workerRelease?.window.startedAt)) fail('preparation_time_invalid');
+  if (Date.parse(preparedAt) < Date.parse(before.activeState?.activatedAt??before.workerRelease?.window.startedAt??before.hostReboot?.window.startedAt)) fail('preparation_time_invalid');
   if (!recovery || recovery.version !== 2 || Object.keys(recovery).sort().join(',') !== 'process,version') fail('recovery_invalid');
   if (before.kind === 'retire') equal(normalizeRetirementProcess(recovery.process), before.victim.process, 'recovery_process_changed');
   else if (recovery.process !== null) fail('unexpected_recovery_process');
