@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
 import {buildOnlineRetentionReceipt} from './online-release-retention.mjs';
 import {retentionHash,retentionCanonicalText,assertOnlineRetentionHistory,inspectOnlineRetentionWindow,assertOnlineRetentionPublication} from './online-release-retention-policy.mjs';
 import {assertHostBootChain,assertHostRebootPlan,assertHostRebootCompletion,resolveCertifiedProcess,REBOOT_WORKER_NAME as NAME} from './release-toolchain-host-reboot-contract.mjs';
 import {assertBookingAtomicWorkerGate} from './booking-atomic-worker.mjs';
 import {assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
-import {executeHostRebootRecovery} from './release-toolchain-host-reboot-state.mjs';
+import {executeHostRebootRecovery,assertHostBootOriginalDumpSnapshots} from './release-toolchain-host-reboot-state.mjs';
 import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess} from './release-toolchain-process-observation.mjs';
 const clone=structuredClone,H=x=>x.repeat(64),S=x=>x.repeat(40);
 import {hostRebootFixture as fixture} from './test-support/release-toolchain-host-reboot-fixture.mjs';
@@ -53,6 +54,11 @@ test('resuming after every durable boundary never sends a second verifier restar
   if(boundary==='attempt'){await assert.rejects(executeHostRebootRecovery(ops),/restart-unknown-never-replay/);assert.equal(restarts,0);assert.equal(completed,false);}
   else{await executeHostRebootRecovery(ops);assert.equal(restarts,1);assert.equal(completed,true);}
  }
+});
+test('both original manager dump and rotating backup remain independently hash-bound throughout recovery',()=>{
+ const hash=v=>createHash('sha256').update(v).digest('hex'),proof={primary:'synthetic-primary',backup:'synthetic-backup',primarySha256:hash('synthetic-primary'),backupSha256:hash('synthetic-backup')};
+ assertHostBootOriginalDumpSnapshots(proof);assertHostBootOriginalDumpSnapshots({...proof,backup:null,backupSha256:null});
+ for(const change of [v=>v.primary+='x',v=>v.backup+='x',v=>v.backup=null,v=>v.backupSha256=null]){const changed=clone(proof);change(changed);assert.throws(()=>assertHostBootOriginalDumpSnapshots(changed),/original_dump_changed/);}
 });
 test('post-boot Python worker projection is strict and cannot obtain mutation authority outside the installed entry',()=>{
  const result=spawnSync(process.platform==='win32'?'python.exe':'python3',['-I','-S','-B',fileURLToPath(new URL('./release-toolchain-host-reboot-pm2.test.py',import.meta.url))],{encoding:'utf8',timeout:10000,maxBuffer:262144,windowsHide:true,env:{PATH:process.env.PATH??'',SystemRoot:process.env.SystemRoot??'',TEMP:process.env.TEMP??'',TMP:process.env.TMP??''}});assert.equal(result.status,0,result.stderr);assert.match(result.stderr,/Ran 5 tests/);assert.match(result.stderr,/OK/);
