@@ -138,7 +138,7 @@
       "before": null,
       "after": [
         "100644",
-        "525499035c3a7db0e7e60cbff86af1c940e7d498"
+        "8a87045950e3a1ef7bb61aae7109af6a2c6e653f"
       ]
     },
     {
@@ -240,7 +240,7 @@
       "before": null,
       "after": [
         "100644",
-        "a8e9ba6326fab1674a36ca0e82fdc8d965504060"
+        "1406ddbfc3c830815a197d1f643e4a1c3dc2052e"
       ]
     },
     {
@@ -2799,7 +2799,7 @@
       "before": null,
       "after": [
         "100644",
-        "6b10b429e3f2cf3a9a324d7ebc0ffaa7357bf9c7"
+        "3d25dbb569a6544b9b8b04fe7c2a545242d695ee"
       ]
     },
     {
@@ -4032,7 +4032,16 @@
       "before": null,
       "after": [
         "100644",
-        "b8bdd8dbb288e9b31ef69f593a9549666467326e"
+        "15735f438609e108569411e1ad869c5c126526e2"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-process-observation.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "c06b903272700835bc56fb8efe6a5ce973f1c1c7"
       ]
     },
     {
@@ -5402,7 +5411,8 @@
     "src/app/api/bookings/workbench/route.test.ts",
     "src/lib/merchantBookingTimeZoneOptions.test.ts",
     "src/lib/merchantPollRounds.test.ts",
-    "scripts/application-release-worker-compatibility.test.mjs"
+    "scripts/application-release-worker-compatibility.test.mjs",
+    "scripts/release-toolchain-process-observation.test.mjs"
   ],
   "recordedSchema": {
     "kind": "already-applied-booking-safeupdate-v1",
