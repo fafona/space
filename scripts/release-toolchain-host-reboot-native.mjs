@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess,assertResurrectedManagerDefinition} from './release-toolchain-process-observation.mjs';
-import {assertHostBootCohort,assertDifferentHostBoot} from './release-toolchain-host-reboot-contract.mjs';
+import {assertHostBootCohort,assertDifferentHostBoot,assertHostBootRetainedBuild} from './release-toolchain-host-reboot-contract.mjs';
 import {captureProcessFact} from './check-production-runtime-supervision.mjs';
 import {withOwnedCiPm2ProcessWitness} from './release-toolchain-proc-witness.mjs';
 import {inspectResurrectedPm2Registry,captureResurrectedPm2DumpTarget,persistResurrectedPm2Dump,verifyResurrectedPm2Dump} from './release-toolchain-resurrection-pm2-adapter.mjs';
@@ -13,6 +13,9 @@ const need=(v,c)=>{if(!v)throw Error('host_reboot_native_'+c);},pause=ms=>new Pr
 const hash=b=>createHash('sha256').update(b).digest('hex');
 export async function acceptRealPm2Resurrection(root){
  need(process.platform==='linux'&&process.getuid?.()===0&&process.version==='v20.20.1'&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'&&process.env.FAOLLA_RELEASE_PRODUCTION_EQ==='1'&&/^\/var\/lib\/faolla-eq-[A-Za-z0-9]+$/.test(root)&&!['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'].some(p=>fs.existsSync(p)),'scope');
+ const nextProof=JSON.parse(fs.readFileSync(root+'/reports/retained-next-build-binding-verified.json','utf8')),buildBytes=fs.readFileSync(root+'/app/.next/BUILD_ID','utf8');
+ need(nextProof.kind==='real-next-retained-build-binding-verified'&&nextProof.realNextVersion==='16.3.4'&&['actualHttpRevisionObserved','actualBuildIdDistinct','buildArtifactUnchanged'].every(k=>nextProof[k]===true)&&nextProof.formalHostTouched===false&&nextProof.publicationAuthority===false,'actual_next_build_proof');
+ assertHostBootRetainedBuild({target:nextProof.toolRevision,buildBytes,proof:nextProof.proof});need(buildBytes.trim()!==nextProof.toolRevision,'actual_next_build_identity_distinct');
  const bootRoot=fs.mkdtempSync('/var/lib/faolla-eq-');fs.chmodSync(bootRoot,0o700);
  const home=bootRoot+'/pm2',app=bootRoot+'/app',pm2=root+'/dependencies/node_modules/pm2/bin/pm2';
  for(const p of [home,app])fs.mkdirSync(p,{mode:0o700});
@@ -48,6 +51,6 @@ export async function acceptRealPm2Resurrection(root){
   });
   report={kind:'real-pm2-resurrection-contract-verified',realPm2Version:'6.0.14',realProcessesObserved:true,actualDumpResurrected:true,stoppedRegistrationPreserved:true,wholeEnvironmentVerified:true,sameKernelBootRefused:true,kernelRebootNotSimulated:true,actualPersistenceAfterResurrection:true,unmodifiedSharedValidators:true,managerIdsActuallyReassigned:true,stoppedPidPathHistorical:true,productionAuthority:false,formalHostTouched:false,savedDumpSha256:hash(dump),sourceHashes:Object.fromEntries(['release-toolchain-host-reboot-native.mjs','release-toolchain-host-reboot-contract.mjs','release-toolchain-host-reboot-pm2.py','release-toolchain-resurrection-pm2.py','release-toolchain-resurrection-pm2-adapter.mjs','release-toolchain-process-observation.mjs'].map(file=>[file,hash(fs.readFileSync(new URL('./'+file,import.meta.url)))]))};
  }finally{await stop();need([...children.values()].every(f=>!live(f)),'cleanup');}
- report.allOwnedProcessesStopped=true;
+ report.allOwnedProcessesStopped=true;report.actualNextBuildBindingVerified=true;
  fs.writeFileSync(root+'/reports/host-reboot-resurrection-verified.json',JSON.stringify(report)+'\n',{mode:0o600,flag:'wx'});return report;
 }

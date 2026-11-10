@@ -19,6 +19,7 @@ import{assertWorkerApplicationInputs}from'./release-toolchain-worker-application
 import{bookingReadyWorkerConfiguration,assertBookingReadyWorkerRawTransition}from'./booking-ready-worker.mjs';
 import{assertActiveBookingWorkerConfigurationTransition,waitForActiveBookingWorkerSettlement,activeBookingWorkerObservation}from'./release-toolchain-active-generation-worker-settlement.mjs';
 import{acceptRealPm2Resurrection}from'./release-toolchain-host-reboot-native.mjs';
+import{assertHostBootRetainedBuild}from'./release-toolchain-host-reboot-contract.mjs';
 const sha=b=>createHash('sha256').update(b).digest('hex'),need=(v,c)=>{if(!v)throw Error('equivalence_'+c);},sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const source=path.dirname(path.dirname(fileURLToPath(import.meta.url))),ANCHORS=['/root/.pm2/pm2.pid','/var/lib/faolla-online-release/active.json','/www/wwwroot/merchant-space.current'];
 need(process.platform==='linux'&&process.getuid?.()===0&&process.version==='v20.20.1'&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted'&&process.env.FAOLLA_RELEASE_PRODUCTION_EQ==='1'&&process.argv.length===2&&!ANCHORS.some(f=>fs.existsSync(f)),'ci_only');
@@ -91,6 +92,7 @@ try{
  for(const n of fs.readdirSync(application+'/node_modules')){if(n==='next')fs.cpSync(application+'/node_modules/next',release+'/node_modules/next',{recursive:true});else fs.symlinkSync(application+'/node_modules/'+n,release+'/node_modules/'+n);}
  need(JSON.parse(fs.readFileSync(release+'/node_modules/next/package.json','utf8')).version==='16.3.4','next_version');
  fs.writeFileSync(release+'/pages/index.js',"export default function Page(){return 'Real Next process fixture';}\n",{mode:0o600,flag:'wx'});fs.writeFileSync(release+'/package.json','{"name":"private-next-equivalence","private":true}\n',{mode:0o600,flag:'wx'});
+ fs.mkdirSync(release+'/pages/api',{mode:0o700});fs.writeFileSync(release+'/pages/api/app-web-version.js','export default function version(req,res){res.status(200).json({ok:true,buildId:'+JSON.stringify(revision)+',ownedFixture:true});}\n',{mode:0o600,flag:'wx'});
  stage='real-next-build';run('/usr/bin/node',[release+'/node_modules/next/dist/bin/next','build','--webpack'],undefined,120000,release);
  stage='pinned-pm2-install';run('/usr/bin/node',[npmCli,'install','--prefix',root+'/dependencies','--cache',root+'/cache','--registry=https://registry.npmjs.org','--ignore-scripts','--no-audit','--no-fund','pm2@6.0.14'],undefined,180000);
  const pm2=root+'/dependencies/node_modules/pm2';need(JSON.parse(fs.readFileSync(pm2+'/package.json','utf8')).version==='6.0.14','pm2_version');
@@ -103,6 +105,11 @@ try{
  const common=(await import(pm2+'/lib/Common.js')).default;need(common.isConfigFile(configFile)==='js'&&common.isConfigFile(root+'/ecosystem.cjs')===null,'pm2_config_recognition');
  fs.writeFileSync(configFile,'module.exports='+JSON.stringify(config)+';\n',{mode:0o600,flag:'wx'});run('/usr/bin/node',[pm2+'/bin/pm2','start',configFile]);
  const started=registry();need(started.length===1&&started[0].name===name&&started[0].pm_id===0&&started[0].pm2_env.pm_cwd===release&&started[0].pm2_env.pm_exec_path===release+'/node_modules/next/dist/bin/next','started_real_next');await ready(port);
+ const buildBytes=fs.readFileSync(release+'/.next/BUILD_ID','utf8'),versionResponse=await fetch('http://127.0.0.1:'+port+'/api/app-web-version',{redirect:'error',signal:AbortSignal.timeout(3000)}),versionValue=await versionResponse.json();
+ need(versionValue.ownedFixture===true&&buildBytes.trim()!==revision,'actual_next_build_identity_distinct');
+ const retainedBuildProof={target:revision,sourceHead:revision,sourceClean:true,buildSha256:sha(buildBytes),http:{status:versionResponse.status,ok:versionValue.ok,buildId:versionValue.buildId}};
+ assertHostBootRetainedBuild({target:revision,buildBytes,proof:retainedBuildProof});need(fs.readFileSync(release+'/.next/BUILD_ID','utf8')===buildBytes,'next_build_changed');
+ seal('retained-next-build-binding-verified.json',{kind:'real-next-retained-build-binding-verified',toolRevision:revision,realNextVersion:'16.3.4',actualHttpRevisionObserved:true,actualBuildIdDistinct:true,buildArtifactUnchanged:true,proof:retainedBuildProof,formalHostTouched:false,publicationAuthority:false});
  run('/usr/bin/node',[pm2+'/bin/pm2','start',release+'/scripts/unrelated.cjs','--name','eq-unrelated','--cwd',release]);
  // A third, genuinely owned still-gated worker. Its real PM2 id is 2; it never
  // aliases the formal worker's id/PID or touches application/DB credentials.
