@@ -38,11 +38,12 @@ async function mount(browser, width = 1600) {
   });
   await page.goto("https://redemption-audit.invalid/local-test");
   await page.addScriptTag({ content: await bundle() });
-  await page.getByRole("button", { name: "继续原单结算", exact: true }).waitFor();
+  await page.locator(".checkout-button").waitFor();
+  await page.getByRole("group", { name: "服务器保存的未结算购物车" }).waitFor();
   return { context, page, errors, unexpected };
 }
 const pendingCart = page => page.getByRole("group", { name: "服务器保存的未结算购物车" });
-const continueButton = page => page.getByRole("button", { name: "继续原单结算", exact: true });
+const continueButton = page => page.locator(".checkout-button");
 const log = page => page.getByTestId("request-log").textContent();
 
 test("pending server cart survives reload even when the catalog stock is zero and the current balance is lower", { timeout: 90_000 }, async () => {
@@ -61,11 +62,23 @@ test("pending server cart survives reload even when the catalog stock is zero an
             const bounds = span.getBoundingClientRect(), table = span.closest(".cart-table").getBoundingClientRect();
             return bounds.width > 0 && bounds.left >= table.left && bounds.right <= table.right;
           })), true, "original item codes, quantities and points must be visible even on narrow screens");
-          await view.page.getByText("原单待扣积分", { exact: true }).waitFor();
+          assert.equal(await view.page.getByLabel("原结算恢复", { exact: true }).count(), 0, "a valid original cart has no recovery banner");
+          assert.equal(await view.page.getByText("待结算原单", { exact: true }).count(), 0);
+          await view.page.locator(".member-line").getByText("合成会员 A", { exact: true }).waitFor();
+          await view.page.locator(".member-line").getByText("卡号: 10000000000001", { exact: true }).waitFor();
+          await view.page.locator(".member-line").getByText("积分: 20", { exact: true }).waitFor();
+          assert.equal(await view.page.locator(".member-line").evaluate(row => {
+            const bounds = row.getBoundingClientRect();
+            return [...row.children].every(child => { const rect = child.getBoundingClientRect(); return rect.left >= bounds.left && rect.right <= bounds.right + 1; });
+          }), true, "the original member heading must not overlap its controls on mobile");
+          assert.equal(await view.page.getByRole("button", { name: "清空", exact: true }).isVisible(), true);
+          await view.page.getByText("合计积分", { exact: true }).waitFor();
+          assert.equal(await continueButton(view.page).textContent(), "结算");
+          assert.equal(await view.page.getByRole("button", { name: "清除会员", exact: true }).isDisabled(), true);
           assert.equal(await view.page.getByTestId("financial-writes").textContent(), "0");
           assert.doesNotMatch(await log(view.page), /POST|PATCH/);
           const storage = await view.page.evaluate(() => [...Object.values(localStorage), ...Object.values(sessionStorage)].join("\n"));
-          assert.doesNotMatch(storage, /服务器原单商品|original-A|member-A/, "do not persist the server financial preview to browser storage");
+          assert.doesNotMatch(storage, /服务器原单商品|original-A|member-A|合成会员 A|10000000000001/, "do not persist the original cart or member preview to browser storage");
         }
         if (process.env.FAOLLA_REDEMPTION_PENDING_SCREENSHOTS) {
           const directory = path.resolve(process.env.FAOLLA_REDEMPTION_PENDING_SCREENSHOTS);
@@ -107,22 +120,23 @@ test("failed recheck and rejected retry keep the original goods visible without 
     try {
       await view.page.getByRole("button", { name: "再次核对失败", exact: true }).click();
       await pendingCart(view.page).getByText("服务器原单商品", { exact: true }).waitFor();
-      await view.page.getByRole("button", { name: "重新读取结算状态", exact: true }).click();
-      await view.page.getByRole("button", { name: "核对原单中", exact: true }).waitFor();
+      await view.page.getByRole("button", { name: "刷新", exact: true }).click();
+      await view.page.waitForFunction(() => document.querySelector(".checkout-button")?.disabled);
       assert.equal(await pendingCart(view.page).getByText("服务器原单商品", { exact: true }).count(), 1, "a pending GET must not clear the original goods");
       await view.page.getByRole("button", { name: "结束失败核对", exact: true }).click();
       await view.page.getByRole("heading", { name: "新结算已暂停", exact: true }).waitFor();
       assert.equal(await pendingCart(view.page).getByText("服务器原单商品", { exact: true }).count(), 1);
-      assert.equal(await view.page.getByRole("button", { name: "核对原单中", exact: true }).isDisabled(), true);
+      assert.equal(await continueButton(view.page).isDisabled(), true);
       await view.page.getByRole("button", { name: "原价已变化", exact: true }).click();
       await continueButton(view.page).click();
       await view.page.getByRole("alert").filter({ hasText: "原单价格或规则已变化" }).first().waitFor();
       assert.equal(await pendingCart(view.page).getByText("服务器原单商品", { exact: true }).count(), 1);
       assert.equal(await view.page.getByTestId("financial-writes").textContent(), "0");
-      await view.page.getByRole("button", { name: "放弃尚未完成的原结算", exact: true }).click();
+      await view.page.getByRole("button", { name: "清空", exact: true }).click();
       await view.page.getByRole("button", { name: "确认并开始下一单", exact: true }).click();
       await view.page.getByRole("button", { name: "结算", exact: true }).waitFor();
       assert.equal(await pendingCart(view.page).count(), 0);
+      assert.equal(await view.page.locator(".member-line").getByText("合成会员 A", { exact: true }).count(), 0);
       assert.deepEqual(view.errors, []); assert.deepEqual(view.unexpected, []);
     } finally { await view.context.close(); }
   } finally { await browser.close(); }
@@ -149,6 +163,7 @@ test("missing old preview fails closed; delayed responses never restore another 
       await view.page.waitForFunction(() => window.__delayedReadComplete);
       assert.equal(await pendingCart(view.page).count(), 0);
       assert.equal(await view.page.getByText("服务器原单商品", { exact: true }).count(), 0);
+      assert.equal(await view.page.locator(".member-line").getByText("合成会员 A", { exact: true }).count(), 0);
       assert.equal(await view.page.getByTestId("financial-writes").textContent(), "0");
       assert.deepEqual(view.errors, []); assert.deepEqual(view.unexpected, []);
     } finally { await view.context.close(); }
@@ -164,7 +179,7 @@ test("lost retry response and cancel/commit races expose the original paid resul
         await view.page.getByRole("button", { name: scenario, exact: true }).click();
         await pendingCart(view.page).getByText("服务器原单商品", { exact: true }).waitFor();
         if (scenario === "重试响应丢失") await continueButton(view.page).click();
-        else await view.page.getByRole("button", { name: "放弃尚未完成的原结算", exact: true }).click();
+        else await view.page.getByRole("button", { name: "清空", exact: true }).click();
         await view.page.getByRole("heading", { name: "原结算已完成，等待确认", exact: true }).waitFor();
         await view.page.getByLabel("服务器确认的原单金额").getByText(/80/).first().waitFor();
         assert.equal(await view.page.getByTestId("financial-writes").textContent(), "1");

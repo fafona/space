@@ -21,12 +21,20 @@ export type MerchantRedemptionCheckoutReceipt = {
 
 export type MerchantRedemptionCheckoutQuote = Pick<MerchantRedemptionCheckoutReceipt,
   "totalQuantity" | "grossPoints" | "couponPointDiscountTotal" | "totalPoints" | "couponCount" | "lines">;
+/** Read-only, permission-filtered member heading. Never a checkout identity. */
+export type MerchantRedemptionPendingMember = {
+  memberNo: string;
+  name: string;
+  pointBalance: number;
+  balanceAmount: number;
+};
 /** Display-only immutable quote, not a new checkout request or a paid receipt. */
 export type MerchantRedemptionPendingCart = {
   version: 1;
   siteId: string;
   operationId: string;
   quote: MerchantRedemptionCheckoutQuote;
+  member?: MerchantRedemptionPendingMember | null;
 };
 export type MerchantRedemptionCheckoutRequest = {
   membershipId: string;

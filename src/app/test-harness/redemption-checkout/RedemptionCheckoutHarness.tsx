@@ -27,6 +27,7 @@ function fixture(actor: string, scenario: Scenario): HarnessState {
       operationId: result.operationId, status: scenario === "committed" ? "committed" : "pending", createdAt: CREATED,
       acknowledgedAt: null, result: scenario === "committed" ? result : null,
       ...(scenario === "committed" || scenario === "pending-no-preview" ? {} : { pendingCart: { version: 1 as const, siteId: SITE, operationId: result.operationId,
+        member: scenario === "deleted-member" ? null : { name: `合成会员 ${actor}`, memberNo: actor === "A" ? "10000000000001" : "10000000000002", pointBalance: 20, balanceAmount: 0 },
         quote: { totalQuantity: result.totalQuantity, grossPoints: result.grossPoints, couponPointDiscountTotal: result.couponPointDiscountTotal,
           totalPoints: result.totalPoints, couponCount: result.couponCount, lines: result.lines } } }),
     } };

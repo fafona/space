@@ -7,7 +7,7 @@ import {
 import { readUniqueMerchantBusinessSiteId } from "@/lib/merchantBusinessRequest";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { redactMerchantMembershipForCashier } from "@/lib/merchantMembershipBusinessPermissions";
-import { retryMerchantMembershipRedemptionCheckout } from "@/lib/merchantMemberships.server";
+import { getMerchantMembershipsSnapshot, retryMerchantMembershipRedemptionCheckout } from "@/lib/merchantMemberships.server";
 import { summarizeMerchantRedemptionCheckout } from "@/lib/merchantRedemptionCheckout";
 import { buildMerchantRedemptionPendingCart } from "@/lib/merchantRedemptionPendingCart";
 import { readMerchantRedemptionCheckoutError } from "@/lib/merchantRedemptionCheckoutErrors";
@@ -32,6 +32,7 @@ export type MerchantRedemptionCheckoutRouteDependencies = {
   cancelCheckout: typeof cancelMerchantRedemptionCheckout;
   ackCheckout: typeof ackMerchantRedemptionCheckout;
   retryCheckout: typeof retryMerchantMembershipRedemptionCheckout;
+  getMemberships: typeof getMerchantMembershipsSnapshot;
 };
 
 const DEFAULT_DEPENDENCIES: MerchantRedemptionCheckoutRouteDependencies = {
@@ -41,6 +42,7 @@ const DEFAULT_DEPENDENCIES: MerchantRedemptionCheckoutRouteDependencies = {
   cancelCheckout: cancelMerchantRedemptionCheckout,
   ackCheckout: ackMerchantRedemptionCheckout,
   retryCheckout: retryMerchantMembershipRedemptionCheckout,
+  getMemberships: getMerchantMembershipsSnapshot,
 };
 
 function applyPrivateHeaders(response: Response) {
@@ -79,9 +81,21 @@ export async function handleMerchantRedemptionCheckoutGet(
     const operationId = operationIds.length === 1 ? requireMerchantRedemptionOperationId(operationIds[0]) : undefined;
     const actor = await dependencies.authorizeActor(request, { siteId, requiredPermission: "redemptions.checkout" });
     const checkout = await dependencies.getCheckout(siteId, actor.principalKey, operationId);
-    await dependencies.reauthorizeActor(request, { actor, requiredPermissions: ["redemptions.checkout"] });
+    // Read only: opening an unfinished cart must not award scheduled points.
+    const members = checkout?.status === "pending"
+      ? await dependencies.getMemberships(siteId, { applyScheduledRules: false }) : null;
+    const currentActor = await dependencies.reauthorizeActor(request, { actor, requiredPermissions: ["redemptions.checkout"] });
     const summary = checkout ? summarizeMerchantRedemptionCheckout(checkout) : null;
-    if (checkout?.status === "pending" && summary) summary.pendingCart = buildMerchantRedemptionPendingCart(checkout, siteId);
+    if (checkout?.status === "pending" && summary) {
+      const member = members?.memberships.find(item => item.siteId === siteId && item.id === checkout.membershipId);
+      const canViewCustomerData = currentActor.type === "owner" || currentActor.businessPermissions.includes("redemptions.customer_data.view");
+      summary.pendingCart = buildMerchantRedemptionPendingCart(checkout, siteId, member ? {
+        memberNo: member.memberNo,
+        name: !member.profileVisible ? "已退会会员" : canViewCustomerData ? (member.nickname || member.name || member.memberNo).slice(0, 200) : "会员",
+        pointBalance: member.pointBalance,
+        balanceAmount: member.balanceAmount,
+      } : null);
+    }
     return privateJson({ ok: true, checkout: summary });
   } catch (error) {
     return errorResponse(error);

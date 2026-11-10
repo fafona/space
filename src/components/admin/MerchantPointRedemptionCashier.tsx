@@ -1196,6 +1196,12 @@ export default function MerchantPointRedemptionCashier({
     pointBalance: selectedMember?.pointBalance ?? 0,
     balanceAmount: selectedMember?.balanceAmount ?? 0,
   };
+  const cashierMember = hasPendingCheckout ? pendingCheckoutCart?.member : selectedMember ? {
+    name: canViewCustomerData ? getMemberDisplayName(selectedMember) : "会员",
+    memberNo: selectedMember.memberNo,
+    pointBalance: selectedInsight.pointBalance,
+    balanceAmount: selectedInsight.balanceAmount,
+  } : null;
   const selectedMemberInsightLoading = selectedMember ? memberInsightLoadingIds.has(selectedMember.id) : false;
   const selectedAvailableCouponClaims = useMemo(
     () =>
@@ -2350,7 +2356,7 @@ export default function MerchantPointRedemptionCashier({
   }
 
   function openRechargeDialog() {
-    if (!canRecharge) return;
+    if (!canRecharge || hasPendingCheckout) return;
     setError("");
     setNotice("");
     if (!selectedMember) {
@@ -3167,7 +3173,7 @@ export default function MerchantPointRedemptionCashier({
         setQuickRedeemDialogOpen(true);
       },
       openRecharge: () => {
-        if (!canRecharge) return;
+        if (!canRecharge || hasPendingCheckout) return;
         setError("");
         setNotice("");
         if (!selectedMember) {
@@ -5464,11 +5470,14 @@ export default function MerchantPointRedemptionCashier({
         .merchant-pos-cashier .checkout-recovery .recovery-result { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 10px 0; }
         .merchant-pos-cashier .checkout-recovery .recovery-result strong { font-size: 20px; color: var(--pos-primary-dark); }
         .merchant-pos-cashier .checkout-recovery .recovery-error { color: #a8251a; }
-        .merchant-pos-cashier .pending-sale-summary { display: flex; flex-wrap: wrap; gap: 12px; }
-        .merchant-pos-cashier .pending-sale-summary .summary-actions-left { display: none; }
-        .merchant-pos-cashier .pending-sale-summary .checkout-button { min-width: 128px; white-space: nowrap; }
 
         @media (max-width: 720px) {
+          .merchant-pos-cashier .panel-heading.compact { grid-template-columns: minmax(0, 1fr); }
+          .merchant-pos-cashier .member-line { flex-wrap: wrap; min-width: 0; }
+          .merchant-pos-cashier .member-avatar { flex: 0 0 30px; }
+          .merchant-pos-cashier .member-actions .member-search { flex: 1 1 0; min-width: 0; width: auto; }
+          .merchant-pos-cashier .sale-summary { flex-wrap: wrap; gap: 12px; }
+          .merchant-pos-cashier .sale-summary .summary-actions-left { flex: 1 0 100%; }
           .merchant-pos-cashier .pending-cart-header { grid-template-columns: 1fr; }
           .merchant-pos-cashier .pending-cart-header > span:not(:nth-child(2)) { display: none; }
           .merchant-pos-cashier .pending-cart-row { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -5514,7 +5523,7 @@ export default function MerchantPointRedemptionCashier({
         </div>
         <div className="cashier-actions">
           {printBridgeBadge}
-          <button type="button" className="el-button el-button--default" onClick={() => void loadData(true)} disabled={loading}>
+          <button type="button" className="el-button el-button--default" onClick={() => { void loadData(true); void refreshCheckoutRecovery(); }} disabled={loading}>
             {loading ? "刷新中..." : "刷新"}
           </button>
           <div ref={languageRootRef} className="language-menu-wrap" data-no-translate="1">
@@ -6108,42 +6117,37 @@ export default function MerchantPointRedemptionCashier({
       <section className="cashier-workbench">
         <section className="panel sale-panel">
           <div className="panel-heading compact">
-            {hasPendingCheckout ? (
-              <div className="member-line">
-                <span className="member-avatar">原</span>
-                <strong>待结算原单</strong>
-                <span>沿用原单会员；如需修改会员或商品，请先放弃原单并确认。</span>
-              </div>
-            ) : <>
             <div className="member-line">
-              <span className="member-avatar">{getAvatarInitial(selectedMember)}</span>
-              {selectedMember ? (
+              <span className="member-avatar">{hasPendingCheckout ? cashierMember?.name.slice(0, 1).toUpperCase() || "会" : getAvatarInitial(selectedMember)}</span>
+              {cashierMember ? (
                 <>
                   <button
                     type="button"
                     className="member-name-button"
                     onClick={openSelectedMemberCouponWallet}
+                    disabled={hasPendingCheckout}
                     title="查看会员卡券"
                   >
-                    {canViewCustomerData ? getMemberDisplayName(selectedMember) : "会员"}
+                    {cashierMember.name}
                   </button>
-                  <span>卡号: {selectedMember.memberNo}</span>
-                  <span>积分: {formatPoints(selectedInsight.pointBalance)}</span>
-                  <span>余额: €{formatMoney(selectedInsight.balanceAmount)}</span>
+                  <span>卡号: {cashierMember.memberNo}</span>
+                  <span>积分: {formatPoints(cashierMember.pointBalance)}</span>
+                  <span>余额: €{formatMoney(cashierMember.balanceAmount)}</span>
                 </>
               ) : (
-                <span>散客</span>
+                <span>{hasPendingCheckout ? "原单会员暂不可用" : "散客"}</span>
               )}
             </div>
             <div className="member-actions">
-              {selectedMember ? (
-                <button type="button" className="member-clear-button" onClick={clearMember} aria-label="清除会员" title="清除会员">
+              {selectedMember || hasPendingCheckout ? (
+                <button type="button" className="member-clear-button" disabled={hasPendingCheckout} onClick={clearMember} aria-label="清除会员" title="清除会员">
                   <IconX />
                 </button>
               ) : null}
               <div className="member-search">
                 <input
                   value={memberKeyword}
+                  disabled={hasPendingCheckout}
                   onChange={(event) => {
                     const nextKeyword = event.target.value;
                     setMemberKeyword(nextKeyword);
@@ -6203,17 +6207,16 @@ export default function MerchantPointRedemptionCashier({
                 ) : null}
               </div>
               <div className="member-action-buttons">
-                {canRecharge ? <button type="button" className="el-button el-button--primary" onClick={openRechargeDialog}>
+                {canRecharge ? <button type="button" className="el-button el-button--primary" disabled={hasPendingCheckout} onClick={openRechargeDialog}>
                   <IconDoorOpen />
                   充值
                 </button> : null}
-                {canCheckoutRedemptions ? <button type="button" className="el-button el-button--default" onClick={() => setQuickRedeemDialogOpen(true)}>
+                {canCheckoutRedemptions ? <button type="button" className="el-button el-button--default" disabled={hasPendingCheckout} onClick={() => setQuickRedeemDialogOpen(true)}>
                   <IconWallet />
                   快捷兑换
                 </button> : null}
               </div>
             </div>
-            </>}
           </div>
 
           <div className="cart-area">
@@ -6239,7 +6242,6 @@ export default function MerchantPointRedemptionCashier({
                         </div>
                       </div>
                     ))}
-                    <p className="cart-meta" role="status">服务器已保留原单商品和数量。这里是待结算金额，不代表已扣积分。</p>
                   </div>
                 ) : (
                   <div className="cart-empty" role="status"><span>检测到未结算原单，商品明细暂未读取成功。</span><button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy || activeCheckoutRecovery?.phase === "checking"} onClick={() => void refreshCheckoutRecovery()}>重新读取原单商品</button></div>
@@ -6303,11 +6305,13 @@ export default function MerchantPointRedemptionCashier({
                 value={hasPendingCheckout ? "" : note}
                 readOnly={hasPendingCheckout}
                 onChange={(event) => setNote(event.target.value)}
-                placeholder={hasPendingCheckout ? "继续结算沿用服务器保存的原单备注" : "兑换备注，例如：前台积分兑换"}
+                placeholder="兑换备注，例如：前台积分兑换"
               />
+              {hasPendingCheckout && error && activeCheckoutRecovery?.phase === "ready" ?
+                <p role="alert" style={{ color: "#a8251a", fontSize: 13, marginTop: 8 }}>{error}</p> : null}
             </div>
 
-            <div className={hasPendingCheckout ? "sale-summary pending-sale-summary" : "sale-summary"}>
+            <div className="sale-summary">
               <div className="summary-actions-left">
                 <button type="button" className="el-button el-button--default" disabled={hasPendingCheckout} onClick={holdCurrentSale}>
                   挂单
@@ -6316,6 +6320,8 @@ export default function MerchantPointRedemptionCashier({
                   提单
                   {heldSales.length ? <span className="held-count">{heldSales.length}</span> : null}
                 </button>
+                {hasPendingCheckout ? <button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy || activeCheckoutRecovery?.phase !== "ready"}
+                  onClick={() => void handleCheckoutRecoveryAction("cancel")} title="放弃尚未完成的原单；已完成的结算不会撤销">清空</button> : null}
                 {heldOpen ? (
                   <div className="held-sales-panel">
                     <div className="held-sales-title">挂单列表</div>
@@ -6337,11 +6343,11 @@ export default function MerchantPointRedemptionCashier({
                 <strong>{hasPendingCheckout ? pendingCheckoutCart?.quote.totalQuantity ?? "待核对" : totalQuantity}</strong>
               </div>
               <div className="summary-item">
-                <span>{hasPendingCheckout ? "原单会员积分" : "会员积分"}</span>
-                <strong>{hasPendingCheckout ? "结算时核验" : formatPoints(selectedInsight.pointBalance)}</strong>
+                <span>会员积分</span>
+                <strong>{hasPendingCheckout && !cashierMember ? "—" : formatPoints(cashierMember?.pointBalance ?? 0)}</strong>
               </div>
               <div className="summary-total">
-                <span>{hasPendingCheckout ? "原单待扣积分" : couponPointDiscountTotal > 0 ? "扣减积分" : "合计积分"}</span>
+                <span>{couponPointDiscountTotal > 0 ? "扣减积分" : "合计积分"}</span>
                 <strong>{hasPendingCheckout ? pendingCheckoutCart ? formatPoints(pendingCheckoutCart.quote.totalPoints) : "待核对" : formatPoints(totalPoints)}</strong>
               </div>
               {(hasPendingCheckout ? (pendingCheckoutCart?.quote.couponPointDiscountTotal ?? 0) : couponPointDiscountTotal) > 0 ? (
@@ -6351,7 +6357,7 @@ export default function MerchantPointRedemptionCashier({
                 </div>
               ) : null}
               <button type="button" className="checkout-button" disabled={hasPendingCheckout ? !canResumePendingCheckout : !canSubmitCheckout} onClick={() => void submitCheckoutRef.current()}>
-                {hasPendingCheckout ? checkoutRecoveryBusy ? "结算中" : activeCheckoutRecovery?.phase === "ready" ? "继续原单结算" : "核对原单中" : saving ? "结算中" : "结算"}
+                {checkoutRecoveryBusy || saving ? "结算中" : "结算"}
               </button>
             </div>
           </div>

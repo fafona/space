@@ -36,6 +36,19 @@ test("pending display is actor/site/operation-bound and never unlocks a new chec
   assert.throws(() => buildMerchantRedemptionPendingCart({ ...saved, status: "cancelled" }, site));
 });
 
+test("the permission-filtered original member heading is validated and cloned, never used as new intent", () => {
+  const member = { name: "合成会员", memberNo: "CARD-ONE", pointBalance: 100, balanceAmount: 10.5 };
+  const pending = buildMerchantRedemptionPendingCart(context(), site, member);
+  assert.equal(isMerchantRedemptionPendingCart(pending, site, operation), true);
+  member.name = "Changed";
+  assert.equal(pending.member?.name, "合成会员");
+  for (const bad of [{ ...member, membershipId: "private" }, { ...member, pointBalance: -1 }, { ...member, balanceAmount: NaN },
+    { ...member, balanceAmount: -1 }, { ...member, memberNo: "" }, { ...member, name: "" }]) {
+    assert.equal(isMerchantRedemptionPendingCart({ ...pending, member: bad }, site, operation), false);
+  }
+  assert.equal(buildMerchantRedemptionPendingCart(context(), site, null).member, null);
+});
+
 test("malformed lines, totals, unknown fields and unsafe integers cannot be shown as a valid pending cart", () => {
   const good = context().request.quote;
   for (const bad of [null, {}, { ...good, totalPoints: 71 }, { ...good, totalQuantity: 0 }, { ...good, totalPoints: "70" },

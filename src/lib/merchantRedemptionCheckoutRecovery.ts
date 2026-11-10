@@ -48,14 +48,16 @@ export function cashierCheckoutBlocksNewSale(phase: "checking" | "ready" | "erro
   return phase !== "ready" || Boolean(checkout && !checkout.acknowledgedAt);
 }
 
-/** Routine background checks stay quiet; only actionable recovery is shown.
+/** A complete pending cart is the normal cashier, not a recovery notice.
  * Presentation is independent of the original fail-closed checkout gate. */
 export function cashierCheckoutRecoveryNoticeVisible(
   phase: "checking" | "ready" | "error" | null,
   checkout: MerchantRedemptionCheckoutSummary | null,
   busy: boolean,
 ) {
-  return phase !== null && phase !== "checking" && (cashierCheckoutBlocksNewSale(phase, checkout) || busy);
+  return phase !== null && phase !== "checking" &&
+    !(phase === "ready" && checkout?.status === "pending" && checkout.pendingCart) &&
+    (cashierCheckoutBlocksNewSale(phase, checkout) || busy);
 }
 
 /** A claim represents one voucher, even when that voucher contains several products. */
