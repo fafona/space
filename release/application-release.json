@@ -1,14 +1,23 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "f274ad615550c83717aa7af2ad32339608e6f8aa",
-  "purpose": "Repair enterprise cookie session renewal and quiet routine checkout verification; audited obsolete-standby retirement only, preserving booking application and deployed attendance inputs",
+  "purpose": "Approved merchant booking, poll history, member checkout and enterprise session fixes; audited host-boot recovery with no migration replay or mail activation.",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
   "mail": "unchanged-off",
   "backgroundTasks": "retain-certified-worker",
   "changes": [
+    {
+      "file": ".github/workflows/booking-safeupdate-online.yml",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "d55901a7ec8da487251d2bf5cb0ebb536b92173d"
+      ]
+    },
     {
       "file": ".github/workflows/ci.yml",
       "role": "verification",
@@ -40,6 +49,15 @@
       ]
     },
     {
+      "file": "docs/booking-list-alignment-2026-11-04.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "d78e46273a289099d0a951f73f452ffde89176ab"
+      ]
+    },
+    {
       "file": "docs/booking-worker-application-finalization-20261031.md",
       "role": "verification",
       "before": null,
@@ -61,12 +79,30 @@
       ]
     },
     {
+      "file": "docs/order-list-alignment-2026-11-03.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "c902a472cad13c4f43edb935fb8809bbe7eaa12b"
+      ]
+    },
+    {
       "file": "docs/ordinary-application-release.md",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
         "2418bce80314b6ad99686065b772f2dec29e7ecf"
+      ]
+    },
+    {
+      "file": "docs/poll-round-history-2026-11-01.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "496e6e382c9e7bd208a80641c4e18fba27296804"
       ]
     },
     {
@@ -79,12 +115,30 @@
       ]
     },
     {
+      "file": "docs/redemption-pending-cart-2026-11-04.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "08b8b95ee433757ac1e9440fa426f7b343e802de"
+      ]
+    },
+    {
       "file": "docs/release-finalization-continuity-20261030.md",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
         "8c31a04d5b49be2905280d0c73399bfd40b2139f"
+      ]
+    },
+    {
+      "file": "docs/release-lifecycle-design-20261110.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "914c9d0e220307032f4b19ec661940fc48251fb6"
       ]
     },
     {
@@ -132,7 +186,7 @@
       ],
       "after": [
         "100644",
-        "8c339a132bf17f7cf07e2d2f82885a4ffd4f9fc8"
+        "cadd7d03d3e52520c6e31c19aec5ddedda56d0e9"
       ]
     },
     {
@@ -141,7 +195,7 @@
       "before": null,
       "after": [
         "100644",
-        "555cbaf1fbfb2829523f6da522d29643f1e3a6e4"
+        "0570dcd0a90e4b5ee0b4ac5d4d5d79a95c906096"
       ]
     },
     {
@@ -150,7 +204,7 @@
       "before": null,
       "after": [
         "100644",
-        "5999c0474f771e35ea2b7d0eb7941196b0bab6db"
+        "2ceb489500f54408eb72abed6940a54f467012cc"
       ]
     },
     {
@@ -160,6 +214,33 @@
       "after": [
         "100644",
         "2c4e5d3798e0b26f9d4767ca85c76becdd68e580"
+      ]
+    },
+    {
+      "file": "scripts/application-release-compatibility.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "08e032c8d87b4aa7fb4d1e612dd388746a44a58a"
+      ]
+    },
+    {
+      "file": "scripts/application-release-compatibility.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "2449d6efa2492edf11c658531dd28fb8efd81bbf"
+      ]
+    },
+    {
+      "file": "scripts/application-release-host-reboot.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "9224f6c45170bb376d9a906ebca6163f7cc81d5f"
       ]
     },
     {
@@ -177,7 +258,7 @@
       "before": null,
       "after": [
         "100644",
-        "8b9e7f5ae7d07c020d16dcc8d24be6640792fb6c"
+        "71f24224ae1ab8d3edacd954a4ffc30e9f1e6cdc"
       ]
     },
     {
@@ -231,7 +312,7 @@
       "before": null,
       "after": [
         "100644",
-        "d3d94868cf24f3b1ef0beb618341f8505b444f9b"
+        "b53f27b3ade99bf1ce9bbacadafe39dae9a722f4"
       ]
     },
     {
@@ -241,6 +322,15 @@
       "after": [
         "100644",
         "3ef54a2d7ed44a1c9acef8e47ac8e3622eade780"
+      ]
+    },
+    {
+      "file": "scripts/application-release-recorded-schema.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "7f038f4a722e85f264fdfea60135df9bedbfe028"
       ]
     },
     {
@@ -321,7 +411,40 @@
       ],
       "after": [
         "100644",
-        "052ba1e5521d30c8482b12286ec6295a3aad5079"
+        "be972925b7ebc70bc8ccf5de561ca66a511ddc3f"
+      ]
+    },
+    {
+      "file": "scripts/booking-atomic-postgres-acceptance.mjs",
+      "role": "recorded-verification",
+      "before": [
+        "100644",
+        "78ecb2093aa34339c872eddb6e4dd22306288d28"
+      ],
+      "after": [
+        "100644",
+        "500f715e035ef885c495939df6d4d84967f00763"
+      ]
+    },
+    {
+      "file": "scripts/booking-atomic-preparation-contract.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "02671cc148928614e9c3960399024725dd713d14"
+      ],
+      "after": [
+        "100644",
+        "6e125848216fe2c4a83443057c4ea8032c207041"
+      ]
+    },
+    {
+      "file": "scripts/booking-atomic-safeupdate-contract.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "7cb803e793e00c7666664b58b76847a5fcbea5ea"
       ]
     },
     {
@@ -330,7 +453,7 @@
       "before": null,
       "after": [
         "100644",
-        "5a8bb2a49d7cd00a48c36c2d7239dbd0eee51cf3"
+        "5cd6a755eb0b6356dda6f7dddc8fd51cdc3aa7da"
       ]
     },
     {
@@ -1018,6 +1141,15 @@
       ]
     },
     {
+      "file": "scripts/booking-list-alignment-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "bf5839f318da35f991d159986bb074fd52ac1f9f"
+      ]
+    },
+    {
       "file": "scripts/booking-publication-compatibility.mjs",
       "role": "release-tool",
       "before": [
@@ -1204,6 +1336,15 @@
       ]
     },
     {
+      "file": "scripts/booking-recurring-ranges-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "49a73900de9eac9cbd1bc06b0b93a84d00ede402"
+      ]
+    },
+    {
       "file": "scripts/booking-registry-backup.mjs",
       "role": "release-tool",
       "before": null,
@@ -1294,6 +1435,51 @@
       ]
     },
     {
+      "file": "scripts/booking-safeupdate-online-workflow.mjs",
+      "role": "recorded-migration-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "41ea33ab6bb73eb519ca62a5e682242058db546b"
+      ]
+    },
+    {
+      "file": "scripts/booking-safeupdate-online.mjs",
+      "role": "recorded-migration-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "d11f04aa2d878a5deb26cb5f25a9143cc37b5c04"
+      ]
+    },
+    {
+      "file": "scripts/booking-safeupdate-online.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "d8d0b4380c5a81b7c4917a433a492f9c07e38dab"
+      ]
+    },
+    {
+      "file": "scripts/booking-timezone-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "2975e5a20ae76498da4633b62ba6f16ed2a1d0a8"
+      ]
+    },
+    {
+      "file": "scripts/booking-workbench-save-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "376f076ee3555287f787d454d822c728d6b89c98"
+      ]
+    },
+    {
       "file": "scripts/ci-workflow-contract.test.mjs",
       "role": "verification",
       "before": [
@@ -1332,7 +1518,28 @@
       "before": null,
       "after": [
         "100644",
-        "b1d0119ab3c7369fc7dc0f885580e42d1bc2e7c6"
+        "94bd82cc0ce70e1dab7c6554d38f80468b503a59"
+      ]
+    },
+    {
+      "file": "scripts/member-checkout-recovery-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "5c30d65c05b3719b17956da028578ea10ef5c16a"
+      ]
+    },
+    {
+      "file": "scripts/merchant-poll-stats-ui-contract.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "1e7c48656f53fd03ea5c07401968b43d733f2f82"
+      ],
+      "after": [
+        "100644",
+        "a7ce5200e5e3c517856b65a3a8ee90839429937f"
       ]
     },
     {
@@ -1368,7 +1575,7 @@
       ],
       "after": [
         "100644",
-        "7b77abd1e401a207f3482990a8bf9318db97fc32"
+        "08d6eb655e2face1136241b11442bc91a98c861d"
       ]
     },
     {
@@ -1392,7 +1599,7 @@
       ],
       "after": [
         "100644",
-        "dd1591137fa17d0050259a6af265b6049093f348"
+        "64aecaba90b1af4c2a0930725c3e1f59805ae55e"
       ]
     },
     {
@@ -1404,7 +1611,7 @@
       ],
       "after": [
         "100644",
-        "24c4662a076d58ca7f55f66c95cd643ffa38f895"
+        "605047576e67f3699ad279c4b640cc02ac4a9dfb"
       ]
     },
     {
@@ -1416,7 +1623,7 @@
       ],
       "after": [
         "100644",
-        "fd28048930812db5b5b2c9816252d1370ecf7763"
+        "4ee0910b3f74fd4b3b6f5e27ee1fafaa34ac4383"
       ]
     },
     {
@@ -1452,7 +1659,7 @@
       ],
       "after": [
         "100644",
-        "ffee68fcc979cca8d94c8db431974bad9c2bd010"
+        "e536bce9fda4ecad97859cc48c46ce8f28c624ef"
       ]
     },
     {
@@ -1488,7 +1695,25 @@
       ],
       "after": [
         "100644",
-        "751688c5023cddd2c54668bc2e8374c4ea9ad6b5"
+        "2ac7014ba2f137663710ee87951b564dc07a332e"
+      ]
+    },
+    {
+      "file": "scripts/order-list-alignment-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "47c64679fe26ee10a7ce98b2f7c2fa677a447827"
+      ]
+    },
+    {
+      "file": "scripts/poll-rounds-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "1a5b5fd02a63dffd0f382e2d66d7708b4ba6a517"
       ]
     },
     {
@@ -1513,6 +1738,15 @@
       "after": [
         "100644",
         "f7546fa92eb29379d9741889c253773dd119907f"
+      ]
+    },
+    {
+      "file": "scripts/redemption-pending-cart-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "cdf7ced89e02c82d0ed0bd5b5613e09eb41eb039"
       ]
     },
     {
@@ -2515,6 +2749,78 @@
       ]
     },
     {
+      "file": "scripts/release-toolchain-host-reboot-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f62f48335b12fccc1e65e263fb3b6ee571fa309b"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-host-reboot-journal.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "e734d926cd2ef020dfc47212477e1674f936a469"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-host-reboot-journal.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "30dc62adf4c5921352f8568614da23b86617aa6a"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-host-reboot-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "6b10b429e3f2cf3a9a324d7ebc0ffaa7357bf9c7"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-host-reboot-pm2.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "fa5a7dc21e8116b8f9c94501b32fe9fd284c1363"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-host-reboot-pm2.test.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "deaae329168ca235c61c65557c3e24005844dce2"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-host-reboot-state.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f5aa494b7fd13e9189fec35e12efc254b21de56d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-host-reboot.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "6f6eb2a60466c2aa7dcca07e78ab64f833af5772"
+      ]
+    },
+    {
       "file": "scripts/release-toolchain-ingress.mjs",
       "role": "release-tool",
       "before": null,
@@ -3015,7 +3321,7 @@
       "before": null,
       "after": [
         "100644",
-        "b1287dbc8707105bd583292bf9dca6eb383827f4"
+        "796ae4ee6cc3fe780deca994172d0bb2b20256b4"
       ]
     },
     {
@@ -3051,7 +3357,7 @@
       "before": null,
       "after": [
         "100644",
-        "28424663996491b66b726fe8f8a846dd23430c38"
+        "954be41ad1be272e70fd3a39936b8d958c99cea0"
       ]
     },
     {
@@ -3060,7 +3366,7 @@
       "before": null,
       "after": [
         "100644",
-        "f3ed88918928281b4c2720033c6fcb7601cd7a7b"
+        "bc92921b8f0f7c7d56c38a65db80d388262bc870"
       ]
     },
     {
@@ -3703,6 +4009,15 @@
       ]
     },
     {
+      "file": "scripts/release-toolchain-process-observation.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "b8bdd8dbb288e9b31ef69f593a9549666467326e"
+      ]
+    },
+    {
       "file": "scripts/release-toolchain-process-reparent-capture.mjs",
       "role": "release-tool",
       "before": null,
@@ -3970,6 +4285,24 @@
       "after": [
         "100644",
         "8650e62d8188cb6330ba27aed0c1826ae2ad56c8"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-resurrection-pm2-adapter.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "8c1f7e53342888afd0681c9536eeae217c9e031b"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-resurrection-pm2.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "ecd8d327b137ae2232aacc2971d409a13b9fc8db"
       ]
     },
     {
@@ -4275,7 +4608,7 @@
       "before": null,
       "after": [
         "100644",
-        "f4d87eb1afbb5fb8f326dfae5c892978cca41da1"
+        "ad73675b134431baba7be821f00ea5992fa56973"
       ]
     },
     {
@@ -4293,7 +4626,7 @@
       "before": null,
       "after": [
         "100644",
-        "ed6bf358b399db4ae38e53572ded8c9fbd67915f"
+        "50716f51b61d6261a6339687b1cef6002264f8b0"
       ]
     },
     {
@@ -4378,6 +4711,15 @@
       ]
     },
     {
+      "file": "scripts/supabase-migrations/202611050213_booking_atomic_safeupdate_singleton.sql",
+      "role": "already-applied-schema",
+      "before": null,
+      "after": [
+        "100644",
+        "67873fc5b12b853e70a6b16bdabbd861f65d6561"
+      ]
+    },
+    {
       "file": "scripts/test-support/application-release-retention-fixture.mjs",
       "role": "release-tool",
       "before": null,
@@ -4459,6 +4801,15 @@
       ]
     },
     {
+      "file": "scripts/test-support/release-toolchain-host-reboot-fixture.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "1779c8533fd0ab435a9778b875f4a912e0ea1e47"
+      ]
+    },
+    {
       "file": "scripts/test-support/release-toolchain-pause-fixture.mjs",
       "role": "release-tool",
       "before": null,
@@ -4509,7 +4860,7 @@
       "before": null,
       "after": [
         "100644",
-        "8f3a7e972736949031d4e535b5fde942fdee8b4e"
+        "87ac80462c9def72b32221f366854514ad5a880d"
       ]
     },
     {
@@ -4543,6 +4894,18 @@
       ]
     },
     {
+      "file": "src/app/admin/AdminClient.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "76cc97799b72f1192387567b8b0aa4fd26b97d77"
+      ],
+      "after": [
+        "100644",
+        "8d549c28c2b7899bcf58f022c83a202bb984afd1"
+      ]
+    },
+    {
       "file": "src/app/api/auth/merchant-session/reauth.test.ts",
       "role": "verification",
       "before": null,
@@ -4564,6 +4927,132 @@
       ]
     },
     {
+      "file": "src/app/api/bookings/workbench/route-handler.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "529d28112373f876ecb9d4b3344a506c2842e2aa"
+      ],
+      "after": [
+        "100644",
+        "1c22291b7f42b3f665943f034c5df43fcdb2895e"
+      ]
+    },
+    {
+      "file": "src/app/api/bookings/workbench/route.test.ts",
+      "role": "verification",
+      "before": [
+        "100644",
+        "e918be5a34b725c637ba75dcf2379262632b968a"
+      ],
+      "after": [
+        "100644",
+        "9683dc099dca35a9a989304b836ef120f91bb1c1"
+      ]
+    },
+    {
+      "file": "src/app/api/merchant-admin/redemption-checkout/route-handler.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "2a86de9d4382275e3daddb78b556e42277da5a17"
+      ],
+      "after": [
+        "100644",
+        "41663871d39e9f43c5102034746179244d1b7508"
+      ]
+    },
+    {
+      "file": "src/app/api/merchant-admin/redemption-checkout/route.test.ts",
+      "role": "verification",
+      "before": [
+        "100644",
+        "e28382218c698d0390b34cd0b61913570077b696"
+      ],
+      "after": [
+        "100644",
+        "192d1df6f52ac528661ea64611926407751c621a"
+      ]
+    },
+    {
+      "file": "src/app/test-harness/redemption-checkout/RedemptionCheckoutHarness.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "c917ddf6cef6113e750ad888c9ab06a64931f2c7"
+      ],
+      "after": [
+        "100644",
+        "f29a09833fb31aa6e9b0f39f071bbf5e794c06fc"
+      ]
+    },
+    {
+      "file": "src/components/admin/BookingTimeZoneSelect.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "363b5a8c5b65be3dd91c9dcbe1ad977ad930e6fc"
+      ]
+    },
+    {
+      "file": "src/components/admin/BookingWorkbenchDialog.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "de2d04bba0e46293f4a1f6ec83d2e6b3b020c187"
+      ],
+      "after": [
+        "100644",
+        "1a40f430fcd36358fd92e60b645ae00471713bbd"
+      ]
+    },
+    {
+      "file": "src/components/admin/InlineEditorBlock.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "900322431b2b03099f8a879005998536ae32d1fd"
+      ],
+      "after": [
+        "100644",
+        "b7f9d27ca917b0ecebd10894ecb98452251c240a"
+      ]
+    },
+    {
+      "file": "src/components/admin/MerchantBookingManagerDialog.layout.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "29a071a828dd63847b2dc6d647f78a201a2d7b74"
+      ]
+    },
+    {
+      "file": "src/components/admin/MerchantBookingManagerDialog.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "bf210a89516eeb2f95c2e8543cccfb8e154b2714"
+      ],
+      "after": [
+        "100644",
+        "cb8cf2a60d7320e6a6d32c65203ff96f1bc9f73e"
+      ]
+    },
+    {
+      "file": "src/components/admin/MerchantCheckoutRecoveryPanel.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "1ca004dd8dca4d1533c7e90b5e00d5bb4c1aaf7a"
+      ],
+      "after": [
+        "100644",
+        "6c372df597049a91d40a8b240bab01045ccc9107"
+      ]
+    },
+    {
       "file": "src/components/admin/MerchantEnterpriseManager.tsx",
       "role": "application",
       "before": [
@@ -4576,6 +5065,39 @@
       ]
     },
     {
+      "file": "src/components/admin/MerchantMemberManager.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "0f777a3b6407bd31f3eef61a9762f43f5ce2c34b"
+      ],
+      "after": [
+        "100644",
+        "5398d0e78c1ad9c42c0d34e0441cfc7e34c01a53"
+      ]
+    },
+    {
+      "file": "src/components/admin/MerchantOrderManagerDialog.layout.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "1804e69b6b786bedf4731486b76bbb9aa5ff3a27"
+      ]
+    },
+    {
+      "file": "src/components/admin/MerchantOrderManagerDialog.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "c6c2b53ca263c32e1a005220474d1efde48861ab"
+      ],
+      "after": [
+        "100644",
+        "d3d14a01046851fcec58a6da0f3f1b6572088d01"
+      ]
+    },
+    {
       "file": "src/components/admin/MerchantPointRedemptionCashier.tsx",
       "role": "application",
       "before": [
@@ -4584,7 +5106,124 @@
       ],
       "after": [
         "100644",
-        "4fc8faab0147c11438b7f309691c581380b7de9a"
+        "fa4c80fca1e84a9599b69e05b534cb09e1625c0d"
+      ]
+    },
+    {
+      "file": "src/components/admin/PollBlockEditor.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "4a06855d3725ebd9a29756cb5c2f08cd4149d7c4"
+      ],
+      "after": [
+        "100644",
+        "9ec38ffcd8471940f358548874ae3af9982670d6"
+      ]
+    },
+    {
+      "file": "src/components/admin/PollRoundManager.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "5005d3e8d01117095f88245bbe88a62f5ceb1b92"
+      ]
+    },
+    {
+      "file": "src/components/admin/RecurringBookingTimeRanges.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "86e06d15aedab9d0d46a1ce1b3e0b8a903ab78fb"
+      ]
+    },
+    {
+      "file": "src/components/admin/RecurringBookingTimeRanges.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "397e6555dbdad8fe7ac68ad2f0c1c5f2c96be440"
+      ]
+    },
+    {
+      "file": "src/components/blocks/PollBlock.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "0f23bf093d7c06cf62608987a63167f162aa9716"
+      ],
+      "after": [
+        "100644",
+        "0b0e8d0bfa43a96ff7ee6f6578d0e7751b8fcf81"
+      ]
+    },
+    {
+      "file": "src/data/homeBlocks.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "611fb2e4dd948cc4e4c784deb92c702614341dac"
+      ],
+      "after": [
+        "100644",
+        "dee9866739b1807370c0c2ec812d3e2b22f2f7bf"
+      ]
+    },
+    {
+      "file": "src/lib/merchantBookingTimeZoneData.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "bacf079329fb49fd5332d0636ae3b865ab14610a"
+      ]
+    },
+    {
+      "file": "src/lib/merchantBookingTimeZoneLocation.server.ts",
+      "role": "website-only-location-default",
+      "before": null,
+      "after": [
+        "100644",
+        "841b9618a41aedfa984413b3407d76049ae25302"
+      ]
+    },
+    {
+      "file": "src/lib/merchantBookingTimeZoneOptions.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "7880812947ce617fdd1bc953855f282ee1a17fe4"
+      ]
+    },
+    {
+      "file": "src/lib/merchantBookingTimeZoneOptions.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "90e417e9ab21afbf3d368b378348b450fac0d554"
+      ]
+    },
+    {
+      "file": "src/lib/merchantBookingWorkbenchSaveFailure.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "45300199c43ae903d14a3baf2a614f1193402a7b"
+      ]
+    },
+    {
+      "file": "src/lib/merchantBookingWorkbenchSaveFailure.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "9369bc8415e2a808a310d59fb3b835fe1fa6aab5"
       ]
     },
     {
@@ -4627,6 +5266,72 @@
       ]
     },
     {
+      "file": "src/lib/merchantMemberCheckoutRecovery.test.ts",
+      "role": "verification",
+      "before": [
+        "100644",
+        "df1c276a4018fbcb8424f00ec2c5710a7e4ad4bd"
+      ],
+      "after": [
+        "100644",
+        "314aab3ce62ba76535e70c638e18ea6bf8b06f59"
+      ]
+    },
+    {
+      "file": "src/lib/merchantMemberCheckoutRecovery.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "7cb7b2c7ccbb626e817e83bbac902f9712014ec3"
+      ],
+      "after": [
+        "100644",
+        "d70d13033d60e9c55a357bb97586aabf199de692"
+      ]
+    },
+    {
+      "file": "src/lib/merchantPollRounds.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "177ab95f3aeda1050389efd306b482da45bd385f"
+      ]
+    },
+    {
+      "file": "src/lib/merchantPollRounds.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "f2aa4144bc630e0dcf8c30318fc3d776d0fc0d11"
+      ]
+    },
+    {
+      "file": "src/lib/merchantPolls.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "d5048c59fc0d9cbca588cb04998392bf30c8aac6"
+      ],
+      "after": [
+        "100644",
+        "8628c889261a0dce5e733c42adc76f5ed843543d"
+      ]
+    },
+    {
+      "file": "src/lib/merchantRedemptionCheckout.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "210cdc6484898f13f0580b1d3ceba15c534cee1b"
+      ],
+      "after": [
+        "100644",
+        "b430ddf9db95a8a23d05fca970b7a2c2f13a0871"
+      ]
+    },
+    {
       "file": "src/lib/merchantRedemptionCheckoutRecovery.test.ts",
       "role": "verification",
       "before": [
@@ -4647,18 +5352,46 @@
       ],
       "after": [
         "100644",
-        "50407e388386514675acebad38cd7161d22f4a83"
+        "389e8c046027aa289e9c7e4ccbd8ceb82ceba84a"
+      ]
+    },
+    {
+      "file": "src/lib/merchantRedemptionPendingCart.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "2419fd3e5226795e65046ea558c612331091d0bd"
+      ]
+    },
+    {
+      "file": "src/lib/merchantRedemptionPendingCart.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "5bb480d2d3b883e2e15e9309472686940e6f58ad"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/merchantEnterpriseSessionRecovery.test.ts",
-    "src/lib/merchantEnterpriseAuthAvailability.server.test.ts",
-    "src/app/api/auth/merchant-session/reauth.test.ts",
-    "src/lib/merchantRedemptionCheckoutRecovery.test.ts",
+    "scripts/application-release-compatibility.test.mjs",
+    "scripts/release-toolchain-host-reboot.test.mjs",
+    "scripts/release-toolchain-host-reboot-journal.test.mjs",
+    "scripts/release-toolchain-worker-release.test.mjs",
+    "scripts/online-release-retention.test.mjs",
     "scripts/enterprise-session-renewal-browser-contract.test.mjs",
-    "scripts/application-release-standby.test.mjs",
-    "scripts/production-maintenance-pm2-dump.test.mjs",
-    "scripts/release-toolchain-active-fixture-ports.test.mjs"
-  ]
+    "src/app/api/bookings/workbench/route.test.ts",
+    "src/lib/merchantBookingTimeZoneOptions.test.ts",
+    "src/lib/merchantPollRounds.test.ts"
+  ],
+  "recordedSchema": {
+    "kind": "already-applied-booking-safeupdate-v1",
+    "version": "202611050213",
+    "revision": "ba27e903ba13f8e9f17be357da4412c1fe5792d6",
+    "migrationSha256": "92c413c5877bcf09b45c83085ef637a9377ef4dd10dd4e830a46f7e28f42a769",
+    "audit": "41985686554-1",
+    "functionBodyMd5": "09fa13e69856221d61b6eaa544927b2a",
+    "databaseExecution": "forbidden"
+  }
 }
