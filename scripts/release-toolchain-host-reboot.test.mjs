@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
 import {buildOnlineRetentionReceipt} from './online-release-retention.mjs';
 import {retentionHash,retentionCanonicalText,assertOnlineRetentionHistory,inspectOnlineRetentionWindow,assertOnlineRetentionPublication} from './online-release-retention-policy.mjs';
-import {assertHostBootChain,assertHostRebootPlan,assertHostRebootCompletion,assertHostBootRetainedBuild,resolveCertifiedProcess,REBOOT_WORKER_NAME as NAME} from './release-toolchain-host-reboot-contract.mjs';
+import {buildHostRebootPlan,assertHostBootChain,assertHostRebootPlan,assertHostRebootCompletion,assertHostBootRetainedBuild,resolveCertifiedProcess,REBOOT_WORKER_NAME as NAME} from './release-toolchain-host-reboot-contract.mjs';
 import {assertBookingAtomicWorkerGate} from './booking-atomic-worker.mjs';
 import {assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
 import {executeHostRebootRecovery,assertHostBootOriginalDumpSnapshots} from './release-toolchain-host-reboot-state.mjs';
@@ -26,6 +26,17 @@ test('a separately certified real boot rebinds all online and stopped registrati
  for(const saved of [f.prior.processes,f.before.processes])assert.equal(inspectOnlineRetentionWindow({history,actualActive:active,current:f.after.processes,saved}).phase,'stable');
  assertBookingAtomicWorkerGate({gate:f.gate,history,actualActive:active,current:f.after.processes,toolRevision:f.gate.toolRevision});assertBookingWorkerExecutionRevision({gate:f.gate,history,toolRevision:f.before.toolRevision});
  assert.equal(assertOnlineRetentionPublication({history,state:f.websiteState,actualActive:active,current:f.after.processes,action:'stage'}).phase,'published');
+});
+
+test('the shared production plan builder cannot inherit a previous retirement victim or operation-specific payload',()=>{
+ const f=fixture(),history=clone(f.history),prior=history.entries.at(-1),victim={target:S('9'),process:clone(prior.processes.find(p=>p.status==='stopped'))};
+ // Projection test of an already-parsed prior context, not a replacement for
+ // the independently tested full signed-history reader used on the host.
+ Object.assign(prior,{kind:'retire',victim,rollbackProof:{syntheticPriorOnly:true}});history.headSha256=retentionHash(prior);
+ const hostReboot={...clone(f.before.hostReboot),priorHistoryHead:history.headSha256},original=retentionCanonicalText(history);
+ const before=buildHostRebootPlan({history,toolRevision:f.before.toolRevision,hostReboot,workerIdentity:clone(f.before.workerIdentity)});
+ assert.equal(before.victim,null);assert.equal(before.rollbackProof,undefined);assert.equal(before.workerRelease,undefined);assert.equal(before.bookingHandoff,undefined);assert.equal(before.applicationRelease,undefined);assertHostRebootPlan(before,history);assert.equal(retentionCanonicalText(history),original);
+ assert.throws(()=>assertHostRebootPlan({...before,victim},history),/host_reboot_plan/);
 });
 test('same kernel boot, renamed/deleted registrations, changed definitions/env/mail and stopped resurrection are refused',()=>{
  for(const mutate of [v=>v.hostReboot.bootId=v.hostReboot.previousBootId,v=>v.hostReboot.resurrectedProcesses.pop(),v=>v.hostReboot.resurrectedProcesses[0].args.push('foreign'),v=>v.hostReboot.environmentProofs[0].afterStableSha256=H('9'),v=>v.hostReboot.resurrectedProcesses[0].createdAt++,v=>v.hostReboot.mailEnabled=true,v=>v.hostReboot.identities[0].parentPid++,v=>v.hostReboot.resurrectedProcesses.find(p=>p.status==='stopped').status='online',v=>v.previousSha256=H('9'),v=>v.active.port++]){const f=fixture();mutate(f.before);assert.throws(()=>assertHostRebootPlan(f.before,f.history));}

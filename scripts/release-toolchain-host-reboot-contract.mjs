@@ -88,6 +88,13 @@ export function assertHostBootChain(r,history){
  need(!boots.some(c=>[c.hostReboot.bootId,c.hostReboot.previousBootId].includes(r.bootId)),'boot_replay');return true;
 }
 const OBS=['version','policy','kind','sequence','previousSha256','legacySha256','rollingHeadSha256','rollingHistorySha256','toolRevision','active','rollback','victim','hostReboot','processes','workerIdentity','persistenceSha256'];
+export function buildHostRebootPlan({history,toolRevision,hostReboot,workerIdentity}){
+ const prior=history.entries.at(-1);need(prior,'plan');
+ // Only shared immutable roots carry forward. A retirement victim or another
+ // operation's scoped payload is never part of a host-reboot operation.
+ const before={...Object.fromEntries(['version','policy','legacySha256','rollingHeadSha256','rollingHistorySha256'].map(k=>[k,structuredClone(prior[k])])),kind:HOST_REBOOT_KIND,sequence:history.entries.length+1,previousSha256:history.headSha256,toolRevision,victim:null,active:{...structuredClone(prior.active),process:hostReboot.resurrectedProcesses.find(p=>p.name===prior.active.name)},rollback:{...structuredClone(prior.rollback),process:hostReboot.resurrectedProcesses.find(p=>p.name===prior.rollback.name)},hostReboot,processes:hostReboot.resurrectedProcesses,workerIdentity,persistenceSha256:null};
+ assertHostRebootPlan(before,history);return before;
+}
 export function assertHostRebootPlan(before,history){
  keys(before,OBS);const prior=history.entries.at(-1);need(prior&&before.version===2&&before.policy===history.policy&&before.kind===HOST_REBOOT_KIND&&before.sequence===history.entries.length+1&&before.previousSha256===history.headSha256&&sha(before.toolRevision)&&before.victim===null,'plan');
  assertHostRebootContext(before.hostReboot,prior,history.headSha256);
