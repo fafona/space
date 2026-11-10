@@ -45,7 +45,7 @@ function write(file,value){bookingHostWriteOnce(file,typeof value==='string'?val
 function fact(pid){const root='/proc/'+pid,text=fs.readFileSync(root+'/stat','utf8'),f=text.slice(text.lastIndexOf(')')+2).trim().split(/\s+/);need(fs.lstatSync(root).uid===0,'process_owner');
  return {pid,startTicks:f[19],state:f[0],executable:f[0]==='Z'?null:fs.realpathSync(root+'/exe'),cwd:f[0]==='Z'?null:fs.realpathSync(root+'/cwd'),commandSha256:hash(fs.readFileSync(root+'/cmdline'))};}
 const binding=f=>Object.fromEntries(Object.entries(f).filter(([k])=>k!=='state'));
-function alive(expected){try{const actual=fact(expected.pid);return actual.state!=='Z'&&isDeepStrictEqual(binding(actual),binding(expected));}catch(e){if(['ENOENT','ESRCH'].includes(e.code))return false;throw e;}}
+function alive(expected){try{const actual=fact(expected.pid);if(actual.state==='Z')return false;need(isDeepStrictEqual(binding(actual),binding(expected)),'fixture_process_identity_changed');return true;}catch(e){if(['ENOENT','ESRCH'].includes(e.code))return false;throw e;}}
 async function stop(expected){if(!alive(expected))return;need(expected.cwd.startsWith('/var/lib/faolla-booking-full-rehearsal-')||expected.executable===NGINX&&
  fs.readFileSync('/proc/'+expected.pid+'/cmdline','utf8').includes('/var/lib/faolla-booking-full-rehearsal-'),'stop_not_owned');process.kill(expected.pid,'SIGTERM');
  for(let i=0;i<100&&alive(expected);i++)await wait(20);if(alive(expected)){process.kill(expected.pid,'SIGKILL');for(let i=0;i<100&&alive(expected);i++)await wait(20);}need(!alive(expected),'fixture_not_stopped');}
@@ -82,7 +82,36 @@ async function until(predicate,timeout=5000){const end=Date.now()+timeout;while(
 function launch(role,directory,{fd}={}){ownedCase(directory);const output=fs.openSync(directory+'/'+role+'-'+randomUUID()+'.log',fs.constants.O_WRONLY|fs.constants.O_CREAT|fs.constants.O_EXCL|fs.constants.O_NOFOLLOW,0o600);
  try{return spawn('/usr/bin/node',[FILE,role,directory],{cwd:directory,env:env(),detached:role==='watchdog'||role==='worker',stdio:['ignore',output,output,...(fd===undefined?[]:[fd])]});}
  finally{fs.closeSync(output);}}
-async function spawned(child){await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});return fact(child.pid);}
+const emptyCommandSha256=hash(Buffer.alloc(0));
+export function bookingNativeNodeSpawnReady({expected,actual,commandSha256}){
+ need(Number.isSafeInteger(expected?.pid)&&expected.pid>0&&expected.executable==='/usr/bin/node'&&/^\/var\/lib\/faolla-booking-full-rehearsal-[A-Za-z0-9]+\/runtime-(?:normal|controller-death-before-commit|controller-death-after-commit)$/.test(expected.cwd)&&/^[a-f0-9]{64}$/.test(commandSha256)&&commandSha256!==emptyCommandSha256,'fixture_node_spawn');
+ need(actual?.pid===expected.pid&&actual.startTicks===expected.startTicks&&actual.executable===expected.executable&&actual.cwd===expected.cwd&&actual.state!=='Z','fixture_node_child_changed');
+ // exec/startup can expose an empty /proc cmdline after the spawn event.
+ // That is a not-ready observation, never a durable command identity.
+ need([emptyCommandSha256,commandSha256].includes(actual.commandSha256),'fixture_node_command_changed');
+ return actual.commandSha256===commandSha256;
+}
+export async function stopBookingNativeStartingNode(operations,expected){
+ const live=()=>operations.ownedNow(expected);
+ if(!live())return;operations.signal(expected.pid,'SIGTERM');
+ for(let i=0;i<100&&live();i++)await operations.wait(20);
+ if(live()){operations.signal(expected.pid,'SIGKILL');for(let i=0;i<100&&live();i++)await operations.wait(20);}
+ need(!live(),'node_fixture_not_stopped');
+}
+async function spawned(child){
+ await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});const expected=fact(child.pid);
+ if(child.spawnfile!=='/usr/bin/node')return expected;
+ need(child.spawnargs.length===4&&child.spawnargs[0]==='/usr/bin/node'&&child.spawnargs[1]===FILE&&['controller','watchdog','worker','web-baseline','web-primary','web-rollback'].includes(child.spawnargs[2])&&child.spawnargs[3]===expected.cwd,'fixture_node_spawn_arguments');
+ const commandSha256=hash(Buffer.from(child.spawnargs.join('\0')+'\0'));let actual;
+ const inspect=()=>{const value=fact(expected.pid);bookingNativeNodeSpawnReady({expected,actual:value,commandSha256});return value;};
+ try{await until(()=>{actual=inspect();return actual.commandSha256===commandSha256;});return actual;}
+ catch(error){
+  // The ChildProcess and its birth were captured here, before readiness.
+  // On cancellation, clean only this same owned birth, including empty argv.
+  await stopBookingNativeStartingNode({ownedNow:()=>{try{const value=fact(expected.pid);if(value.state==='Z')return null;bookingNativeNodeSpawnReady({expected,actual:value,commandSha256});return value;}catch(e){if(['ENOENT','ESRCH'].includes(e.code))return null;throw e;}},signal:(pid,signal)=>process.kill(pid,signal),wait},expected);
+  throw error;
+ }
+}
 // The PID file is an acknowledgement, never a source of signal authority.
 // nginx -t can create it empty before the actual child has even started.
 export function bookingNativeNginxReady({pidText,expected,actual,directory}){
