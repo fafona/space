@@ -1,5 +1,5 @@
 import type {
-  MerchantRedemptionCheckoutContext, MerchantRedemptionCheckoutQuote, MerchantRedemptionPendingCart,
+  MerchantRedemptionCheckoutContext, MerchantRedemptionCheckoutQuote, MerchantRedemptionPendingCart, MerchantRedemptionPendingMember,
 } from "@/lib/merchantRedemptionCheckout";
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -33,9 +33,25 @@ export function isMerchantRedemptionPendingCart(value: unknown, siteId: string, 
     /^[A-Za-z0-9_.:-]{1,120}$/.test(operationId) && isMerchantRedemptionCheckoutQuote(value.quote);
 }
 
+export function isMerchantRedemptionPendingMember(value: unknown): value is MerchantRedemptionPendingMember {
+  return record(value) && Object.keys(value).length === 4 &&
+    Object.keys(value).every(key => ["memberNo", "name", "pointBalance", "balanceAmount"].includes(key)) &&
+    text(value.memberNo) && Boolean(value.memberNo.trim()) && text(value.name) && Boolean(value.name.trim()) &&
+    integer(value.pointBalance) && typeof value.balanceAmount === "number" &&
+    Number.isFinite(value.balanceAmount) && value.balanceAmount >= 0 && value.balanceAmount <= Number.MAX_SAFE_INTEGER;
+}
+
+export function buildMerchantRedemptionPendingMember(member: MerchantRedemptionPendingMember | null) {
+  if (member !== null && !isMerchantRedemptionPendingMember(member)) throw new Error("redemption_checkout_response_invalid");
+  return structuredClone(member);
+}
+
 /** Called only after actor-scoped lookup and reauthorization. No raw request,
  * membership IDs, claim/settlement tokens, notes or private versions are exposed. */
-export function buildMerchantRedemptionPendingCart(context: MerchantRedemptionCheckoutContext, siteId: string): MerchantRedemptionPendingCart {
+export function buildMerchantRedemptionPendingCart(
+  context: MerchantRedemptionCheckoutContext,
+  siteId: string,
+): MerchantRedemptionPendingCart {
   if (context.status !== "pending" || context.acknowledgedAt !== null ||
     !/^[A-Za-z0-9_.:-]{1,120}$/.test(context.operationId) || !isMerchantRedemptionCheckoutQuote(context.request.quote)) {
     throw new Error("redemption_checkout_response_invalid");

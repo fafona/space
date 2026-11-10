@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {executeCacheCleanup, releaseMountReferences, selectPm2CacheProtection, selectReleaseRetentionProtection} from './online-release-cache-cleanup.mjs';
 import {planReleaseCacheCleanup} from './online-release-cache-policy.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
+import {normalizeResurrectedRetirementProcess} from './release-toolchain-process-observation.mjs';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import vm from 'node:vm';
@@ -467,6 +468,27 @@ test('v2 exact nested retirement and immutable legacy certificates both certify 
   assert.equal(JSON.stringify(input), before);
 });
 
+test('cache eligibility follows exact validated reboot edges for stopped registrations, never name-only identity changes', () => {
+  // As above, these are already-validated-history ports. The actual disk
+  // reader separately verifies complete raw proof files and their hash chain.
+  const f = v2Fixture(), prior = f.history.entries.at(-1);
+  const before = clone(f.pm2), resurrected = before.map(row => ({ ...row, pmId: row.pmId + 40,
+    ...(row.status === 'online' ? { pid: row.pid + 10000 } : {}), environmentSha256: hashOf('6') }));
+  f.history.entries.push({kind: 'host-reboot', hostReboot: {resurrectedProcesses: clone(resurrected)}, processes: clone(resurrected)});
+  assert.deepEqual(prior.processes, before);
+  const result = selectPm2CacheProtection({pm2: resurrected, history: f.history});
+  assert.deepEqual(result.certifiedStoppedDirectories, [releaseOf('b'), releaseOf('c')]);
+  for (const key of ['pmId', 'environmentSha256', 'args', 'cwd']) {
+    const rows = clone(resurrected), row = rows.find(row => row.cwd === releaseOf('b'));
+    row[key] = key === 'pmId' ? row.pmId + 1 : key === 'args' ? [...row.args, '--changed'] : key === 'cwd' ? releaseOf('e') : hashOf('5');
+    const changed = selectPm2CacheProtection({pm2: rows, history: f.history});
+    assert.equal(changed.certifiedStoppedDirectories.includes(row.cwd), false);
+    assert.ok(changed.protectedDirectories.includes(row.cwd));
+  }
+  const noEdge = clone(f.history); noEdge.entries.pop();
+  assert.deepEqual(selectPm2CacheProtection({pm2: resurrected, history: noEdge}).certifiedStoppedDirectories, []);
+});
+
 for (const [name, change] of [
   ['wrong certificate kind', c => {c.kind = 'initialize';}],
   ['prepared certificate', c => {c.status = 'prepared';}],
@@ -536,7 +558,7 @@ function observedResources(f, readHistory = () => clone(f.history), extra = {}) 
     SHA: /^[a-f0-9]{40}$/, WEB_RELEASE_FILES, WEB_RELEASE_PROXY, WEB_RELEASE_MARKER,
     validateTool: () => events.push('tool'), daemonIdentity: () => ({pid: 90, startTicks: '1'}),
     readOnlineRetentionHistory: () => {events.push('history'); return readHistory();},
-    normalizeRetirementProcess, selectPm2CacheProtection, selectReleaseRetentionProtection, releaseMountReferences,
+    normalizeRetirementProcess: normalizeResurrectedRetirementProcess, selectPm2CacheProtection, selectReleaseRetentionProtection, releaseMountReferences,
     same: (a, b, reason) => {if (JSON.stringify(a) !== JSON.stringify(b)) throw Error('release_cache_' + reason);},
     fail: reason => {throw Error('release_cache_' + reason);},
     digest: value => createHash('sha256').update(value).digest('hex'), json: value => JSON.stringify(value, null, 2) + '\n',
@@ -567,6 +589,29 @@ test('actual observation pins both histories and preserves old fields while addi
   const oldResult = observedResources(absent).run();
   assert.equal(Object.hasOwn(oldResult, 'retentionHead'), false); assert.equal(Object.hasOwn(oldResult, 'retentionCertificates'), false);
   assert.ok(oldResult.protectedDirectories.includes(releaseOf('b')));
+});
+
+test('actual cache observer accepts only the certified stopped PM2 missing-pid representation after resurrection', () => {
+  const f = v2Fixture(), before = observedResources(f).run();
+  for (const row of f.raws.filter(row => row.pm2_env.status === 'stopped')) delete row.pid;
+  assert.deepEqual(observedResources(f).run(), before);
+  const online = f.raws.find(row => row.pm2_env.status === 'online');
+  delete online.pid;
+  assert.throws(() => observedResources(f).run(), /online_retirement_pm2_entry_invalid/);
+});
+
+test('cache compatibility reuses the reviewed representation helper without changing historical process guards', () => {
+  const source = readFileSync(new URL('./online-release-cache-cleanup.mjs', import.meta.url), 'utf8');
+  assert.match(source, /normalizeResurrectedRetirementProcess as normalizeRetirementProcess/);
+  assert.match(source, /'release-toolchain-process-observation\.mjs', 'release-toolchain-host-reboot-contract\.mjs'/);
+  const f = v2Fixture(), stopped = f.raws.find(row => row.pm2_env.status === 'stopped');
+  for (const pid of [null, -1, '0', NaN]) {
+    assert.throws(() => normalizeResurrectedRetirementProcess({ ...stopped, pid }), /online_retirement_pm2_entry_invalid/);
+  }
+  const missing = { ...stopped }; delete missing.pid;
+  assert.throws(() => normalizeRetirementProcess(missing), /online_retirement_pm2_entry_invalid/);
+  assert.equal(normalizeResurrectedRetirementProcess(missing).pid, 0);
+  assert.equal(Object.hasOwn(missing, 'pid'), false);
 });
 
 test('actual observation keeps pending, process, scheduler, nginx and mount references additive over certification', () => {

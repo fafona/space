@@ -7,7 +7,9 @@ import {isDeepStrictEqual} from 'node:util';
 import {planReleaseCacheCleanup, captureWebpackCache, applyWebpackCacheCleanup} from './online-release-cache-policy.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {ONLINE_RETENTION_POLICY, inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
-import {assertExistingPm2Directory, normalizeRetirementProcess} from './online-release-retirement.mjs';
+import {assertExistingPm2Directory} from './online-release-retirement.mjs';
+import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess} from './release-toolchain-process-observation.mjs';
+import {hostRebootReplacements, resolveCertifiedProcess} from './release-toolchain-host-reboot-contract.mjs';
 import {WEB_RELEASE_FILES, WEB_RELEASE_PROXY, WEB_RELEASE_MARKER} from './web-presentation-release-policy.mjs';
 import {withOnlineToolPreparationLocks} from './prepare-online-release-tool.mjs';
 
@@ -23,7 +25,8 @@ const TOOL_FILES = ['online-release-cache-cleanup.mjs', 'online-release-cache-po
   'booking-handoff-retention.mjs', 'booking-handoff-policy.mjs',
   'online-release-rolling.mjs', 'online-release-rolling-policy.mjs', 'online-release-retirement.mjs',
   'online-release-retirement-policy.mjs', 'web-presentation-release-policy.mjs',
-  'contact-card-release-policy.mjs', 'prepare-online-release-tool.mjs'];
+  'contact-card-release-policy.mjs', 'prepare-online-release-tool.mjs',
+  'release-toolchain-process-observation.mjs', 'release-toolchain-host-reboot-contract.mjs'];
 const digest = value => createHash('sha256').update(value).digest('hex');
 const fail = code => {throw Error(`release_cache_${code}`);};
 const json = value => JSON.stringify(value, null, 2) + '\n';
@@ -203,24 +206,29 @@ export function selectPm2CacheProtection({pm2, history}) {
   if (!Array.isArray(pm2) || !Array.isArray(rolling?.legacyCertificates) || !Array.isArray(rolling?.entries) ||
       (v2 && (history.policy !== ONLINE_RETENTION_POLICY || !Array.isArray(history.entries))))
     fail('pm2_protection_invalid');
-  const certificates = [...rolling.legacyCertificates, ...rolling.entries].map(cert => ({cert, v2: false}));
-  if (v2) certificates.push(...history.entries.map(cert => ({cert, v2: true})));
+  const certificates = [...rolling.legacyCertificates, ...rolling.entries].map(cert => ({cert, v2: false, index: -1}));
+  if (v2) certificates.push(...history.entries.map((cert, index) => ({cert, v2: true, index})));
+  // The complete disk reader already validates each reboot's before/after
+  // cohort and environment proof. Follow those exact edges, never infer a
+  // stopped registration from its name or today's manager ID alone.
+  const currentStopped = (stopped, index) => v2 ? resolveCertifiedProcess(stopped,
+    history.entries.flatMap((cert, next) => next > index ? hostRebootReplacements(cert, history.entries[next - 1]) : [])) : stopped;
   const protectedDirectories = new Set(), certifiedStoppedDirectories = new Set();
   for (const row of pm2) {
     if (!row || !['online', 'stopped'].includes(row.status)) fail('process_transition_pending');
     if (typeof row.cwd !== 'string' || !row.cwd.startsWith('/') || path.posix.normalize(row.cwd) !== row.cwd ||
         /[\\\x00-\x1f\x7f]/.test(row.cwd)) fail('pm2_protection_invalid');
     const matches = row.status === 'stopped' && row.pid === 0 && row.watch === false && row.cronRestart === null
-      ? certificates.filter(({cert, v2}) => {
+      ? certificates.filter(({cert, v2, index}) => {
         if (v2 && (cert?.version !== 2 || cert.policy !== ONLINE_RETENTION_POLICY || cert.kind !== 'retire' ||
             cert.victim?.process?.status !== 'online' || !Number.isSafeInteger(cert.victim.process.pid) || cert.victim.process.pid < 1 ||
-            !isDeepStrictEqual(row, {...cert.victim.process, pid: 0, status: 'stopped'}))) return false;
+            !isDeepStrictEqual(cert.stoppedProcess, {...cert.victim.process, pid: 0, status: 'stopped'}))) return false;
         const victim = v2 ? {...cert.victim.process, target: cert.victim.target} : cert?.victim;
         return cert?.status === 'completed' && typeof victim?.target === 'string' && victim.target.length === 40 && SHA.test(victim.target) &&
           victim.cwd === `${APP}.web-releases/${victim.target.slice(0, 12)}-online` &&
           victim.name === `merchant-space-online-${victim.target.slice(0, 12)}` &&
-          victim.cwd === row.cwd && victim.name === row.name && victim.pmId === row.pmId && victim.port === row.port &&
-          isDeepStrictEqual(row, cert.stoppedProcess);
+          victim.cwd === row.cwd && victim.name === row.name && victim.pmId === cert.stoppedProcess?.pmId && victim.port === row.port &&
+          Boolean(cert.stoppedProcess) && isDeepStrictEqual(row, currentStopped(cert.stoppedProcess, index));
       }) : [];
     if (matches.length === 1) certifiedStoppedDirectories.add(row.cwd);
     else protectedDirectories.add(row.cwd);

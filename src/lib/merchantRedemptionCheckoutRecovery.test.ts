@@ -37,6 +37,17 @@ test("failed checks and unacknowledged original checkouts still show actionable 
   }
 });
 
+test("an intact pending cart keeps the original cashier layout without a recovery banner or unlocking a new sale", () => {
+  const checkout = readCashierCheckoutSummary({ ok: true, checkout: { ...pending, pendingCart: {
+    version: 1, siteId: receipt.siteId, operationId: receipt.operationId,
+    quote: { totalQuantity: 1, grossPoints: 90, couponPointDiscountTotal: 10, totalPoints: 80, couponCount: 1, lines: receipt.lines },
+  } } }, receipt.siteId);
+  for (const busy of [false, true]) assert.equal(cashierCheckoutRecoveryNoticeVisible("ready", checkout, busy), false);
+  assert.equal(cashierCheckoutRecoveryNoticeVisible("error", checkout, false), true);
+  assert.equal(cashierCheckoutBlocksNewSale("ready", checkout), true);
+  assert.doesNotMatch(cashierSource, /待结算原单|原单会员积分|原单待扣积分|继续原单结算|pending-sale-summary/);
+});
+
 test("loading or failed recovery and all unacknowledged results block new checkout", () => {
   for (const phase of ["checking", "error"] as const) assert.equal(cashierCheckoutBlocksNewSale(phase, null), true);
   for (const status of ["pending", "committed", "cancelled"]) {

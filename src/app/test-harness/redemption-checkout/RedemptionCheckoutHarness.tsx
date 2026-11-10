@@ -26,6 +26,7 @@ function fixture(actor: string, scenario: Scenario): HarnessState {
     checkout: scenario === "empty" || scenario === "new-response-lost" ? null : {
       operationId: result.operationId, status: scenario === "committed" ? "committed" : "pending", createdAt: CREATED,
       acknowledgedAt: null, result: scenario === "committed" ? result : null,
+      ...(scenario === "committed" ? {} : { pendingMember: scenario === "deleted-member" ? null : { name: `合成会员 ${actor}`, memberNo: actor === "A" ? "10000000000001" : "10000000000002", pointBalance: 20, balanceAmount: 0 } }),
       ...(scenario === "committed" || scenario === "pending-no-preview" ? {} : { pendingCart: { version: 1 as const, siteId: SITE, operationId: result.operationId,
         quote: { totalQuantity: result.totalQuantity, grossPoints: result.grossPoints, couponPointDiscountTotal: result.couponPointDiscountTotal,
           totalPoints: result.totalPoints, couponCount: result.couponCount, lines: result.lines } } }),
@@ -85,7 +86,7 @@ export default function RedemptionCheckoutHarness() {
         }
         if (body.action === "cancel") {
           if (state.scenario === "cancel-race") commit(state, String(body.operationId));
-          else if (state.checkout?.status === "pending") state.checkout = { ...state.checkout, pendingCart: undefined, status: "cancelled" };
+          else if (state.checkout?.status === "pending") state.checkout = { ...state.checkout, pendingCart: undefined, pendingMember: undefined, status: "cancelled" };
           return json({ ok: true, checkout: state.checkout });
         }
         if (body.action === "ack") {

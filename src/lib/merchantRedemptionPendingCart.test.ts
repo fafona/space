@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { MerchantRedemptionCheckoutContext } from "@/lib/merchantRedemptionCheckout";
-import { buildMerchantRedemptionPendingCart, isMerchantRedemptionCheckoutQuote, isMerchantRedemptionPendingCart } from "@/lib/merchantRedemptionPendingCart";
+import { buildMerchantRedemptionPendingCart, buildMerchantRedemptionPendingMember, isMerchantRedemptionCheckoutQuote, isMerchantRedemptionPendingCart, isMerchantRedemptionPendingMember } from "@/lib/merchantRedemptionPendingCart";
 import { cashierCheckoutBlocksNewSale, readCashierCheckoutSummary } from "@/lib/merchantRedemptionCheckoutRecovery";
 
 const site = "10000000", operation = "original-operation";
@@ -34,6 +34,31 @@ test("pending display is actor/site/operation-bound and never unlocks a new chec
   assert.equal(isMerchantRedemptionPendingCart(pendingCart, site, "other-operation"), false);
   assert.equal(isMerchantRedemptionPendingCart({ ...pendingCart, privateNote: "secret" }, site, operation), false);
   assert.throws(() => buildMerchantRedemptionPendingCart({ ...saved, status: "cancelled" }, site));
+});
+
+test("the permission-filtered original member heading is validated and cloned, never used as new intent", () => {
+  const member = { name: "合成会员", memberNo: "CARD-ONE", pointBalance: 100, balanceAmount: 10.5 };
+  const pending = buildMerchantRedemptionPendingMember(member);
+  assert.equal(isMerchantRedemptionPendingMember(pending), true);
+  member.name = "Changed";
+  assert.equal(pending?.name, "合成会员");
+  for (const bad of [{ ...member, membershipId: "private" }, { ...member, pointBalance: -1 }, { ...member, balanceAmount: NaN },
+    { ...member, balanceAmount: -1 }, { ...member, memberNo: "" }, { ...member, name: "" }]) {
+    assert.equal(isMerchantRedemptionPendingMember(bad), false);
+  }
+  assert.equal(buildMerchantRedemptionPendingMember(null), null);
+});
+
+test("member display is an additive summary field; the existing strict cart protocol is unchanged for open old pages", () => {
+  const pendingCart = buildMerchantRedemptionPendingCart(context(), site);
+  const pendingMember = { name: "会员", memberNo: "CARD-ONE", pointBalance: 100, balanceAmount: 0 };
+  assert.deepEqual(Object.keys(pendingCart).sort(), ["version", "siteId", "operationId", "quote"].sort());
+  const saved = context(), summary = readCashierCheckoutSummary({ ok: true, checkout: { ...saved, pendingCart, pendingMember } }, site);
+  assert.deepEqual(summary?.pendingMember, pendingMember);
+  assert.equal(isMerchantRedemptionPendingCart(summary?.pendingCart, site, operation), true);
+  assert.equal(isMerchantRedemptionPendingCart({ ...pendingCart, member: pendingMember }, site, operation), false);
+  assert.throws(() => readCashierCheckoutSummary({ ok: true, checkout: { ...saved, pendingCart, pendingMember: { ...pendingMember, privateToken: "secret" } } }, site));
+  assert.equal(readCashierCheckoutSummary({ ok: true, checkout: { ...saved, pendingCart, pendingMember: null } }, site)?.pendingMember, null);
 });
 
 test("malformed lines, totals, unknown fields and unsafe integers cannot be shown as a valid pending cart", () => {
