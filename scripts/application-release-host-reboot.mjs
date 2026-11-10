@@ -17,7 +17,7 @@ import {withPinnedFormalPm2Process} from './release-toolchain-proc-witness.mjs';
 import {withRetainedApplicationAttestation} from './release-toolchain-application-attestation.mjs';
 import {captureFileContinuity} from './release-toolchain-file-continuity.mjs';
 import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
-import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess} from './release-toolchain-process-observation.mjs';
+import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess,assertResurrectedManagerDefinition} from './release-toolchain-process-observation.mjs';
 import {bookingHostRead,bookingHostWriteOnce,bookingHostSync,bookingHostEnvironment} from './booking-handoff-host-io.mjs';
 import {bookingWorkerProtectedFilePlan,readNaturalWorkerCycle} from './release-toolchain-worker-release-host.mjs';
 import {assertBookingAtomicWorkerEnvironment,assertBookingAtomicWorkerGate} from './booking-atomic-worker.mjs';
@@ -28,7 +28,7 @@ import {bookingReadyWorkerConfiguration,assertBookingReadyWorkerRawTransition} f
 import {verifyWorkerEntryCiArtifact} from './release-toolchain-worker-release-ci.mjs';
 import {captureTrustedPython,verifyTrustedPython} from './production-maintenance-trusted-python.mjs';
 import {captureResurrectedPm2DumpTarget as capturePm2DumpTarget,persistResurrectedPm2Dump as persistPm2Dump,verifyResurrectedPm2Dump as verifyPm2Dump,inspectResurrectedPm2Registry as inspectPm2Registry} from './release-toolchain-resurrection-pm2-adapter.mjs';
-import {assertCompletePm2DumpSet} from './release-toolchain-pm2-transition.mjs';
+import {assertCompletePm2DumpSet,stablePm2RegistryRow} from './release-toolchain-pm2-transition.mjs';
 import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
 const ROOT='/var/lib/faolla-host-reboots',RETENTION='/var/lib/faolla-online-retention',RELEASE='/var/lib/faolla-online-release',DEPLOY='/www/wwwroot/merchant-space.deploy.lock';
 const C='f274ad615550c83717aa7af2ad32339608e6f8aa',GATE='/var/lib/faolla-booking-handoff/'+C+'/worker-enabled.json';
@@ -59,18 +59,7 @@ function environmentProofs(history,actual,dump){
  return prior.processes.map(old=>{
   const saved=dump.find(e=>e.name===old.name),row=actual.snapshot.rows.find(e=>e.name===old.name);need(saved&&row,'dump_cohort');
   const previous=normalizeRetirementProcess({name:old.name,pm_id:old.pmId,pid:old.pid,pm2_env:saved});same(previous,old,'saved_definition');
-  const before=saved.env??{},after=row.pm2_env.env??{};
-  const stable=v=>Object.fromEntries(Object.entries(v).filter(([k])=>k!=='unique_id'));
-  same(stable(before),stable(after),'business_environment');
-  // Verify the whole PM2 definition too. The listed manager lifecycle fields
-  // are the only differences allowed in addition to its regenerated UUID.
-  const mutable=['restart_time','axm_monitor','pm_uptime','unique_id','env','pm_id','pm_pid_path'];
-  const rest=v=>Object.fromEntries(Object.entries(v).filter(([k])=>!mutable.includes(k)));
-  same(rest(saved),rest(row.pm2_env),'manager_definition');
-  for(const [env,id]of [[saved,old.pmId],[row.pm2_env,row.pm_id]]){
-   need(env.unique_id===env.env.unique_id&&env.pm_pid_path==='/root/.pm2/pids/'+old.name+'-'+id+'.pid','manager_identity');
-  }
-  return{name:old.name,beforeSha256:rebootHash(before),afterSha256:rebootHash(after),beforeStableSha256:rebootHash(stable(before)),afterStableSha256:rebootHash(stable(after)),beforeUniqueId:before.unique_id,afterUniqueId:after.unique_id};
+  return assertResurrectedManagerDefinition({saved,current:row.pm2_env,before:old,after:normalizeRetirementProcess(row),home:'/root/.pm2'});
  });
 }
 async function deployLock(work){
@@ -105,7 +94,7 @@ export async function reconcileApplicationHostBoot(){
      trees.push({root:a.directory+'/node_modules',allowInternalLinks:true},{root:a.directory+'/.next',exclude:['cache','trace']});
     }
     const files=[...filePlans.values()],continuity=captureFileContinuity({files:[...new Set([...files.map(p=>p.file),...sourceFiles])],trees});
-    const protectedHash=()=>rebootHash(Object.fromEntries(files.map(({file,privateMode})=>[file,digest(bookingHostRead(file,{privateMode}))])));
+    const protectedHash=()=>{const now=physical();return rebootHash({files:Object.fromEntries(files.map(({file,privateMode})=>[file,digest(bookingHostRead(file,{privateMode}))])),otherManagerRows:now.snapshot.rows.filter(p=>p.name!==NAME).map(stablePm2RegistryRow),otherIdentities:now.identities.filter(p=>p.name!==NAME)});};
     const check=()=>{verifyDaemon();continuity.assertUnchanged();assertReviewFresh(review,revision);need(boot()===path.basename(directory),'boot_changed');if(intent)same(protectedHash(),intent.before.hostReboot.protectedHostSha256,'protected_files');};
     const prefix=()=>tailJournal?tailJournal.prefix():readOnlineRetentionHistory();
     const settled=()=>{check();const now=physical();assertHostRebootOnlyWorkerDelta(intent.before.hostReboot,now.processes,revision);if(intent.before.hostReboot.verifierAction==='retain'){same(now.workerIdentity,intent.before.workerIdentity,'retained_verifier_identity');same(now.raw,intent.original.raw,'retained_environment');same(now.configured,intent.original.configured,'retained_configuration');}else assertBookingReadyWorkerRawTransition(intent.original.raw,now.raw,intent.original.configured,now.configured);return now;};
@@ -128,8 +117,8 @@ export async function reconcileApplicationHostBoot(){
        ci=read(ROOT+'/'+oldVerifier.hostReboot.bootId+'/intent.json').ci;
        need(ci?.revision===revision&&rebootHash(ci)===oldVerifier.hostReboot.nativeEvidenceSha256,'retained_native_evidence');
       }else ci=await verifyWorkerEntryCiArtifact({revision,review,file:'/var/lib/faolla-booking-worker-admissions/'+revision+'/ci-evidence.zip',source});
-      const native=ci.report.hostReboot;need(native?.kind==='real-pm2-resurrection-contract-verified'&&native.realPm2Version==='6.0.14'&&['realProcessesObserved','actualDumpResurrected','stoppedRegistrationPreserved','wholeEnvironmentVerified','sameKernelBootRefused','kernelRebootNotSimulated','allOwnedProcessesStopped','actualPersistenceAfterResurrection','unmodifiedSharedValidators'].every(k=>native[k]===true)&&native.productionAuthority===false&&native.formalHostTouched===false,'native_reboot_evidence');
-      for(const file of ['release-toolchain-host-reboot-native.mjs','release-toolchain-host-reboot-contract.mjs','release-toolchain-host-reboot-pm2.py','release-toolchain-resurrection-pm2.py','release-toolchain-resurrection-pm2-adapter.mjs'])need(native.sourceHashes?.[file]===digest(fs.readFileSync(source+'/scripts/'+file)),'native_reboot_source');
+      const native=ci.report.hostReboot;need(native?.kind==='real-pm2-resurrection-contract-verified'&&native.realPm2Version==='6.0.14'&&['realProcessesObserved','actualDumpResurrected','stoppedRegistrationPreserved','wholeEnvironmentVerified','sameKernelBootRefused','kernelRebootNotSimulated','allOwnedProcessesStopped','actualPersistenceAfterResurrection','unmodifiedSharedValidators','managerIdsActuallyReassigned','stoppedPidPathHistorical'].every(k=>native[k]===true)&&native.productionAuthority===false&&native.formalHostTouched===false,'native_reboot_evidence');
+      for(const file of ['release-toolchain-host-reboot-native.mjs','release-toolchain-host-reboot-contract.mjs','release-toolchain-host-reboot-pm2.py','release-toolchain-resurrection-pm2.py','release-toolchain-resurrection-pm2-adapter.mjs','release-toolchain-process-observation.mjs'])need(native.sourceHashes?.[file]===digest(fs.readFileSync(source+'/scripts/'+file)),'native_reboot_source');
       const startedAt=new Date().toISOString(),window={id:randomUUID(),startedAt,deadlineAt:new Date(Date.parse(startedAt)+600000).toISOString()};
       const hostReboot={version:1,kind:'verified-host-boot-rebind',verifierAction,previousBootId:oldBoot.bootId,bootId:boot(),priorHistoryHead:history.headSha256,oldDumpSha256:digest(dumpText),oldBootReceiptSha256:oldBoot.sha256,sourceInventorySha256:inventory.inventorySha256,nativeEvidenceSha256:rebootHash(ci),gateSha256:digest(gateText),publicationCertificateSha256:gate.certificateSha256,protectedHostSha256:protectedHash(),environmentProofs:proofs,resurrectedProcesses:actual.processes,identities:actual.identities,daemon:actual.snapshot.daemonPeer,window,mailEnabled:false};
       const before={...Object.fromEntries(['version','policy','legacySha256','rollingHeadSha256','rollingHistorySha256','victim'].map(k=>[k,structuredClone(prior[k])])),kind:'host-reboot',sequence:history.entries.length+1,previousSha256:history.headSha256,toolRevision:revision,active:{...prior.active,process:actual.processes.find(p=>p.name===prior.active.name)},rollback:{...prior.rollback,process:actual.processes.find(p=>p.name===prior.rollback.name)},hostReboot,processes:actual.processes,workerIdentity:actual.workerIdentity,persistenceSha256:null};

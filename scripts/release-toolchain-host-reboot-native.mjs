@@ -3,9 +3,8 @@
 import * as fs from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {isDeepStrictEqual} from 'node:util';
-import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess} from './release-toolchain-process-observation.mjs';
-import {assertHostBootCohort,assertDifferentHostBoot,rebootHash} from './release-toolchain-host-reboot-contract.mjs';
+import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess,assertResurrectedManagerDefinition} from './release-toolchain-process-observation.mjs';
+import {assertHostBootCohort,assertDifferentHostBoot} from './release-toolchain-host-reboot-contract.mjs';
 import {captureProcessFact} from './check-production-runtime-supervision.mjs';
 import {withOwnedCiPm2ProcessWitness} from './release-toolchain-proc-witness.mjs';
 import {inspectResurrectedPm2Registry,captureResurrectedPm2DumpTarget,persistResurrectedPm2Dump,verifyResurrectedPm2Dump} from './release-toolchain-resurrection-pm2-adapter.mjs';
@@ -26,22 +25,28 @@ export async function acceptRealPm2Resurrection(root){
  let report;
  try{
   fs.writeFileSync(app+'/timer.cjs','setInterval(()=>{},1000);\n',{mode:0o600,flag:'wx'});
-  const config={apps:['reboot-online','reboot-stopped'].map(name=>({name,script:app+'/timer.cjs',cwd:app,interpreter:'/usr/bin/node',watch:false,autorestart:false,env:{KEEP:'synthetic-only',FAOLLA_BACKGROUND_JOBS_PAUSED:'1'}}))};
+  const config={apps:['reboot-gap','reboot-online','reboot-stopped'].map(name=>({name,script:app+'/timer.cjs',cwd:app,interpreter:'/usr/bin/node',watch:false,autorestart:false,env:{KEEP:'synthetic-only',FAOLLA_BACKGROUND_JOBS_PAUSED:'1'}}))};
   fs.writeFileSync(app+'/ecosystem.config.cjs','module.exports='+JSON.stringify(config)+';\n',{mode:0o600,flag:'wx'});
-  run(['start',app+'/ecosystem.config.cjs']);daemon=captureProcessFact(Number(fs.readFileSync(home+'/pm2.pid','utf8').trim()));need(daemon.uid===0&&daemon.executable==='/usr/bin/node','daemon');rows();run(['stop','reboot-stopped']);const original=rows();run(['save']);const dump=fs.readFileSync(home+'/dump.pm2'),oldRows=original.map(normalizeRetirementProcess);await stop();
+  run(['start',app+'/ecosystem.config.cjs']);daemon=captureProcessFact(Number(fs.readFileSync(home+'/pm2.pid','utf8').trim()));need(daemon.uid===0&&daemon.executable==='/usr/bin/node','daemon');
+  const initial=JSON.parse(run(['jlist']));need(initial.length===3&&initial[0].name==='reboot-gap','gap_cohort');for(const p of initial){const f=captureProcessFact(p.pid);need(f.uid===0&&f.parentPid===daemon.pid&&f.cwd===app,'child');children.set(f.pid,f);}
+  // Delete ONLY this owned synthetic placeholder registration, retaining all
+  // files/logs. The resulting ID gap makes resurrection genuinely renumber the
+  // two surviving definitions, including the still-stopped historical PID path.
+  run(['delete','reboot-gap']);rows();run(['stop','reboot-stopped']);const original=rows();run(['save']);const dump=fs.readFileSync(home+'/dump.pm2'),oldRows=original.map(normalizeRetirementProcess);await stop();
   run(['resurrect']);daemon=captureProcessFact(Number(fs.readFileSync(home+'/pm2.pid','utf8').trim()));const current=rows(),now=current.map(normalizeRetirementProcess),proofs=oldRows.map(p=>{
-   const before=original.find(r=>r.name===p.name).pm2_env.env,after=current.find(r=>r.name===p.name).pm2_env.env;
-   const stable=e=>Object.fromEntries(Object.entries(e).filter(([k])=>k!=='unique_id'));
-   need(isDeepStrictEqual(stable(before),stable(after)),'environment');return{name:p.name,beforeSha256:rebootHash(before),afterSha256:rebootHash(after),beforeStableSha256:rebootHash(stable(before)),afterStableSha256:rebootHash(stable(after)),beforeUniqueId:before.unique_id,afterUniqueId:after.unique_id};
+   const saved=JSON.parse(dump).find(r=>r.name===p.name),row=current.find(r=>r.name===p.name);
+   return assertResurrectedManagerDefinition({saved,current:row.pm2_env,before:p,after:normalizeRetirementProcess(row),home});
   });assertHostBootCohort(oldRows,now,proofs);
   need(now.find(p=>p.name==='reboot-stopped').status==='stopped'&&now.find(p=>p.name==='reboot-stopped').pid===0,'stopped_resurrected');
+  need(oldRows.every(p=>now.find(r=>r.name===p.name).pmId!==p.pmId),'ids_not_reassigned');
+  const stopped=current.find(p=>p.name==='reboot-stopped');need(stopped.pm2_env.pm_pid_path!==home+'/pids/reboot-stopped-'+stopped.pm_id+'.pid','stopped_path_not_historical');
   let refused=false;try{assertDifferentHostBoot(boot,fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim());}catch{refused=true;}need(refused,'same_boot_accepted');
   await withOwnedCiPm2ProcessWitness(bootRoot,async verify=>{
    const {commandLine,...fact}=captureProcessFact(daemon.pid);need(commandLine[0]==='PM2 v6.0.14: God Daemon ('+home+')','daemon');
    const registry=await inspectResurrectedPm2Registry(fact,boot);assertCompletePm2DumpSet(current,registry);verify();
    const target=await captureResurrectedPm2DumpTarget(fact,boot),receipt=await persistResurrectedPm2Dump(fact,boot,registry,target);need(await verifyResurrectedPm2Dump(fact,boot,registry,receipt)===true,'persistence');verify();
   });
-  report={kind:'real-pm2-resurrection-contract-verified',realPm2Version:'6.0.14',realProcessesObserved:true,actualDumpResurrected:true,stoppedRegistrationPreserved:true,wholeEnvironmentVerified:true,sameKernelBootRefused:true,kernelRebootNotSimulated:true,actualPersistenceAfterResurrection:true,unmodifiedSharedValidators:true,productionAuthority:false,formalHostTouched:false,savedDumpSha256:hash(dump),sourceHashes:Object.fromEntries(['release-toolchain-host-reboot-native.mjs','release-toolchain-host-reboot-contract.mjs','release-toolchain-host-reboot-pm2.py','release-toolchain-resurrection-pm2.py','release-toolchain-resurrection-pm2-adapter.mjs'].map(file=>[file,hash(fs.readFileSync(new URL('./'+file,import.meta.url)))]))};
+  report={kind:'real-pm2-resurrection-contract-verified',realPm2Version:'6.0.14',realProcessesObserved:true,actualDumpResurrected:true,stoppedRegistrationPreserved:true,wholeEnvironmentVerified:true,sameKernelBootRefused:true,kernelRebootNotSimulated:true,actualPersistenceAfterResurrection:true,unmodifiedSharedValidators:true,managerIdsActuallyReassigned:true,stoppedPidPathHistorical:true,productionAuthority:false,formalHostTouched:false,savedDumpSha256:hash(dump),sourceHashes:Object.fromEntries(['release-toolchain-host-reboot-native.mjs','release-toolchain-host-reboot-contract.mjs','release-toolchain-host-reboot-pm2.py','release-toolchain-resurrection-pm2.py','release-toolchain-resurrection-pm2-adapter.mjs','release-toolchain-process-observation.mjs'].map(file=>[file,hash(fs.readFileSync(new URL('./'+file,import.meta.url)))]))};
  }finally{await stop();need([...children.values()].every(f=>!live(f)),'cleanup');}
  report.allOwnedProcessesStopped=true;
  fs.writeFileSync(root+'/reports/host-reboot-resurrection-verified.json',JSON.stringify(report)+'\n',{mode:0o600,flag:'wx'});return report;
