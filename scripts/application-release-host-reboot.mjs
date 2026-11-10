@@ -10,7 +10,7 @@ import {collectRemoteReleaseReview,assertReviewFresh,inspectPinnedExecutionSourc
 import {APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertRecordedSchemaDatabase} from './application-release-compatibility.mjs';
 import {readOnlineRetentionHistory,buildOnlineRetentionReceipt} from './online-release-retention.mjs';
 import {retentionCanonicalText,retentionHash,inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
-import {assertHostRebootPlan,assertHostBootCohort,assertHostRebootOnlyWorkerDelta,latestBookingVerifierCertificate,REBOOT_WORKER_NAME as NAME,rebootHash} from './release-toolchain-host-reboot-contract.mjs';
+import {assertHostRebootPlan,assertHostBootCohort,assertHostRebootOnlyWorkerDelta,assertHostBootRetainedBuild,latestBookingVerifierCertificate,REBOOT_WORKER_NAME as NAME,rebootHash} from './release-toolchain-host-reboot-contract.mjs';
 import {executeHostRebootRecovery,assertHostBootOriginalDumpSnapshots} from './release-toolchain-host-reboot-state.mjs';
 import {createHostRebootTailJournal} from './release-toolchain-host-reboot-journal.mjs';
 import {withPinnedFormalPm2Process} from './release-toolchain-proc-witness.mjs';
@@ -69,6 +69,15 @@ async function deployLock(work){
  }finally{fs.closeSync(fd);}
 }
 function privateDirectory(p){if(!exists(p)){ownedReleasePath(path.dirname(p),{directory:true});fs.mkdirSync(p,{mode:0o700});bookingHostSync(path.dirname(p));}ownedReleasePath(p,{directory:true,privateMode:true});}
+function retainedBuildProof(history,target){
+ for(const certificate of [...history.entries].reverse()){
+  const file=RETENTION+'/'+String(certificate.sequence).padStart(6,'0')+'/after.json',bytes=bookingHostRead(file);
+  need(digest(bytes)===certificate.afterSha256,'website_certificate_file');
+  const proofs=JSON.parse(bytes).releaseProofs?.filter(p=>p.target===target)??[];
+  if(proofs.length){need(proofs.length===1,'website_build_binding');return{file,proof:proofs[0]};}
+ }
+ throw Error('host_reboot_website_build_binding');
+}
 export async function reconcileApplicationHostBoot(){
  need(process.platform==='linux'&&process.getuid?.()===0&&process.execPath==='/usr/bin/node'&&source==='/var/lib/faolla-online-code/'+revision&&/^[a-f0-9]{40}$/.test(revision)&&process.cwd()===source&&process.argv.length===3&&process.argv[1]===source+'/scripts/application-release-host-reboot.mjs'&&process.argv[2]==='reconcile','invocation');
  return withPinnedFormalPm2Process(async verifyDaemon=>{
@@ -84,11 +93,12 @@ export async function reconcileApplicationHostBoot(){
    }
    return withRetainedApplicationAttestation(async()=>{
     privateDirectory(directory);let intent,history,actual,tailJournal,receipt;
-    const reference=exists(directory+'/intent.json')?read(directory+'/intent.json').before:readOnlineRetentionHistory().entries.at(-1);
+    const retainedHistory=readOnlineRetentionHistory(),reference=exists(directory+'/intent.json')?read(directory+'/intent.json').before:retainedHistory.entries.at(-1);
     const anchors=[reference.active,reference.rollback],filePlans=new Map(bookingWorkerProtectedFilePlan().map(p=>[p.file,p])),sourceFiles=[],trees=[];
     for(const a of anchors){
      need(sourceGit(a.directory,['rev-parse','HEAD']).toString().trim()===a.target&&!sourceGit(a.directory,['status','--porcelain=v1','--untracked-files=all']).toString().trim(),'website_source');
-     need(bookingHostRead(a.directory+'/.next/BUILD_ID',{privateMode:false}).trim()===a.target,'website_build');
+     const built=retainedBuildProof(retainedHistory,a.target);
+     assertHostBootRetainedBuild({target:a.target,buildBytes:bookingHostRead(a.directory+'/.next/BUILD_ID',{privateMode:false}),proof:built.proof});filePlans.set(built.file,{file:built.file,privateMode:true});
      for(const file of [RELEASE+'/'+a.target+'/state.json',a.directory+'/.env.local'])filePlans.set(file,{file,privateMode:true});
      for(const row of parseSourceTree(sourceGit(a.directory,['ls-tree','-r','-z',a.target])))if(!row.file.startsWith('public/downloads/'))sourceFiles.push(a.directory+'/'+row.file);
      trees.push({root:a.directory+'/node_modules',allowInternalLinks:true},{root:a.directory+'/.next',exclude:['cache','trace']});
@@ -117,7 +127,7 @@ export async function reconcileApplicationHostBoot(){
        ci=read(ROOT+'/'+oldVerifier.hostReboot.bootId+'/intent.json').ci;
        need(ci?.revision===revision&&rebootHash(ci)===oldVerifier.hostReboot.nativeEvidenceSha256,'retained_native_evidence');
       }else ci=await verifyWorkerEntryCiArtifact({revision,review,file:'/var/lib/faolla-booking-worker-admissions/'+revision+'/ci-evidence.zip',source});
-      const native=ci.report.hostReboot;need(native?.kind==='real-pm2-resurrection-contract-verified'&&native.realPm2Version==='6.0.14'&&['realProcessesObserved','actualDumpResurrected','stoppedRegistrationPreserved','wholeEnvironmentVerified','sameKernelBootRefused','kernelRebootNotSimulated','allOwnedProcessesStopped','actualPersistenceAfterResurrection','unmodifiedSharedValidators','managerIdsActuallyReassigned','stoppedPidPathHistorical'].every(k=>native[k]===true)&&native.productionAuthority===false&&native.formalHostTouched===false,'native_reboot_evidence');
+      const native=ci.report.hostReboot;need(native?.kind==='real-pm2-resurrection-contract-verified'&&native.realPm2Version==='6.0.14'&&['realProcessesObserved','actualDumpResurrected','stoppedRegistrationPreserved','wholeEnvironmentVerified','sameKernelBootRefused','kernelRebootNotSimulated','allOwnedProcessesStopped','actualPersistenceAfterResurrection','unmodifiedSharedValidators','managerIdsActuallyReassigned','stoppedPidPathHistorical','actualNextBuildBindingVerified'].every(k=>native[k]===true)&&native.productionAuthority===false&&native.formalHostTouched===false,'native_reboot_evidence');
       for(const file of ['release-toolchain-host-reboot-native.mjs','release-toolchain-host-reboot-contract.mjs','release-toolchain-host-reboot-pm2.py','release-toolchain-resurrection-pm2.py','release-toolchain-resurrection-pm2-adapter.mjs','release-toolchain-process-observation.mjs'])need(native.sourceHashes?.[file]===digest(fs.readFileSync(source+'/scripts/'+file)),'native_reboot_source');
       const startedAt=new Date().toISOString(),window={id:randomUUID(),startedAt,deadlineAt:new Date(Date.parse(startedAt)+600000).toISOString()};
       const hostReboot={version:1,kind:'verified-host-boot-rebind',verifierAction,previousBootId:oldBoot.bootId,bootId:boot(),priorHistoryHead:history.headSha256,oldDumpSha256:digest(dumpText),oldBootReceiptSha256:oldBoot.sha256,sourceInventorySha256:inventory.inventorySha256,nativeEvidenceSha256:rebootHash(ci),gateSha256:digest(gateText),publicationCertificateSha256:gate.certificateSha256,protectedHostSha256:protectedHash(),environmentProofs:proofs,resurrectedProcesses:actual.processes,identities:actual.identities,daemon:actual.snapshot.daemonPeer,window,mailEnabled:false};

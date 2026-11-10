@@ -12,6 +12,14 @@ const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}
 const instant=v=>typeof v==='string'&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString()===v;
 const keys=(v,k)=>same(Object.keys(v??{}).sort(),[...k].sort(),'shape');
 export const rebootHash=v=>createHash('sha256').update(JSON.stringify(canonical(v))).digest('hex');
+export function assertHostBootRetainedBuild({target,buildBytes,proof}){
+ need(sha(target)&&typeof buildBytes==='string'&&/^[A-Za-z0-9_-]{1,200}\n?$/.test(buildBytes),'website_build');
+ need(proof?.target===target&&proof.sourceHead===target&&proof.sourceClean===true&&proof.http?.status===200&&proof.http.ok===true&&proof.http.buildId===target&&hash(proof.buildSha256),'website_build_binding');
+ // Next's on-disk BUILD_ID is not the application's Git revision. Bind its
+ // exact original bytes to the immutable retention proof, without rewriting
+ // the artifact, the proof, or the independent HTTP revision contract.
+ need(createHash('sha256').update(buildBytes).digest('hex')===proof.buildSha256,'website_build_changed');return true;
+}
 export function assertDifferentHostBoot(previous,current){need(uuid(previous)&&uuid(current)&&previous!==current,'boot');return true;}
 function canonical(v){return Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;}
 const location=a=>Object.fromEntries(['target','name','directory','port'].map(k=>[k,a[k]]));

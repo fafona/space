@@ -4,13 +4,20 @@ import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
 import {buildOnlineRetentionReceipt} from './online-release-retention.mjs';
 import {retentionHash,retentionCanonicalText,assertOnlineRetentionHistory,inspectOnlineRetentionWindow,assertOnlineRetentionPublication} from './online-release-retention-policy.mjs';
-import {assertHostBootChain,assertHostRebootPlan,assertHostRebootCompletion,resolveCertifiedProcess,REBOOT_WORKER_NAME as NAME} from './release-toolchain-host-reboot-contract.mjs';
+import {assertHostBootChain,assertHostRebootPlan,assertHostRebootCompletion,assertHostBootRetainedBuild,resolveCertifiedProcess,REBOOT_WORKER_NAME as NAME} from './release-toolchain-host-reboot-contract.mjs';
 import {assertBookingAtomicWorkerGate} from './booking-atomic-worker.mjs';
 import {assertBookingWorkerExecutionRevision} from './release-toolchain-worker-release-contract.mjs';
 import {executeHostRebootRecovery,assertHostBootOriginalDumpSnapshots} from './release-toolchain-host-reboot-state.mjs';
 import {normalizeResurrectedRetirementProcess as normalizeRetirementProcess} from './release-toolchain-process-observation.mjs';
 const clone=structuredClone,H=x=>x.repeat(64),S=x=>x.repeat(40);
 import {hostRebootFixture as fixture} from './test-support/release-toolchain-host-reboot-fixture.mjs';
+
+test('retained Next random build IDs bind to their original certified bytes, not to the HTTP Git revision',()=>{
+ for(const [version,bytes,buildSha256] of [['f274ad615550c83717aa7af2ad32339608e6f8aa','TLsfdOVOfZo8hl2UIpbiy','04a6a662ccf5d8a255784200ca28e84598a6c13299c7f142cf0f621b0bab01a4'],['6c5d5df31d06b43929e5ba5e6f3978dd51f1c6b0','79bAZoTsolzW9sJ8Pc-Ll','d63c1c0d3e186ee7e60fa1bcc8c1d2e3b8efb128482d3b05ab77dc9ea41e4eb6']])assertHostBootRetainedBuild({target:version,buildBytes:bytes,proof:{target:version,sourceHead:version,sourceClean:true,buildSha256,http:{status:200,ok:true,buildId:version}}});
+ const target='f274ad615550c83717aa7af2ad32339608e6f8aa',buildBytes='TLsfdOVOfZo8hl2UIpbiy\n',proof={target,sourceHead:target,sourceClean:true,buildSha256:createHash('sha256').update(buildBytes).digest('hex'),http:{status:200,ok:true,buildId:target}};
+ assert.equal(assertHostBootRetainedBuild({target,buildBytes,proof}),true);assert.notEqual(buildBytes.trim(),target);
+ for(const change of [v=>v.target=S('9'),v=>v.buildBytes=target+'\n',v=>v.buildBytes=v.buildBytes.trim(),v=>v.buildBytes+='\n',v=>v.buildBytes='../invalid\n',v=>v.proof.sourceHead=S('9'),v=>v.proof.sourceClean=false,v=>v.proof.http.buildId=v.buildBytes.trim(),v=>v.proof.http.status=503,v=>v.proof.buildSha256=H('9')]){const changed=clone({target,buildBytes,proof});change(changed);assert.throws(()=>assertHostBootRetainedBuild(changed));}
+});
 test('a separately certified real boot rebinds all online and stopped registrations without rewriting old evidence',()=>{
  const f=fixture(),original=retentionCanonicalText(f.history);assertHostRebootPlan(f.before,f.history);assertHostRebootCompletion(f.before,f.after,f.history);
  const r=buildOnlineRetentionReceipt(f.before,f.after,{version:2,process:null},f.history,{preparedAt:f.before.hostReboot.window.startedAt,completedAt:'2026-11-10T10:01:00.000Z'}),history={...clone(f.history),entries:[...clone(f.history.entries),r.certificate],headSha256:retentionHash(r.certificate)};
