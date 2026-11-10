@@ -303,7 +303,7 @@
       "before": null,
       "after": [
         "100644",
-        "4e3beef09156e0282679cb0d7a74459d149e2db4"
+        "7be562ae17c86e88a9cf25934b88a221c734faaa"
       ]
     },
     {
@@ -367,6 +367,24 @@
       "after": [
         "100644",
         "b0a966dd7c5e3531e126bd5f26f0e1c1f6cc4042"
+      ]
+    },
+    {
+      "file": "scripts/application-release-worker-compatibility.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "8638f1ea3f15576bd0fe3a0ab4bc5090b168ac4d"
+      ]
+    },
+    {
+      "file": "scripts/application-release-worker-compatibility.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "dd1952f6759a1d30282d70cad9bae96c9beda88e"
       ]
     },
     {
@@ -453,7 +471,7 @@
       "before": null,
       "after": [
         "100644",
-        "5cd6a755eb0b6356dda6f7dddc8fd51cdc3aa7da"
+        "65f3e31f7cce9ea2eda7680b40207926408a0b1b"
       ]
     },
     {
@@ -2754,7 +2772,7 @@
       "before": null,
       "after": [
         "100644",
-        "f62f48335b12fccc1e65e263fb3b6ee571fa309b"
+        "065966186a6761ebcdb1cf84c37646de823bfccf"
       ]
     },
     {
@@ -5383,7 +5401,8 @@
     "scripts/enterprise-session-renewal-browser-contract.test.mjs",
     "src/app/api/bookings/workbench/route.test.ts",
     "src/lib/merchantBookingTimeZoneOptions.test.ts",
-    "src/lib/merchantPollRounds.test.ts"
+    "src/lib/merchantPollRounds.test.ts",
+    "scripts/application-release-worker-compatibility.test.mjs"
   ],
   "recordedSchema": {
     "kind": "already-applied-booking-safeupdate-v1",
