@@ -78,7 +78,7 @@
       "before": null,
       "after": [
         "100644",
-        "759ea178c016b05a4de1fb323d37452c700d4cfa"
+        "7c0b22c2cb8daafb7219bfc642765150c433d049"
       ]
     },
     {
@@ -105,7 +105,7 @@
       "before": null,
       "after": [
         "100644",
-        "8059b632f7192316c3e793e16afcfcc575c71456"
+        "0fa4a33a6c65ed194b556672aee8076463883b8d"
       ]
     },
     {
@@ -201,7 +201,7 @@
       "before": null,
       "after": [
         "100644",
-        "2a8b77db8b42104e496a750df532f26b506e0769"
+        "3f8162bed62924981861e7c0a3a1a7c5d3422c9b"
       ]
     },
     {
@@ -490,7 +490,7 @@
     "version": "202611100214",
     "name": "website_template_library",
     "file": "scripts/supabase-migrations/202611100214_website_template_library.sql",
-    "sha256": "339660d414bb96b5509cb933e78118507c6c3000e9c7e2afde5c765a152de86a",
+    "sha256": "20c7c9b3760e57e9de2ed56291db4f54f9dd844fcb6d9475009277c6a4f88db4",
     "databaseExecution": "forbidden"
   }
 }
