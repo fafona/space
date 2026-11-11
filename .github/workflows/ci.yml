@@ -102,6 +102,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Fetch Reviewed Template Source Baseline
+        # Checkout is shallow by default. This real source-admission test needs
+        # the one exact reviewed baseline tree, not the repository's full history.
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin 37fe3c3b8220c73090ba953c7d046a63a5ab1bfc
+          git cat-file -e '37fe3c3b8220c73090ba953c7d046a63a5ab1bfc^{commit}'
+
       - name: Setup Node
         uses: actions/setup-node@v5
         with:

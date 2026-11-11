@@ -30,6 +30,12 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
+      - name: Fetch Reviewed Template Source Baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin 37fe3c3b8220c73090ba953c7d046a63a5ab1bfc
+          git cat-file -e '37fe3c3b8220c73090ba953c7d046a63a5ab1bfc^{commit}'
       - uses: actions/setup-node@v5
         with:
           node-version: 20.20.1
