@@ -14,14 +14,22 @@ const SEED='/var/lib/faolla-template-schema/first-playland-template.json';
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;
 export const templateSeedHash=value=>templateHash(JSON.stringify(canonical(value)));
 const digest=templateSeedHash;
+export async function loadTemplateSeedRuntime(directory){
+ const loadRuntime=async name=>{
+  const exports=await import(pathToFileURL(directory+'/src/lib/'+name+'.ts').href);
+  // tsx follows this repository's CommonJS package boundary; Next's bundled
+  // runtime also supports named ESM exports. Normalize both, without rewriting
+  // application modules or changing their normal configuration.
+  return exports.default??exports;
+ };
+ return Promise.all(['superAdminServer','merchantDraftStore','websiteTemplateLibrary','websiteTemplateAssets.server','websiteTemplateStore.server'].map(loadRuntime));
+}
 export async function seedTemplateLibrary(mode,target,reviewedHash){
  need(['inspect','publish'].includes(mode)&&/^[a-f0-9]{40}$/.test(target??''),'seed_invocation');
  need(process.platform==='linux'&&process.getuid?.()===0&&fileURLToPath(import.meta.url)==='/var/lib/faolla-online-code/'+target+'/scripts/application-release-template-seed.mjs','seed_source');
  await observeApplicationRelease(target);
  const active=templatePrivateJson('/var/lib/faolla-online-release/active.json');need(active.target===target,'seed_active');
- const loadRuntime=name=>import(pathToFileURL(active.directory+'/src/lib/'+name+'.ts').href);
- const [{createServerSupabaseServiceClient},{loadStoredMerchantDraft},{snapshotWebsiteTemplate,getWebsiteTemplateCover},{freezeWebsiteTemplateAssets},{updateWebsiteTemplate}]=await Promise.all([
-  loadRuntime('superAdminServer'),loadRuntime('merchantDraftStore'),loadRuntime('websiteTemplateLibrary'),loadRuntime('websiteTemplateAssets.server'),loadRuntime('websiteTemplateStore.server')]);
+ const [{createServerSupabaseServiceClient},{loadStoredMerchantDraft},{snapshotWebsiteTemplate,getWebsiteTemplateCover},{freezeWebsiteTemplateAssets},{updateWebsiteTemplate}]=await loadTemplateSeedRuntime(active.directory);
  const db=createServerSupabaseServiceClient();need(db,'seed_database');
  const source=await loadStoredMerchantDraft(db,SOURCE);need(source?.blocks,'seed_source_missing');
  const snapshot=snapshotWebsiteTemplate(source.blocks,PLAN);

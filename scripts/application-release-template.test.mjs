@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
 import {spawnSync} from 'node:child_process';
 import {templateMigrationWorkflow} from './application-release-template-workflow.mjs';
@@ -83,4 +85,12 @@ test('first seed compares JSONB semantically and cannot mint sessions or write a
  const source=read('scripts/application-release-template-seed.mjs');
  for(const guard of ['observeApplicationRelease(target)','reviewedHash===designHash','ignoreDuplicates:true','sourceWritten:false','existingUserCopiesWritten:false'])assert.ok(source.includes(guard));
  assert.doesNotMatch(source,/createSession|mintSession|setCookie|loadCookie|\.from\(['"]pages['"]\)|\/api\/merchant-draft/);
+});
+test('seed loads the actual server modules through the same tsx runtime, without credentials or network calls',()=>{
+ const root=fileURLToPath(new URL('../',import.meta.url));
+ const result=spawnSync(process.execPath,['--import',pathToFileURL(path.join(root,'node_modules/tsx/dist/loader.mjs')).href,path.join(root,'scripts/test-support/template-seed-runtime-fixture.mjs')],{
+  cwd:root,encoding:'utf8',windowsHide:true,timeout:30000,
+  env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,USERPROFILE:process.env.USERPROFILE,TEMP:process.env.TEMP,TMP:process.env.TMP,NEXT_PUBLIC_SUPABASE_URL:'https://example.supabase.co',NEXT_PUBLIC_SUPABASE_ANON_KEY:'dummy-anon-key'}
+ });
+ assert.ifError(result.error);assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/template-seed-runtime-imports-passed/);
 });
