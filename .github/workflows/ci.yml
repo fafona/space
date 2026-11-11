@@ -169,6 +169,9 @@ jobs:
         # not in the dependency-free Quality unit/contract partition.
         run: npm run test:booking-browser
 
+      - name: Website Template Browser Journeys
+        run: node --test scripts/application-release-template-browser-acceptance.mjs
+
   qr-database:
     name: QR Atomic PostgreSQL Acceptance
     runs-on: ubuntu-latest
@@ -374,6 +377,12 @@ jobs:
         env:
           FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
         run: node scripts/pages-acl-integration/run.mjs
+
+      - name: Run isolated website template table acceptance
+        env:
+          FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
+          WEBSITE_TEMPLATE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"
+        run: node scripts/application-release-template-postgres-acceptance.mjs
 
   recovery-database:
     name: Recovery Content PostgreSQL Acceptance

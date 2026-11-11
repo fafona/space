@@ -1,14 +1,152 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "37fe3c3b8220c73090ba953c7d046a63a5ab1bfc",
-  "purpose": "Restore original cashier layout and clean only certified unused build caches",
+  "purpose": "Publish reviewed website template library and pending original-sale checkout presentation, preserving protected runtime and verified additive template schema",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
   "mail": "unchanged-off",
   "backgroundTasks": "retain-certified-worker",
   "changes": [
+    {
+      "file": ".github/workflows/ci.yml",
+      "role": "verification",
+      "before": [
+        "100644",
+        "51c2cbbacd5380b0884b9b18687aa1e795d23e88"
+      ],
+      "after": [
+        "100644",
+        "8b64549e361ed1b9639793143384d2716a041d8a"
+      ]
+    },
+    {
+      "file": ".github/workflows/website-template-table-online.yml",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "3b5938fdef7258fb582c4fc67248a60de0d54b1a"
+      ]
+    },
+    {
+      "file": "docs/website-template-library-release.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "b758fed5bd23f70fe7f3f1bb072e1a39cba56447"
+      ]
+    },
+    {
+      "file": "next.config.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "f5d6a018a6e52eca604d5461346c1c4336e1bb48"
+      ],
+      "after": [
+        "100644",
+        "0896498c866c679188d7998ac8c538597b96832a"
+      ]
+    },
+    {
+      "file": "scripts/application-release-compatibility.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "08e032c8d87b4aa7fb4d1e612dd388746a44a58a"
+      ],
+      "after": [
+        "100644",
+        "de3d70863748a22589800217a658c61b65af574b"
+      ]
+    },
+    {
+      "file": "scripts/application-release-template-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "9340f002828f34366b3b058a023df7f95410da85"
+      ]
+    },
+    {
+      "file": "scripts/application-release-template-contract.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "7c0b22c2cb8daafb7219bfc642765150c433d049"
+      ]
+    },
+    {
+      "file": "scripts/application-release-template-database.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c9ef156a23910f2698a29ad06f5645ab9e9a93bc"
+      ]
+    },
+    {
+      "file": "scripts/application-release-template-migrate.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "68b57fbdc2d7c0d580c2fab4b3de373c96166c4a"
+      ]
+    },
+    {
+      "file": "scripts/application-release-template-postgres-acceptance.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "0fa4a33a6c65ed194b556672aee8076463883b8d"
+      ]
+    },
+    {
+      "file": "scripts/application-release-template-seed.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "dc30cc668425a669a199f86a8ea4f385e5882d6a"
+      ]
+    },
+    {
+      "file": "scripts/application-release-template-workflow.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "8f9c6ae891ab4245eb20da4332edbf18e48eb26b"
+      ]
+    },
+    {
+      "file": "scripts/application-release-template.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "35e692bcacf27910726eeb642c0d5cb5b49c0b34"
+      ]
+    },
+    {
+      "file": "scripts/ci-workflow-contract.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "03be0a54640014e236e1aec46520cc55b47d4723"
+      ],
+      "after": [
+        "100644",
+        "a702d9d3529a9c08dbff47a53733b1540bd21b6f"
+      ]
+    },
     {
       "file": "scripts/online-release-cache-cleanup.mjs",
       "role": "release-tool",
@@ -34,6 +172,30 @@
       ]
     },
     {
+      "file": "scripts/online-traffic-release.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "e536bce9fda4ecad97859cc48c46ce8f28c624ef"
+      ],
+      "after": [
+        "100644",
+        "eb84260460cc9c88f64555bf77eb99bd4f2ce6d0"
+      ]
+    },
+    {
+      "file": "scripts/online-unpublished-candidate.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "2ac7014ba2f137663710ee87951b564dc07a332e"
+      ],
+      "after": [
+        "100644",
+        "654a88e17c1e975b55b7f1b5f6f4c98d24e210ce"
+      ]
+    },
+    {
       "file": "scripts/redemption-pending-cart-browser-acceptance.mjs",
       "role": "verification",
       "before": [
@@ -43,6 +205,45 @@
       "after": [
         "100644",
         "4a8d55e5ab837bf7b921e7684ecb692a23e566ce"
+      ]
+    },
+    {
+      "file": "scripts/supabase-migrations/202611100214_website_template_library.sql",
+      "role": "already-applied-template-schema",
+      "before": null,
+      "after": [
+        "100644",
+        "3f8162bed62924981861e7c0a3a1a7c5d3422c9b"
+      ]
+    },
+    {
+      "file": "scripts/test-support/template-seed-runtime-fixture.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "fd9ee238d15fb12b42f4c516411a919519087fc2"
+      ]
+    },
+    {
+      "file": "src/app/admin/AdminClient.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "8d549c28c2b7899bcf58f022c83a202bb984afd1"
+      ],
+      "after": [
+        "100644",
+        "81fe6cbaf70f1485f8451357215409851b9eb66d"
+      ]
+    },
+    {
+      "file": "src/app/admin/template-preview/page.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "9d04034cb9ea1ad9dee982685ec789c2100cd90d"
       ]
     },
     {
@@ -70,6 +271,45 @@
       ]
     },
     {
+      "file": "src/app/api/super-admin/website-templates/route.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "79e774a864daffdd452c18611e19a53271bb9522"
+      ]
+    },
+    {
+      "file": "src/app/api/website-templates/route.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "1afe696028cf99bb95a52060d9ec9fb42ca177db"
+      ]
+    },
+    {
+      "file": "src/app/super-admin/SuperAdminClient.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "95bc4cf854699b5ded2414876f08a9db5510ed7b"
+      ],
+      "after": [
+        "100644",
+        "96785f4d0c456a6d1b0cf024875a7a99b9aa8113"
+      ]
+    },
+    {
+      "file": "src/app/super-admin/template-preview/page.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "fc796def9ef9e9b90d50f209d90fd6a06e5e6fc2"
+      ]
+    },
+    {
       "file": "src/app/test-harness/redemption-checkout/RedemptionCheckoutHarness.tsx",
       "role": "application",
       "before": [
@@ -91,6 +331,33 @@
       "after": [
         "100644",
         "36e2434148c5816319b293da48fe3000992b647a"
+      ]
+    },
+    {
+      "file": "src/components/admin/WebsiteTemplateLibrary.test.tsx",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "7f85d65d78a0030bb9e7d1b13dc4c0e1047756f3"
+      ]
+    },
+    {
+      "file": "src/components/admin/WebsiteTemplateLibrary.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "72baaff30ebbd41a5d5a5c0bf5e686c1394f0230"
+      ]
+    },
+    {
+      "file": "src/components/admin/WebsiteTemplatePreview.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "e264891e971b0366b8950abce905c2a8a8a4437b"
       ]
     },
     {
@@ -152,14 +419,100 @@
         "100644",
         "f090d7d4da2174b801ef075ce34edf8294c7934b"
       ]
+    },
+    {
+      "file": "src/lib/websiteTemplateAssets.server.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "3cd1646a3696285c9602fe2623bf60b87b8194ba"
+      ]
+    },
+    {
+      "file": "src/lib/websiteTemplateAssets.server.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "92d66a43ce4ab7570d6631a15e20cfb5ca99b7e7"
+      ]
+    },
+    {
+      "file": "src/lib/websiteTemplateLibrary.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "f55056a3d33452a3c328a17b4d01828b30642c6f"
+      ]
+    },
+    {
+      "file": "src/lib/websiteTemplateLibrary.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "747ae1e50829524db5f4936825dbd49a0ff7e1f9"
+      ]
+    },
+    {
+      "file": "src/lib/websiteTemplateRoutes.server.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "f9e0d13b8bb1146e27936b78505ca87f27acef7c"
+      ]
+    },
+    {
+      "file": "src/lib/websiteTemplateRoutes.server.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "26588a1da236300b682a91c6cb1f290680417937"
+      ]
+    },
+    {
+      "file": "src/lib/websiteTemplateStore.server.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "fed07f0f529f8d0d7333797a579a8fbd9e9780d0"
+      ]
+    },
+    {
+      "file": "src/lib/websiteTemplateStore.server.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "02a6be127bca6cc4317bbf9144a66b576bc3b963"
+      ]
     }
   ],
   "focusedTests": [
+    "src/lib/websiteTemplateLibrary.test.ts",
+    "src/lib/websiteTemplateRoutes.server.test.ts",
+    "src/lib/websiteTemplateStore.server.test.ts",
+    "src/lib/websiteTemplateAssets.server.test.ts",
+    "src/components/admin/WebsiteTemplateLibrary.test.tsx",
     "src/lib/merchantRedemptionPendingCart.test.ts",
-    "src/lib/merchantRedemptionCheckoutRecovery.test.ts",
-    "src/app/api/merchant-admin/redemption-checkout/route.test.ts",
-    "scripts/online-release-cache-cleanup.test.mjs",
-    "scripts/online-release-cache-policy.test.mjs",
-    "scripts/release-toolchain-process-observation.test.mjs"
-  ]
+    "scripts/application-release-template.test.mjs",
+    "scripts/application-release-compatibility.test.mjs",
+    "scripts/application-release-policy.test.mjs",
+    "scripts/ci-workflow-contract.test.mjs",
+    "scripts/online-unpublished-candidate.test.mjs"
+  ],
+  "baseSchemaVersion": 1,
+  "templateSchema": {
+    "kind": "already-applied-website-template-table-v1",
+    "version": "202611100214",
+    "name": "website_template_library",
+    "file": "scripts/supabase-migrations/202611100214_website_template_library.sql",
+    "sha256": "20c7c9b3760e57e9de2ed56291db4f54f9dd844fcb6d9475009277c6a4f88db4",
+    "databaseExecution": "forbidden"
+  }
 }

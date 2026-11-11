@@ -666,7 +666,7 @@ function verifyApplicationRelease(s,buildRequired=false,p){
  if(s.target!==target||s.directory!==`${app}.web-releases/${target.slice(0,12)}-online`||s.name!==`merchant-space-online-${target.slice(0,12)}`||s.oldDirectory!==`${app}.web-releases/${s.baseline.slice(0,12)}-online`||s.previousActive?.target!==s.baseline)fail('application_release_state_identity');
  for(const directory of [s.directory,s.oldDirectory]){bookingResumeOwnedPath(directory);bookingResumeOwnedPath(`${directory}/node_modules`);}
  const closure=applicationReleaseClosure(s.target,s.baseline);
- if(closure.manifest.schemaVersion===2)assertRecordedSchemaDatabase(closure.manifest);
+ if([2,3].includes(closure.manifest.schemaVersion))assertRecordedSchemaDatabase(closure.manifest);
  if(closure.manifestSha256!==s.applicationManifestSha256||run('git',['rev-parse','HEAD'],{cwd:s.directory}).trim()!==s.target||run('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:s.directory}).trim())fail('application_release_source_changed');
  for(const directory of [s.directory,s.oldDirectory])if(hash(safeFile(`${directory}/package-lock.json`))!==s.applicationDependencyLockSha256)fail('application_release_dependencies_changed');
  const env=candidateEnvironment(s),prior=pm().find(item=>item.name===s.oldName);
