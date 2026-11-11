@@ -232,17 +232,19 @@ test("mandatory CI test commands cover the entire discovery exactly once with no
 
 test("real ingress acceptance is an opt-in isolated job and package installation cannot start nginx", () => {
   const job = jobBlock("maintenance-ingress");
+  const installer = readFileSync(new URL("../.github/scripts/install-ci-packages.sh", import.meta.url), "utf8");
   assert.doesNotMatch(job, /\bneeds:/);
   assert.match(job, /runs-on:\s*ubuntu-24\.04/);
   assert.match(job, /FAOLLA_INGRESS_REAL_ACCEPTANCE:\s*"1"/);
-  assert.match(job, /test "\$GITHUB_ACTIONS" = true/);
-  assert.match(job, /policy=\/usr\/sbin\/policy-rc\.d/);
-  assert.match(job, /test ! -e "\$policy" && test ! -L "\$policy" \|\| exit 1/);
-  assert.match(job, /exit 101/);
-  assert.match(job, /trap cleanup_policy EXIT/);
-  assert.ok(job.indexOf("trap cleanup_policy EXIT") < job.indexOf("apt-get install"));
-  assert.match(job, /nftables iproute2 iptables ebtables curl openssl nginx kmod/);
-  assert.match(job, /test "\$\{actual%% \*\}" = "\$2"; rm -- "\$1"/);
+  assert.match(job, /run: bash \.github\/scripts\/install-ci-packages\.sh ingress/);
+  assert.match(installer, /test "\$\{GITHUB_ACTIONS-\}" = true/);
+  assert.match(installer, /policy=\/usr\/sbin\/policy-rc\.d/);
+  assert.match(installer, /test ! -e "\$policy" && test ! -L "\$policy" \|\| exit 1/);
+  assert.match(installer, /exit 101/);
+  assert.match(installer, /trap cleanup_policy EXIT/);
+  assert.ok(installer.indexOf("trap cleanup_policy EXIT") < installer.indexOf("90s apt-get"));
+  assert.match(installer, /nftables iproute2 iptables ebtables curl openssl nginx kmod/);
+  assert.match(installer, /test "\$\{actual%% \*\}" = "\$2"; rm -- "\$1"/);
   assert.match(job, /run: node scripts\/production-maintenance-ingress-acceptance\.mjs/);
   assert.doesNotMatch(job, /continue-on-error|secrets\.|\.env\.local|services:|ports:|network host/);
   assert.equal(discoverLocalTests(fileURLToPath(new URL("../", import.meta.url))).includes("scripts/production-maintenance-ingress-acceptance.mjs"), false);

@@ -81,6 +81,12 @@ node scripts/application-release-manifest.mjs <实际在线40位SHA> HEAD "明�
 
 ## 验收边界
 
+CI 的系统软件包预备统一使用 `.github/scripts/install-ci-packages.sh`，只允许一次性 GitHub-hosted Ubuntu 24.04 amd64 测试机及两个固定包配置。它不修改系统软件源或密钥，使用两个固定的 Ubuntu 官方 HTTPS 源和原 Ubuntu archive keyring；严格更新索引后，仅下载阶段允许有界换源。实际安装只执行一次，失败或超时不重放。原有禁止服务启动的策略及按身份、哈希清理仍保留，预备失败不能转成验收成功。参见 [APT 签名约束](https://manpages.ubuntu.com/manpages/noble/en/man5/sources.list.5.html) 和 [APT 下载/安装选项](https://manpages.ubuntu.com/manpages/noble/en/man8/apt-get.8.html)。
+
+进程退出观察只对 `ENOENT` / `ESRCH` 做最多 25 次完整只读重采样，间隔 10 毫秒；只有独立内核出生记录证明消失或僵尸状态才算退出。完整身份不符仍是 PID 复用，权限错误、身份漂移及未知错误立即拒绝；持续无法读取也仍拒绝。此观察不提供发信号、重启或发布权限，不修改现有锁与进程所有权检查。
+
+上述容错的单元测试不能替代真实 Linux 进程退出测试、真实软件包安装和原 13 项 CI；完成上线仍以发布完成凭证及独立只读复核为准。
+
 测试包括精确范围/源文件绑定、历史规则保持不变、真实 HTTP Host 和响应流限制、完整保留历史与门禁、失败注入、完成记录与独立恢复顺序、PID/inode 复用拒绝及现有真实 CI 隔离网络/PM2/Next/数据库验收。历史 SHA 固定策略使用校验过的不可变测试资料，不再错误地把“当前已修改应用”当成历史原文件，也不放宽旧的生产准入。
 
 首次实际应用发布还必须验证这条完整实际链路后，才能称其已在生产跑通。后续复用同一通道和清单格式；资源不足、源码/权限/协议冲突仍是必要的安全停止条件，不能承诺所有发布永不停止。
