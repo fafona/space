@@ -10,24 +10,25 @@ import type { MerchantStaffBusinessPermission } from "@/lib/merchantStaffBusines
 
 const SITE = "10000000";
 const CREATED = "2026-09-08T10:00:00.000Z";
-type Scenario = "pending" | "committed" | "read-error" | "quote-changed" | "cancel-race" | "new-response-lost" | "retry-response-lost" | "deleted-member" | "delayed" | "empty" | "pending-recheck-error" | "pending-no-preview" | "slow-retry";
+type Scenario = "pending" | "committed" | "cancelled" | "ack-failed" | "ack-invalid" | "ack-lost" | "slow-ack" | "read-error" | "quote-changed" | "cancel-race" | "new-checkout" | "new-preflight-terminal" | "new-response-lost" | "retry-response-lost" | "deleted-member" | "delayed" | "empty" | "pending-recheck-error" | "pending-no-preview" | "slow-retry";
 type HarnessState = { actor: string; scenario: Scenario; checkout: MerchantRedemptionCheckoutSummary | null; calls: string[]; writes: number };
 
 function receipt(actor: string, operationId = `original-${actor}`): MerchantRedemptionCheckoutReceipt {
   return { version: 1, operationId, siteId: SITE, membershipId: `member-${actor}`, transactionId: `transaction-${operationId}`,
-    createdAt: CREATED, beforePointBalance: 100, afterPointBalance: 20, totalQuantity: 1, grossPoints: 80,
+    createdAt: "2026-09-08T10:00:01.000Z", beforePointBalance: 100, afterPointBalance: 20, totalQuantity: 1, grossPoints: 80,
     couponPointDiscountTotal: 0, totalPoints: 80, couponCount: 0, note: "服务器原单，不是当前购物车",
     lines: [{ code: "original-item", name: "服务器原单商品", categoryName: "原单分类", quantity: 1, unitPoints: 80,
       subtotalPoints: 80, couponDiscountLabel: "", couponPointDiscount: 0 }] };
 }
 function fixture(actor: string, scenario: Scenario): HarnessState {
   const result = receipt(actor);
+  const status = scenario === "committed" ? "committed" : ["cancelled", "ack-failed", "ack-invalid", "ack-lost", "slow-ack"].includes(scenario) ? "cancelled" : "pending";
   return { actor, scenario, calls: [], writes: scenario === "committed" ? 1 : 0,
-    checkout: scenario === "empty" || scenario === "new-response-lost" ? null : {
-      operationId: result.operationId, status: scenario === "committed" ? "committed" : "pending", createdAt: CREATED,
+    checkout: ["empty", "new-response-lost", "new-checkout", "new-preflight-terminal"].includes(scenario) ? null : {
+      operationId: result.operationId, status, createdAt: CREATED,
       acknowledgedAt: null, result: scenario === "committed" ? result : null,
-      ...(scenario === "committed" ? {} : { pendingMember: scenario === "deleted-member" ? null : { name: `合成会员 ${actor}`, memberNo: actor === "A" ? "10000000000001" : "10000000000002", pointBalance: 20, balanceAmount: 0 } }),
-      ...(scenario === "committed" || scenario === "pending-no-preview" ? {} : { pendingCart: { version: 1 as const, siteId: SITE, operationId: result.operationId,
+      ...(status !== "pending" ? {} : { pendingMember: scenario === "deleted-member" ? null : { name: `合成会员 ${actor}`, memberNo: actor === "A" ? "10000000000001" : "10000000000002", pointBalance: 20, balanceAmount: 0 } }),
+      ...(status !== "pending" || scenario === "pending-no-preview" ? {} : { pendingCart: { version: 1 as const, siteId: SITE, operationId: result.operationId,
         quote: { totalQuantity: result.totalQuantity, grossPoints: result.grossPoints, couponPointDiscountTotal: result.couponPointDiscountTotal,
           totalPoints: result.totalPoints, couponCount: result.couponCount, lines: result.lines } } }),
     } };
@@ -37,7 +38,7 @@ function membership(state: HarnessState) {
   const source = normalizeMerchantMembershipRecord({ id: `member-${state.actor}`, siteId: SITE,
     memberNo: state.actor === "A" ? "10000000000001" : "10000000000002", serial: state.actor === "A" ? 1 : 2,
     accountId: `synthetic-${state.actor}`, status: "active", name: `合成会员 ${state.actor}`, joinedAt: CREATED, updatedAt: CREATED,
-    pointBalance: state.scenario === "new-response-lost" && !state.checkout ? 100 : 20, balanceAmount: 0, growthValue: 0, transactions: [] });
+    pointBalance: !state.checkout || state.checkout.status === "cancelled" ? 100 : 20, balanceAmount: 0, growthValue: 0, transactions: [] });
   if (!source) throw new Error("invalid_harness_member");
   return toMerchantMembershipListItem(source);
 }
@@ -63,6 +64,9 @@ export default function RedemptionCheckoutHarness() {
       try {
       if (url.pathname === "/api/merchant-admin/redemption-checkout") {
         if (method === "GET") {
+          if (state.scenario === "new-preflight-terminal" && state.checkout === null && state.calls.filter(call => call.includes("GET /api/merchant-admin/redemption-checkout")).length === 2) {
+            state.checkout = { operationId: `other-${state.actor}`, status: "cancelled", createdAt: CREATED, acknowledgedAt: null, result: null };
+          }
           if (state.scenario === "read-error") return json({ ok: false, message: "merchant_transaction_unavailable" }, 503);
           if (state.scenario === "pending-recheck-error" && state.calls.filter((call) => call.includes("GET /api/merchant-admin/redemption-checkout")).length > 1) {
             await new Promise<void>((resolve) => document.addEventListener("faolla:synthetic-checkout-release-failed-read", () => resolve(), { once: true }));
@@ -91,12 +95,20 @@ export default function RedemptionCheckoutHarness() {
         }
         if (body.action === "ack") {
           if (!state.checkout || state.checkout.status === "pending") return json({ ok: false, message: "redemption_checkout_pending" }, 409);
+          if (state.scenario === "ack-failed" && state.calls.filter(call => call.endsWith(" ack")).length === 1) return json({ error: "merchant_transaction_unavailable" }, 503);
+          if (state.scenario === "ack-invalid") return json({ ok: true, checkout: null });
+          if (state.scenario === "slow-ack") {
+            document.dispatchEvent(new Event("faolla:synthetic-checkout-ack-started"));
+            await new Promise<void>(resolve => document.addEventListener("faolla:synthetic-checkout-release-ack", () => resolve(), { once: true }));
+            document.dispatchEvent(new Event("faolla:synthetic-checkout-ack-complete"));
+          }
           state.checkout = { ...state.checkout, acknowledgedAt: CREATED };
+          if (state.scenario === "ack-lost") return json({ error: "merchant_transaction_unavailable" }, 503);
           return json({ ok: true, checkout: state.checkout });
         }
       }
       if (url.pathname === "/api/merchant-admin/redemption-cashier") {
-        const itemStock = state.scenario === "new-response-lost" && !state.checkout ? 5 : 0;
+        const itemStock = !state.checkout || state.checkout.status === "cancelled" ? 5 : 0;
         const settings = normalizeMerchantMembershipSettings(SITE, { updatedAt: CREATED, printSettings: { enabled: false, autoPrintRedemptionReceipt: false },
           redemptionItems: [{ id: "item-one", name: "当前商品（80积分）", enabled: true, pointsCost: 80, stock: itemStock }] });
         const member = membership(state);
@@ -126,14 +138,16 @@ export default function RedemptionCheckoutHarness() {
       <h1>本地合成验收：收银恢复</h1>
       <p>当前身份 {display.actor}；业务提交次数 <strong data-testid="financial-writes">{display.writes}</strong>；不连接真实业务接口。</p>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-        {([ ["pending", "待处理（余额20，原单80）"], ["committed", "已完成未确认"], ["read-error", "状态读取失败"],
-          ["quote-changed", "原价已变化"], ["cancel-race", "取消时已完成"], ["new-response-lost", "新单响应丢失"],
+        {([ ["pending", "待处理（余额20，原单80）"], ["committed", "已完成未确认"], ["cancelled", "已放弃未确认"],
+          ["ack-failed", "同步首次失败"], ["ack-invalid", "同步结果无效"], ["ack-lost", "同步响应丢失"], ["slow-ack", "慢速状态同步"], ["read-error", "状态读取失败"],
+          ["quote-changed", "原价已变化"], ["cancel-race", "取消时已完成"], ["new-checkout", "正常新单结算"], ["new-preflight-terminal", "结算前出现旧终态"], ["new-response-lost", "新单响应丢失"],
           ["retry-response-lost", "重试响应丢失"], ["deleted-member", "会员后来被删除"], ["delayed", "旧身份延迟响应"] ] as const).map(([key, label]) =>
           <button key={key} type="button" onClick={() => scenario(key)}>{label}</button>)}
         <button type="button" onClick={() => scenario("pending-recheck-error")}>再次核对失败</button>
         <button type="button" onClick={() => document.dispatchEvent(new Event("faolla:synthetic-checkout-release-failed-read"))}>结束失败核对</button>
         <button type="button" onClick={() => scenario("pending-no-preview")}>旧接口缺少明细</button>
         <button type="button" onClick={() => scenario("slow-retry")}>慢速原单结算</button>
+        <button type="button" onClick={() => document.dispatchEvent(new Event("faolla:synthetic-checkout-release-ack"))}>结束状态同步</button>
         <button type="button" onClick={() => { stateRef.current = fixture(stateRef.current.actor === "A" ? "B" : "A", "empty"); setDisplay({ actor: stateRef.current.actor, writes: 0, calls: [] }); setRevision((value) => value + 1); }}>切换员工身份</button>
         <label><input type="checkbox" checked={printAllowed} onChange={(event) => setPrintAllowed(event.target.checked)} />授权打印（不自动打印恢复单）</label>
       </div>
