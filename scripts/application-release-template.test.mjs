@@ -7,7 +7,7 @@ import {createRequire} from 'node:module';
 import {spawnSync} from 'node:child_process';
 import {templateMigrationWorkflow} from './application-release-template-workflow.mjs';
 import {TEMPLATE_SCHEMA,TEMPLATE_COLUMNS,templateGitBlob,assertTemplateSql,assertTemplateTable} from './application-release-template-contract.mjs';
-import {templateMigrationSql,assertTemplateDryRun} from './application-release-template-migrate.mjs';
+import {templateMigrationSql,assertTemplateDryRun,templateProcessPid,templateProcessIdentity,assertTemplateProcessesUnchanged} from './application-release-template-migrate.mjs';
 import {assertTemplateDatabaseObservation,templateStateSql} from './application-release-template-database.mjs';
 import {templateSeedHash} from './application-release-template-seed.mjs';
 import {createApplicationReleaseManifest,assertApplicationReleaseManifest,RECORDED_APPLICATION_ARTIFACTS as records} from './application-release-compatibility.mjs';
@@ -48,6 +48,31 @@ test('migration byte pin, transaction boundary and exact old registry prevent ex
  assert.throws(()=>templateMigrationSql(sql,registry.slice(1)));
  const dry={ok:true,lane:'website_template_table_online',status:'dry_run',mode:'dry_run',through:TEMPLATE_SCHEMA.version,databaseContainer:'supabase-db',executed:[],registeredVersions:registry.map(r=>r.version),pending:[{version:TEMPLATE_SCHEMA.version,name:TEMPLATE_SCHEMA.name}]};
  assertTemplateDryRun(dry);for(const mutate of [v=>v.executed.push({}),v=>v.pending.push({}),v=>v.registeredVersions.pop(),v=>v.through='other']){const bad=structuredClone(dry);mutate(bad);assert.throws(()=>assertTemplateDryRun(bad));}
+});
+test('stopped PM2 registrations have one explicit PID and survive the actual JSON evidence round trip',()=>{
+ const omitted={name:'stopped-registration',pm_id:4,pm2_env:{status:'stopped'}};
+ const old={name:omitted.name,id:omitted.pm_id,pid:omitted.pid,status:'stopped',ticks:null,environmentSha256:null};
+ assert.notDeepEqual(old,JSON.parse(JSON.stringify(old)),'reproduce undefined own-property loss in the old observation');
+ assert.equal(templateProcessPid(omitted),0);
+ const rows=Array.from({length:18},(_,i)=>templateProcessIdentity({...omitted,name:'stopped-'+i,pm_id:i+4},{ticks:null,environmentSha256:null}));
+ rows.push(templateProcessIdentity({name:'live',pm_id:25,pid:685108,pm2_env:{status:'online'}},{ticks:'123456',environmentSha256:'a'.repeat(64)}));
+ const saved=JSON.parse(JSON.stringify(rows));assert.deepEqual(rows,saved);assertTemplateProcessesUnchanged(saved,rows);
+ assert.deepEqual(templateProcessIdentity({...omitted,pid:0},{ticks:null,environmentSha256:null}),{...rows[0],name:omitted.name});
+ const errored=templateProcessIdentity({...omitted,pid:0,pm2_env:{status:'errored'}},{ticks:null,environmentSha256:null});assert.deepEqual(errored,JSON.parse(JSON.stringify(errored)));
+ for(const row of [{...omitted,pm2_env:{status:'online'}},{...omitted,pm2_env:{status:'errored'}},
+  ...[-1,1.5,'0',null,NaN].map(pid=>({...omitted,pid}))])assert.throws(()=>templateProcessPid(row),/application_template_process_pid/);
+});
+test('canonical process evidence still refuses every changed identity, missing registration and malformed live observation',()=>{
+ const live={name:'live',pm_id:25,pid:685108,pm2_env:{status:'online'}},metadata={ticks:'123456',environmentSha256:'a'.repeat(64)};
+ const expected=[templateProcessIdentity(live,metadata)];
+ for(const change of [{name:'other'},{id:26},{pid:685109},{status:'stopped'},{ticks:'123457'},{environmentSha256:'b'.repeat(64)}]){
+  assert.throws(()=>assertTemplateProcessesUnchanged(expected,[{...expected[0],...change}]),/application_template_processes_changed/);
+ }
+ for(const changed of [[],[...expected,...expected],undefined])assert.throws(()=>assertTemplateProcessesUnchanged(expected,changed));
+ for(const row of [{...live,name:undefined},{...live,pm_id:undefined},{...live,pm2_env:{}},
+  {...live,pid:undefined},{...live,pid:0}])assert.throws(()=>templateProcessIdentity(row,metadata));
+ for(const data of [{...metadata,ticks:undefined},{...metadata,ticks:'NaN'},{...metadata,environmentSha256:null}])assert.throws(()=>templateProcessIdentity(live,data));
+ assert.throws(()=>templateProcessIdentity({name:'stopped',pm_id:4,pm2_env:{status:'stopped'}},metadata));
 });
 function observation(){
  const state={actor:'supabase_admin',database:'postgres',oid:'5',systemIdentifier:'7612049595342295079',serverVersionNum:'150008',
