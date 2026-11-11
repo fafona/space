@@ -2,13 +2,46 @@
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "5866382e014a0d7bb51ed9306ad2bae6e333ed42",
-  "purpose": "Remove redemption recovery banner and restore unfinished original carts; preserve financial idempotency and existing deployed template schema",
+  "purpose": "Publish checkout cart recovery UI with bounded signed CI package downloads and read-only process-exit race handling; retain all acceptance and no-maintenance guards",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
   "mail": "unchanged-off",
   "backgroundTasks": "retain-certified-worker",
   "changes": [
+    {
+      "file": ".github/scripts/install-ci-packages.sh",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "380cc7981a8b0c4ad57e56d11c088e6bc8f2bf88"
+      ]
+    },
+    {
+      "file": ".github/workflows/ci.yml",
+      "role": "verification",
+      "before": [
+        "100644",
+        "1acd21572c27032c08cc3ad0c9478b4f0a0b94f1"
+      ],
+      "after": [
+        "100644",
+        "4b569a9e8f9647724fe87ac3c6be6f1d7e969c9e"
+      ]
+    },
+    {
+      "file": ".github/workflows/release-toolchain.yml",
+      "role": "verification",
+      "before": [
+        "100644",
+        "54dd0ed570cee101a11941c4a6b1db30eee7258c"
+      ],
+      "after": [
+        "100644",
+        "4bc95eb6dc7b8fb42ddbfc84cae4fbbd41e5cf00"
+      ]
+    },
     {
       "file": ".github/workflows/website-template-table-online.yml",
       "role": "verification",
@@ -19,6 +52,18 @@
       "after": [
         "100644",
         "88502f6ad611e4e5a768fee63ef352b34934dd7a"
+      ]
+    },
+    {
+      "file": "docs/ordinary-application-release.md",
+      "role": "verification",
+      "before": [
+        "100644",
+        "2418bce80314b6ad99686065b772f2dec29e7ecf"
+      ],
+      "after": [
+        "100644",
+        "606d551fec2578bf1cceb8aa2c3f5a9161de19a8"
       ]
     },
     {
@@ -46,6 +91,27 @@
       ]
     },
     {
+      "file": "scripts/ci-package-install.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "7a0b19d08fee3754ed06a9e38249fbfc4901f95f"
+      ]
+    },
+    {
+      "file": "scripts/ci-workflow-contract.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "a702d9d3529a9c08dbff47a53733b1540bd21b6f"
+      ],
+      "after": [
+        "100644",
+        "0f0d2bab68b0314a674611a4a8cb9d8d52b1a003"
+      ]
+    },
+    {
       "file": "scripts/redemption-pending-cart-browser-acceptance.mjs",
       "role": "verification",
       "before": [
@@ -55,6 +121,30 @@
       "after": [
         "100644",
         "ed7ced878c5bbbd46420c9dc761cd60938c6c8f0"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-process-birth.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "c2f008a9a6bd55a28ae779ca8de5406ac66b6b28"
+      ],
+      "after": [
+        "100644",
+        "ef237b3b71b8bb71fc292249c2c8654c30928e3d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-process-birth.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "315cfc45cd23fda41ba53019b2abfcbfa5049f07"
+      ],
+      "after": [
+        "100644",
+        "19ab932329b6b3512db5d57629c8a48fcb356871"
       ]
     },
     {
@@ -114,7 +204,10 @@
     "src/app/api/merchant-admin/redemption-checkout/route.test.ts",
     "scripts/application-release-policy.test.mjs",
     "scripts/application-release-compatibility.test.mjs",
-    "scripts/application-release-template.test.mjs"
+    "scripts/application-release-template.test.mjs",
+    "scripts/ci-package-install.test.mjs",
+    "scripts/ci-workflow-contract.test.mjs",
+    "scripts/release-toolchain-process-birth.test.mjs"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
