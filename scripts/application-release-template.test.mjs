@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
@@ -109,6 +110,28 @@ test('separate migration workflow retains every prior gate, source template and 
  }
  const ci=read('.github/workflows/ci.yml');assert.match(ci,/WEBSITE_TEMPLATE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"/);assert.match(ci,/run: node scripts\/application-release-template-postgres-acceptance.mjs/);
  const migrate=read('scripts/application-release-template-migrate.mjs');assert.match(migrate,/O_EXCL/);assert.match(migrate,/apply-attempt\.json/);assert.match(migrate,/--nonblock/);assert.doesNotMatch(migrate,/\['restart'|\['stop'|rollback.*query\(/);
+});
+test('the actual new workflow emits exactly one apply JSON document and keeps all confirmations on stderr',()=>{
+ const yaml=createRequire(import.meta.url)('js-yaml'),flow=yaml.load(read('.github/workflows/website-template-table-online.yml'));
+ const step=flow.jobs.migrate.steps.find(s=>s.name==='Revalidate Evidence And Apply Exact Through');
+ const commands=step.run.split('\n').filter(line=>/^node scripts\/application-release-template-migrate\.mjs (?:dry-run|prepare|apply|verify) /.test(line.trim()));
+ assert.equal(commands.length,4);assert.match(commands[0],/dry-run "\$dry_report_path" >&2$/);
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'faolla-template-report-')),bash=process.platform==='win32'?'C:/Program Files/Git/bin/bash.exe':'bash';let passed=false;
+ try{
+  // A transport-only fixture. No production source/database/CI guard is
+  // replaced or granted authority: execute the four actual redirect lines.
+  const script=lines=>`set -euo pipefail\nnode() {\ncase "$2" in\ndry-run) printf '%s\\n' '{"dryRunVerified":true}' ;;\nprepare) printf '%s\\n' '{"prepared":true}' ;;\napply) printf '%s\\n' '{"ok":true,"mode":"apply","status":"applied"}' ;;\nverify) printf '%s\\n' '{"applied":true}' ;;\n*) return 1 ;;\nesac\n}\n${lines.join('\n')}\ncat "$apply_report_path"\n`;
+  const run=(lines,file)=>spawnSync(bash,['--noprofile','--norc','-s'],{input:script(lines),encoding:'utf8',windowsHide:true,timeout:10000,
+   env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,FAOLLA_REPORT_DIR:dir.replaceAll('\\','/'),dry_report_path:'/unused-readonly-fixture',apply_report_path:path.join(dir,file).replaceAll('\\','/')}});
+  const good=run(commands,'good.json');assert.ifError(good.error);assert.equal(good.status,0,good.stderr);
+  assert.deepEqual(JSON.parse(good.stdout),{ok:true,mode:'apply',status:'applied'});
+  assert.deepEqual(good.stderr.trim().split(/\r?\n/).map(s=>JSON.parse(s)),[{dryRunVerified:true},{prepared:true},{applied:true}]);
+  const prior=commands.map(line=>line.includes(' dry-run ')?line.replace(' >&2',''):line),bad=run(prior,'prior.json');
+  assert.ifError(bad.error);assert.equal(bad.status,0,bad.stderr);assert.throws(()=>JSON.parse(bad.stdout),SyntaxError);
+  assert.equal(bad.stdout.trim().split(/\r?\n/).length,2,'reproduce the original line-2 JSON parse failure');passed=true;
+ }finally{
+  if(passed){for(const file of ['good.json','prior.json']){const target=path.join(dir,file),st=fs.lstatSync(target);assert.ok(st.isFile()&&!st.isSymbolicLink());fs.unlinkSync(target);}fs.rmdirSync(dir);}
+ }
 });
 test('first seed compares JSONB semantically and cannot mint sessions or write a source draft',()=>{
  assert.equal(templateSeedHash({b:1,a:[{z:2,x:3}]}),templateSeedHash({a:[{x:3,z:2}],b:1}));

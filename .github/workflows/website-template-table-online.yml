@@ -1129,7 +1129,7 @@ jobs:
 
           # The pinned additive migration holds the shared migration transaction lock.
           # Existing booking schema/ACLs, process identities and business baseline remain verified.
-          node scripts/application-release-template-migrate.mjs dry-run "$dry_report_path"
+          node scripts/application-release-template-migrate.mjs dry-run "$dry_report_path" >&2
           node scripts/application-release-template-migrate.mjs prepare "$FAOLLA_REPORT_DIR" >&2
           assert_exact_source
           assert_container
