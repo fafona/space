@@ -60,7 +60,7 @@
       ],
       "after": [
         "100644",
-        "de3d70863748a22589800217a658c61b65af574b"
+        "318b71f6433dc8befd7d95bd3084ee3811907d73"
       ]
     },
     {
@@ -118,6 +118,15 @@
       ]
     },
     {
+      "file": "scripts/application-release-template-source.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "1f934cf166eb693d541dfd2edfe087295a78e489"
+      ]
+    },
+    {
       "file": "scripts/application-release-template-workflow.mjs",
       "role": "release-tool",
       "before": null,
@@ -132,7 +141,7 @@
       "before": null,
       "after": [
         "100644",
-        "35e692bcacf27910726eeb642c0d5cb5b49c0b34"
+        "e04b551a00f1325768e99cc7b6d3f5b9e84c9f71"
       ]
     },
     {
