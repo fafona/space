@@ -15,6 +15,10 @@ test('CI prepares exactly the reviewed baseline before the dependency-free sourc
  assert.ok(core.includes('git fetch --no-tags --depth=1 origin '+TEMPLATE_BASELINE));
  assert.ok(core.indexOf('Fetch Reviewed Template Source Baseline')<core.indexOf('- name: Tests'));
  assert.ok(core.includes("git cat-file -e '"+TEMPLATE_BASELINE+"^{commit}'"));
+ const safety=fs.readFileSync(new URL('../.github/workflows/release-toolchain.yml',import.meta.url),'utf8');
+ assert.ok(safety.includes('git fetch --no-tags --depth=1 origin '+TEMPLATE_BASELINE));
+ assert.ok(safety.indexOf('Fetch Reviewed Template Source Baseline')<safety.indexOf('- name: Unit And Existing Handoff Regression Tests'));
+ assert.ok(safety.includes("git cat-file -e '"+TEMPLATE_BASELINE+"^{commit}'"));
 });
 test('exact source-only migration entry accepts its reviewed scope and refuses later unrelated releases in a clean checkout',{timeout:120000},()=>{
  assert.equal(fs.existsSync('/var/lib/faolla-online-release/active.json'),false,'never create a test worktree on a formal host');
@@ -26,6 +30,8 @@ test('exact source-only migration entry accepts its reviewed scope and refuses l
   sourceGit(checkout,['-c','index.sparse=false','sparse-checkout','set','--no-cone','--stdin'],'/*\n!/public/downloads/\n');
   sourceGit(checkout,['config','--worktree','core.sparseCheckoutCone','false']);sourceGit(checkout,['config','--worktree','index.sparse','false']);
   sourceGit(checkout,['read-tree','-mu','HEAD']);
+  assert.doesNotThrow(()=>sourceGit(checkout,['cat-file','-e',TEMPLATE_BASELINE+'^{commit}']),
+   'the exact reviewed baseline must be present before the real source admission CLI runs');
   const r=spawnSync(process.execPath,[path.join(checkout,'scripts/application-release-template-migrate.mjs'),'source'],{
    cwd:checkout,encoding:'utf8',windowsHide:true,timeout:30000,
    env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,USERPROFILE:process.env.USERPROFILE,TEMP:process.env.TEMP,TMP:process.env.TMP}
