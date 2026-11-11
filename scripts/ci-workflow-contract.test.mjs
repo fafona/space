@@ -571,10 +571,14 @@ test("pages ACL acceptance uses isolated PostgreSQL 15 with bound identity and n
 test("container-network PostgreSQL jobs bind their exact trusted service identity before database acceptance", () => {
   for (const jobName of ["checkout-database", "recovery-database", "pages-acl-database"]) {
     const job = jobBlock(jobName);
-    assert.equal((job.match(/FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID:\s*\$\{\{ job\.services\.postgres\.id \}\}/g) || []).length, 2);
+    assert.equal((job.match(/FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID:\s*\$\{\{ job\.services\.postgres\.id \}\}/g) || []).length, jobName === "pages-acl-database" ? 3 : 2);
     const bindAt = job.indexOf("node scripts/ci-postgres-service-identity.mjs");
     const runAt = job.indexOf(`node scripts/${jobName.replace("-database", "")}-integration/run.mjs`);
     assert.ok(bindAt >= 0 && runAt > bindAt);
+    if (jobName === "pages-acl-database") {
+      assert.ok(job.indexOf("node scripts/application-release-template-postgres-acceptance.mjs") > runAt);
+      assert.match(job, /WEBSITE_TEMPLATE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"/);
+    }
     assert.doesNotMatch(job, /FAOLLA_CI_POSTGRES_SERVER_IPV4:\s*\S|continue-on-error/);
   }
 });

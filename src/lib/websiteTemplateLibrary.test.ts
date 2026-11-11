@@ -47,10 +47,15 @@ test('responsive block reordering cannot split a poll or pair it with another po
     d.mobile[0].blocks = [d.mobile[0].blocks[0], poll('second'), poll('first')];
     const result = installWebsiteTemplate(d, { desktop: config(), mobile: config() }, 'plan-3');
     const blocks = (view: 'desktop' | 'mobile') => result[view].plans[2].pages[0].blocks;
+    const pollId = (view: 'desktop' | 'mobile', id: string) => {
+        const block = blocks(view).find(b => b.id === id);
+        assert(block?.type === 'poll');
+        return block.props.pollId;
+    };
     for (const id of ['first', 'second']) {
-        assert.equal(blocks('desktop').find(b => b.id === id)?.props.pollId, blocks('mobile').find(b => b.id === id)?.props.pollId);
+        assert.equal(pollId('desktop', id), pollId('mobile', id));
     }
-    assert.notEqual(blocks('desktop')[0].props.pollId, blocks('desktop')[1].props.pollId);
+    assert.notEqual(pollId('desktop', 'first'), pollId('desktop', 'second'));
 });
 test('capture requires both PC and mobile, without silently using an unrelated plan', () => { const c = config(); assert.throws(() => snapshotWebsiteTemplate(buildCombinedPersistedBlocks(c), 'plan-3'), /requires_desktop_and_mobile/); });
 test('source, read-only merchant route and SQL grants preserve the library boundary', async () => { const merchant = await readFile(new URL('../app/api/website-templates/route.ts', import.meta.url), 'utf8'); assert.match(merchant, /export function GET/); assert.doesNotMatch(merchant, /export (?:async )?function (?:POST|PUT|PATCH|DELETE)/); const sql = await readFile(new URL('../../scripts/supabase-migrations/202611100214_website_template_library.sql', import.meta.url), 'utf8'); assert.match(sql, /enable row level security/); assert.match(sql, /revoke all .* from public, anon, authenticated/); assert.match(sql, /grant select, insert, update, delete .* to service_role/); assert.doesNotMatch(sql, /update public\.(?:pages|merchants)|delete from|drop table/i); });
