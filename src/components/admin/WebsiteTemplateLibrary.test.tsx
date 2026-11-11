@@ -1,0 +1,41 @@
+import React from 'react';
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { renderToStaticMarkup } from 'react-dom/server';
+import WebsiteTemplateLibrary from './WebsiteTemplateLibrary';
+import { readFile } from 'node:fs/promises';
+test('merchant library has an accessible responsive read-only shell, without admin source or mutation controls', () => {
+    const html = renderToStaticMarkup(<WebsiteTemplateLibrary onClose={() => { }} plans={[{ id: 'plan-1', name: '方案一' }]} request={async () => assert.fail('SSR must not fetch or mutate')}/>);
+    assert.match(html, /role="dialog"/);
+    assert.match(html, /aria-modal="true"/);
+    assert.match(html, /网站模板库/);
+    assert.match(html, /按行业筛选/);
+    assert.match(html, /搜索模板/);
+    assert(!html.includes('收录为模板草稿'));
+    assert(!html.includes('来源用户 ID'));
+    assert(!html.includes('审核并上架'));
+});
+test('admin library exposes explicit capture and review workflow rather than a merchant editor', () => {
+    const html = renderToStaticMarkup(<WebsiteTemplateLibrary admin request={async () => assert.fail('SSR must not fetch')}/>);
+    assert.match(html, /模板管理/);
+    assert.match(html, /收录为模板草稿/);
+    assert.match(html, /来源用户 ID/);
+    assert.match(html, /电脑／手机草稿/);
+    assert(!html.includes('使用模板'));
+});
+test('complete preview uses a standalone viewport and keeps existing anti-framing and read-only boundaries', async () => {
+    const ui = await readFile(new URL('./WebsiteTemplateLibrary.tsx', import.meta.url), 'utf8');
+    const preview = await readFile(new URL('./WebsiteTemplatePreview.tsx', import.meta.url), 'utf8');
+    assert.match(ui, /window\.open/);
+    assert.doesNotMatch(ui, /<iframe/);
+    assert.ok(/opened\.opener\s*=\s*null/.test(ui),'preview must not retain its parent window');
+    assert.match(preview, /bookingInteractive=\{false\}/);
+    assert.match(preview, /productCartEnabled=\{false\}/);
+    assert.match(preview, /x-merchant-access-token/);
+    assert.doesNotMatch(preview, /saveBlocksToStorage|\/api\/merchant-draft|\/api\/publish|POST/);
+    assert.ok(/body\.template\.revision\s*!==\s*revision/.test(preview),'preview must bind the selected version');
+    const config=await readFile(new URL('../../../next.config.ts',import.meta.url),'utf8');
+    assert.ok(config.includes('"/admin/template-preview", "/super-admin/template-preview"'));
+    assert.ok(config.includes('key: "X-Frame-Options", value: "DENY"'));
+    assert.ok(config.includes("frame-ancestors 'none'"));
+});

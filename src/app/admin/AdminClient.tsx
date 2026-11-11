@@ -17,6 +17,9 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import DeferredFaollaFrame from "@/components/admin/DeferredFaollaFrame";
+import dynamic from "next/dynamic";
+import { installWebsiteTemplate, type WebsiteTemplate } from "@/lib/websiteTemplateLibrary";
+const WebsiteTemplateLibrary = dynamic(() => import("@/components/admin/WebsiteTemplateLibrary"), { ssr: false });
 import { canShowMerchantWorkspaceBeforeEditor } from "@/lib/merchantWorkspaceLoading";
 import { startVisiblePolling } from "@/lib/visiblePolling";
 import {
@@ -4702,6 +4705,17 @@ export default function AdminClient({
   const [uploadCompressionPreset] = useState<UploadCompressionPreset>("high");
   const [themePreset, setThemePreset] = useState<ThemePresetKey>("none");
   const [planTemplateDialogOpen, setPlanTemplateDialogOpen] = useState(false);
+  const [websiteTemplateLibraryOpen, setWebsiteTemplateLibraryOpen] = useState(false);
+  const [cloudDraftSaving, setCloudDraftSaving] = useState(false);
+  const cloudDraftSavingRef = useRef(false);
+  useEffect(() => {
+    if (isPlatformEditor || checkingAuth || merchantWorkspaceEditorPending || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("templateLibrary") !== "1") return;
+    setWebsiteTemplateLibraryOpen(true);
+    url.searchParams.delete("templateLibrary");
+    window.history.replaceState(null, "", url.toString());
+  }, [isPlatformEditor, checkingAuth, merchantWorkspaceEditorPending]);
   const [planTemplateSearch, setPlanTemplateSearch] = useState("");
   const [planTemplateFilter, setPlanTemplateFilter] = useState<PlanTemplateFilterCategory>("全部");
   const [planTemplates, setPlanTemplates] = useState<PlanTemplate[]>(() => initialPlatformState.planTemplates ?? []);
@@ -6397,6 +6411,88 @@ export default function AdminClient({
     return new Promise((resolve) => {
       setDialog({ type: "confirm", title, message, resolve });
     });
+  }
+
+  async function verifyWebsiteTemplateEditor() {
+    if (remoteContentVerified) return true;
+    if (checkingAuth || merchantWorkspaceEditorPending) return false;
+    const siteId=getSiteIdFromStoreScope(storeScope).trim();
+    if (!isMerchantNumericId(siteId)) return false;
+    const response=await requestMerchantChatWithSessionRecovery(`/api/website-templates?editorSiteId=${encodeURIComponent(siteId)}`,{method:"GET"});
+    if (!response.ok) return false;
+    const result=await response.json() as {canInitializeDraft?:boolean};
+    if (result.canInitializeDraft!==true) return false;
+    // Only an authenticated, strictly empty site can initialize without a loaded server draft.
+    markMerchantRemoteContentVerified([siteId]);
+    return true;
+  }
+
+  async function saveCloudDraftForTemplateCapture() {
+    if (cloudDraftSavingRef.current || isPlatformEditor) return;
+    if (publishingRef.current) {
+      showTip("请等待当前草稿读取或发布完成后，再保存云端草稿。");
+      return;
+    }
+    cloudDraftSavingRef.current = true;
+    setCloudDraftSaving(true);
+    try {
+      if (!(await verifyWebsiteTemplateEditor())) throw new Error("当前云端内容尚未读完，请刷新编辑器后重试；本次未覆盖任何草稿。");
+      const siteId = getSiteIdFromStoreScope(storeScope).trim();
+      if (!isMerchantNumericId(siteId)) throw new Error("未确认当前商户，未保存云端草稿。");
+      flushPendingEditorChanges();
+      const snapshot = createSnapshot();
+      const combined = buildCombinedPersistedBlocks(snapshot.viewportStates.desktop.planConfig, snapshot.viewportStates.mobile.planConfig);
+      if (!saveBlocksToStorage(combined, storeScope) || !saveLatestDraftSnapshot(combined, storeScope)) throw new Error("本机恢复副本未完整保存，已停止云端保存，请检查存储空间。");
+      const response = await requestMerchantChatWithSessionRecovery("/api/merchant-draft", {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({siteId,blocks:combined})});
+      if (!response.ok) throw new Error("云端草稿保存未确认，本机草稿仍保留，请重试。");
+      showTip("云端草稿已保存，尚未发布。管理员可从已保存的指定方案收录模板。");
+    } catch(error) {
+      showTip(error instanceof Error ? error.message : "云端草稿保存失败，本机内容未清除。");
+    } finally {
+      cloudDraftSavingRef.current = false;
+      setCloudDraftSaving(false);
+    }
+  }
+
+  async function useWebsiteTemplate(template: WebsiteTemplate, targetPlanId: PlanId) {
+    if (isPlatformEditor) throw new Error("请在商户网站编辑器中使用模板。");
+    if (cloudDraftSavingRef.current) throw new Error("云端草稿正在保存，请稍后再使用模板。");
+    if (!(await verifyWebsiteTemplateEditor())) throw new Error("请等待当前商户草稿加载完成后再使用模板，避免覆盖未读取的内容。");
+    const fresh = await requestMerchantChatWithSessionRecovery(`/api/website-templates?id=${encodeURIComponent(template.id)}`, {method: "GET"});
+    if (!fresh.ok) throw new Error("此模板已下架或暂不可用，请刷新模板库。");
+    const current = await fresh.json() as {template: WebsiteTemplate};
+    if (!current.template || current.template.revision !== template.revision) throw new Error("此模板有新版本，请重新预览后再确认使用。");
+    template = current.template;
+    const targetIndex = planConfigRef.current.plans.findIndex(plan => plan.id === targetPlanId);
+    if (targetIndex < 0 || targetIndex >= merchantPlanLimit) throw new Error("所选方案尚未开通，请选择已开通的方案。");
+    const templateBlocks = [...template.design.desktop, ...template.design.mobile].flatMap(page => page.blocks);
+    const allowed = { button: canUseButtonBlock, gallery: canUseGalleryBlock, music: canUseMusicBlock, product: canUseProductBlock, coupon: canUseCouponBlock, booking: canUseBookingBlock };
+    if (templateBlocks.some(block => block.type in allowed && !allowed[block.type as keyof typeof allowed])) throw new Error("此模板包含尚未开通的功能，请先开通对应功能或选择其他模板。");
+    if (template.design.desktop.length > merchantPageLimit || template.design.mobile.length > merchantPageLimit) throw new Error(`此模板需要 ${Math.max(template.design.desktop.length, template.design.mobile.length)} 个页面，当前仅允许 ${merchantPageLimit} 个页面。`);
+    const name = planConfigRef.current.plans[targetIndex].name;
+    const confirmed = window.confirm(`将模板「${template.name}」复制到「${name}」的电脑及手机端。该方案原页面会被替换，并先保存恢复备份；其他方案和已发布网站不变。确认继续？`);
+    if (!confirmed) return;
+    flushPendingEditorChanges();
+    const before = createSnapshot();
+    const target = {desktop: before.viewportStates.desktop.planConfig, mobile: before.viewportStates.mobile.planConfig};
+    const next = installWebsiteTemplate(template.design, target, targetPlanId);
+    if (countBookingBlocksInPlanConfig(next.desktop) > 1 || countBookingBlocksInPlanConfig(next.mobile) > 1) throw new Error("其他方案已有预约区块。为保留现有预约设置，本次未套用，请先整理重复的预约区块。");
+    const backup = buildCombinedPersistedBlocks(target.desktop, target.mobile);
+    if (!saveLatestDraftSnapshot(backup, storeScope)) throw new Error("覆盖前备份保存失败，未应用模板。请检查浏览器存储空间。");
+    const siteId = getSiteIdFromStoreScope(storeScope).trim();
+    if (!isMerchantNumericId(siteId)) throw new Error("未确认当前商户，请刷新后重试。");
+    const combined = buildCombinedPersistedBlocks(next.desktop, next.mobile);
+    const response = await requestMerchantChatWithSessionRecovery("/api/merchant-draft", {method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({siteId, blocks: combined})});
+    if (!response.ok) throw new Error("模板草稿未保存到服务器，编辑内容未替换，请重试。");
+    const snapshot = structuredClone(before);
+    for (const view of ["desktop", "mobile"] as const) {
+      const plan = next[view].plans.find(item => item.id === targetPlanId)!;
+      snapshot.viewportStates[view] = {planConfig: next[view], editingPlanId: targetPlanId, editingPageId: plan.activePageId, blocks: cloneBlocks(plan.blocks), selectedId: ""};
+    }
+    pushUndoSnapshot(before);
+    applySnapshot(snapshot);
+    setWebsiteTemplateLibraryOpen(false);
+    showTip(`已复制「${template.name}」到「${name}」并保存草稿，尚未发布。可使用“恢复草稿”返回覆盖前的内容。`);
   }
 
   function persistPlanTemplates(nextTemplates: PlanTemplate[]) {
@@ -13093,7 +13189,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     setMerchantDesktopSection("printer");
   }
 
-  async function openMerchantEditorInNewWindow() {
+  async function openMerchantEditorInNewWindow(openTemplates = false) {
     const resolvedSiteId = editingSiteId || (await ensureEditableMerchantSiteId());
     if (!resolvedSiteId) {
       showTip("当前商户还没准备好网站编辑资料，请稍后重试");
@@ -13102,6 +13198,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     preloadEditorPreviewComponents();
     const editorHref = new URL(buildMerchantBackendHref(resolvedSiteId), window.location.origin);
     editorHref.searchParams.set("editorOnly", "1");
+    if (openTemplates) editorHref.searchParams.set("templateLibrary", "1");
     const opened = window.open(editorHref.toString(), "_blank", "noopener,noreferrer");
     if (!opened) {
       showTip("浏览器拦截了新窗口，请允许弹窗后重试");
@@ -20691,6 +20788,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           <path d="M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
                       </button>
+                      <button type="button" className={getMerchantDesktopSubmenuButtonClassName(false)} onClick={() => void openMerchantEditorInNewWindow(true)}>
+                        网站模板库
+                      </button>
                     </div>
                   ) : merchantDesktopSection === "members" && canUseMembershipManagement ? (
                     <div className="grid gap-2">
@@ -20760,6 +20860,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                         方案模板
                       </button>
                     ) : null}
+                    {!isPlatformEditor ? <>
+                      <button type="button" className={isMobileMerchantEditorShell ? merchantMobileToolbarButtonClassName : "rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 lg:w-full"} onClick={() => setWebsiteTemplateLibraryOpen(true)}>选择模板</button>
+                      <button type="button" className={isMobileMerchantEditorShell ? merchantMobileToolbarButtonClassName : "rounded border bg-white px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50 lg:w-full"} disabled={cloudDraftSaving || checkingAuth || merchantWorkspaceEditorPending} onClick={() => void saveCloudDraftForTemplateCapture()}>{cloudDraftSaving ? "云端保存中…" : "保存云端草稿"}</button>
+                    </> : null}
                     <select
                       className={
                         isMobileMerchantEditorShell
@@ -21943,6 +22047,15 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           )
         : null}
 
+      {websiteTemplateLibraryOpen && !isPlatformEditor ? renderTopMostOverlay(
+        <WebsiteTemplateLibrary
+          onClose={() => setWebsiteTemplateLibraryOpen(false)}
+          initialPlanId={editingPlanId}
+          plans={planConfig.plans.slice(0, merchantPlanLimit).map(plan => ({id: plan.id, name: plan.name}))}
+          request={requestMerchantChatWithSessionRecovery}
+          onApply={useWebsiteTemplate}
+        />,
+      ) : null}
       {planTemplateDialogOpen && isPlatformEditor
         ? renderTopMostOverlay(
             <div

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
+const WebsiteTemplateLibrary = dynamic(() => import("@/components/admin/WebsiteTemplateLibrary"), { ssr: false });
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent, type ReactNode, type TouchEvent } from "react";
 import { createPortal } from "react-dom";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
@@ -443,6 +444,7 @@ function hasAddedAuditRecord(prev: PlatformState, next: PlatformState) {
 
 function formatSuperAdminMenuLabel(key: string) {
   if (key === "site_editor") return "网站编辑";
+  if (key === "template_library") return "模板管理";
   if (key === "user_manage") return "用户管理";
   if (key === "support_messages") return "信息处理";
   if (key === "merchant_id_rules") return "禁用ID设置";
@@ -1987,6 +1989,7 @@ type MerchantTableSortField =
 
 type SuperAdminMenuKey =
   | "site_editor"
+  | "template_library"
   | "user_manage"
   | "support_messages"
   | "merchant_id_rules"
@@ -7868,6 +7871,7 @@ export default function SuperAdminClient() {
 
   const sidebarMenus: Array<{ key: SuperAdminMenuKey; label: string; hint: string }> = [
     { key: "site_editor", label: "网站编辑", hint: "总站页面与站点配置" },
+    { key: "template_library", label: "模板管理", hint: "行业模板收录、审核与上架" },
     { key: "user_manage", label: "用户管理", hint: "用户列表与权限服务" },
     { key: "support_messages", label: "信息处理", hint: "会话留言与回复" },
     { key: "merchant_id_rules", label: "禁用ID设置", hint: "注册跳号与规则管理" },
@@ -8003,6 +8007,7 @@ export default function SuperAdminClient() {
               {!isMobileSupportOnlyMode && activeMenu !== "stats" ? <button type="button" className="ml-3 rounded border border-amber-300 px-2 py-1 text-xs"
                 onClick={() => setActiveMenu("stats")}>查看备份与恢复记录</button> : null}
             </div> : null}
+            {activeMenu === "template_library" ? <WebsiteTemplateLibrary admin /> : null}
             {activeMenu === "site_editor" ? (
               <>
                 <section className="rounded-lg border bg-white p-4">
