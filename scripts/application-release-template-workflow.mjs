@@ -15,6 +15,10 @@ export function templateMigrationWorkflow(original){
  replace('Verify Pinned Booking Safeupdate Online Scope','Verify Pinned Website Template Table Scope',1);
  const uses=source.split('scripts/booking-safeupdate-online.mjs').length-1;assert.equal(uses,6);
  replace('scripts/booking-safeupdate-online.mjs','scripts/application-release-template-migrate.mjs',uses);
+ // SSH stdout is the single final apply report. Preflight acknowledgements
+ // remain visible as diagnostics, never a second JSON document on that stream.
+ replace('node scripts/application-release-template-migrate.mjs dry-run "$dry_report_path"',
+  'node scripts/application-release-template-migrate.mjs dry-run "$dry_report_path" >&2',1);
  replace('# The pinned migration holds the existing booking singleton lock and\n          # verifies unchanged booking rows/control/ACLs inside its transaction.',
   '# The pinned additive migration holds the shared migration transaction lock.\n          # Existing booking schema/ACLs, process identities and business baseline remain verified.',1);
  return source;
