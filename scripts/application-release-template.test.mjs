@@ -33,6 +33,12 @@ test('only the exact additive table is admitted, preserving the original code-on
  const future={...input,baselineRows:input.targetRows,targetRows:input.targetRows.map(r=>['src/example.ts','src/example.test.ts'].includes(r.file)?{...r,oid:'d'.repeat(40)}:r)};
  const next=createApplicationReleaseManifest(future);assert.equal(next.schemaVersion,3);assert.equal(next.baseSchemaVersion,1);assertApplicationReleaseManifest(next,future);
 });
+test('real admission callers provide only Git evidence; reviewed metadata stays in the manifest',()=>{
+ const input=fixture(),manifest=createApplicationReleaseManifest(input);
+ const structural={baseline:input.baseline,baselineRows:input.baselineRows,targetRows:input.targetRows};
+ assert.equal(assertApplicationReleaseManifest(manifest,structural).templateSchemaVerified,true);
+ for(const change of [{...manifest,purpose:''},{...manifest,focusedTests:[]},{...manifest,purpose:undefined}])assert.throws(()=>assertApplicationReleaseManifest(change,structural));
+});
 test('migration byte pin, transaction boundary and exact old registry prevent extra SQL and replay',()=>{
  assertTemplateSql(sql);assert.throws(()=>assertTemplateSql(Buffer.concat([sql,Buffer.from('-- changed')])));
  const registry=Array.from({length:212},(_,i)=>({version:i===211?'202611050213':String(i),name:'fixture'}));

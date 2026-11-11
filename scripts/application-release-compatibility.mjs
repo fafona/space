@@ -93,7 +93,10 @@ export function assertApplicationReleaseManifest(value,input){
  templateNeed(value?.schemaVersion===3&&[1,2].includes(value.baseSchemaVersion)&&isDeepStrictEqual(value.templateSchema,TEMPLATE_SCHEMA),'descriptor');
  const plain={...value,schemaVersion:value.baseSchemaVersion};delete plain.templateSchema;delete plain.baseSchemaVersion;
  const projected={...input,baselineRows:withoutTemplate(input.baselineRows),targetRows:withoutTemplate(input.targetRows)};
- const base=createRecordedApplicationManifest(projected);
+ // Assertion callers supply structural Git evidence only. The reviewed
+ // purpose/test metadata belongs to the manifest and must still pass the
+ // unchanged original constructor/validator, not disappear from this adapter.
+ const base=createRecordedApplicationManifest({...projected,purpose:value.purpose,focusedTests:value.focusedTests});
  templateNeed(isDeepStrictEqual(value.changes,templateChanges(input,base)),'scope_changed');
  const proof=assertRecordedApplicationManifest({...plain,changes:base.changes},projected);
  return {...proof,manifestSha256:applicationReleaseHash(value),changedPaths:value.changes.length,templateSchemaVerified:true};
