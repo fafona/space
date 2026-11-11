@@ -73,7 +73,8 @@ test('independent recursion confirms the complete actual reviewed static import 
   assert.ok(actual.includes('scripts/release-toolchain-worker-release-contract.mjs'));
   for(const name of ['application-release-authority','application-release-policy','release-toolchain-source'])assert.ok(actual.includes('scripts/'+name+'.mjs'),name);
   for(const name of ['application-release-compatibility','application-release-recorded-schema','release-toolchain-host-reboot-contract','release-toolchain-process-observation'])assert.ok(actual.includes('scripts/'+name+'.mjs'),name);
-  assert.equal(actual.length, 41);
+  for(const name of ['application-release-template-contract','application-release-template-database'])assert.ok(actual.includes('scripts/'+name+'.mjs'),name);
+  assert.equal(actual.length, 43);
   assert.ok(actual.includes('scripts/google-transition-unbuilt-close-policy.mjs'));
   assert.ok(actual.includes('scripts/contact-wechat-staged-tool-repair-policy.mjs'));
   for (const name of actual) assert.match(name, /^scripts\/[a-z0-9-]+\.mjs$/);
