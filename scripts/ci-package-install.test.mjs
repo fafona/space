@@ -17,11 +17,12 @@ const fixture=[
  "  shift",
  "  case \"$1\" in",
  "    id) printf '%s\\n' \"${FIXTURE_UID:-0}\" ;;",
- "    install) command install -m 755 \"${@: -2:1}\" \"${@: -1}\" ;;",
- "    stat) printf '%s\\n' '0:755:1' ;;",
- "    sha256sum) shift; command sha256sum \"$@\" ;;",
+ "    install) [ \"${@: -1}\" = \"$FIXTURE_POLICY\" ] || return 87; command install -m 755 \"${@: -2:1}\" \"${@: -1}\" ;;",
+ "    stat) [ \"${@: -1}\" = \"$FIXTURE_POLICY\" ] || return 87; printf '%s\\n' '0:755:1' ;;",
+ "    sha256sum) [ \"${@: -1}\" = \"$FIXTURE_POLICY\" ] || return 87; shift; command sha256sum \"$@\" ;;",
  "    bash)",
  "      local owned=\"${@: -2:1}\" expected_hash=\"${@: -1}\" actual",
+ "      [ \"$owned\" = \"$FIXTURE_POLICY\" ] || return 87",
  "      [ -f \"$owned\" ] && [ ! -L \"$owned\" ] || return 96",
  "      actual=\"$(command sha256sum \"$owned\")\"",
  "      [ \"${actual%% *}\" = \"$expected_hash\" ] || return 95",
@@ -66,6 +67,7 @@ function run({scenario='success',profile='ingress',env={},existingPolicy=false,p
  // helper has no path override, injected command, or admission bypass option.
  const isolated=helper.replace('policy=/usr/sbin/policy-rc.d','policy='+quote(policy))
   .replace('keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg','keyring='+quote(keyring));
+ assert.notEqual(isolated,helper);assert.doesNotMatch(isolated,/policy=\/usr\/sbin\/policy-rc\.d|keyring=\/usr\/share\/keyrings/);
  const result=spawnSync(bash,['--noprofile','--norc','-c',fixture+'\n'+isolated,'fixture',profile],{
   encoding:'utf8',windowsHide:true,timeout:10000,
   env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,GITHUB_ACTIONS:'true',RUNNER_ENVIRONMENT:'github-hosted',RUNNER_OS:'Linux',

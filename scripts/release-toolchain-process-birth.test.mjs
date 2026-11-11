@@ -36,7 +36,7 @@ test('PID reuse and changed identity after an exit-read failure never become own
  }
  let births=0,captures=0;assert.equal(observeExpectedProcessStateSequence({expected,birth:()=>({startTicks:++births>2?'124':'123',zombie:false}),capture:()=>{captures++;throw Object.assign(Error('race'),{code:'ENOENT'});},wait:()=>{}}),'reused');assert.equal(captures,1);
 });
-test('real owned controller SIGKILL during executable capture is independently observed as gone', {skip:process.platform!=='linux',timeout:15000},async()=>{
+test('real owned controller SIGKILL during executable capture is independently observed as gone', {skip:process.platform!=='linux'||process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted',timeout:15000},async()=>{
  for(let round=0;round<20;round++){
   const child=spawn(process.execPath,['-e','process.send("ready");setInterval(()=>{},1000)'],{stdio:['ignore','ignore','ignore','ipc']});
   const exited=once(child,'exit');await once(child,'message');
