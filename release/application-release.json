@@ -22,6 +22,18 @@
       ]
     },
     {
+      "file": ".github/workflows/release-toolchain.yml",
+      "role": "verification",
+      "before": [
+        "100644",
+        "d389c0aafc51014c449c933005a793ea196136cb"
+      ],
+      "after": [
+        "100644",
+        "54dd0ed570cee101a11941c4a6b1db30eee7258c"
+      ]
+    },
+    {
       "file": ".github/workflows/website-template-table-online.yml",
       "role": "verification",
       "before": null,
@@ -123,7 +135,7 @@
       "before": null,
       "after": [
         "100644",
-        "713b095e3b0eb40f035e4d86f7d59cd7722f2752"
+        "9a00cf1bf4db597cd32c6ff2deb8f1bded6980d3"
       ]
     },
     {
