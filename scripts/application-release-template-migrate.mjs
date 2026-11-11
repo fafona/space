@@ -45,11 +45,29 @@ function audit(revision,report){
  need(/^\/tmp\/faolla-database-migrate-report-[1-9][0-9]*-[1-9][0-9]*$/.test(report??''),'report_path');
  return AUDIT+'/'+revision+'/'+path.basename(report).slice('faolla-database-migrate-report-'.length);
 }
+export function templateProcessPid(row){
+ const pid=row?.pid,status=row?.pm2_env?.status;
+ // PM2 omits pid for resurrected, stopped registrations. JSON omits undefined
+ // properties too; use one explicit zero representation on both observations.
+ if(pid===undefined&&status==='stopped')return 0;
+ need(Number.isSafeInteger(pid)&&pid>=0&&(pid>0||['stopped','errored'].includes(status)),'process_pid');return pid;
+}
+export function templateProcessIdentity(row,{ticks,environmentSha256}){
+ const pid=templateProcessPid(row),status=row?.pm2_env?.status;
+ need(typeof row?.name==='string'&&row.name.length>0&&Number.isSafeInteger(row.pm_id)&&row.pm_id>=0&&
+  typeof status==='string'&&status.length>0,'process_identity');
+ need(pid===0?ticks===null&&environmentSha256===null:
+  typeof ticks==='string'&&/^[0-9]+$/.test(ticks)&&typeof environmentSha256==='string'&&/^[a-f0-9]{64}$/.test(environmentSha256),'process_identity');
+ return {name:row.name,id:row.pm_id,pid,status,ticks,environmentSha256};
+}
+export function assertTemplateProcessesUnchanged(expected,observed){
+ need(Array.isArray(expected)&&expected.length>0&&Array.isArray(observed),'processes_changed');same(observed,expected,'processes_changed');
+}
 function runtime(){
  need(fs.statSync('/root/.pm2/rpc.sock').isSocket(),'pm2');
  const result=spawnSync('pm2',['jlist'],{encoding:'utf8',timeout:15000,maxBuffer:8*1024**2});need(result.status===0&&!result.error,'pm2_read');
  const rows=JSON.parse(result.stdout).map(row=>{
-  const p=row.pid;const ticks=p>0?fs.readFileSync('/proc/'+p+'/stat','utf8').split(')').slice(1).join(')').trim().split(/\s+/)[19]:null;
+  const p=templateProcessPid(row);const ticks=p>0?fs.readFileSync('/proc/'+p+'/stat','utf8').split(')').slice(1).join(')').trim().split(/\s+/)[19]:null;
   const bytes=p>0?fs.readFileSync('/proc/'+p+'/environ'):null;
   if(bytes&&(row.name==='merchant-space-online-'+TEMPLATE_BASELINE.slice(0,12)||row.name==='merchant-space-booking-atomic-f274ad615550')){
    const env=Object.fromEntries(bytes.toString().split('\0').filter(Boolean).map(v=>{const at=v.indexOf('=');return[v.slice(0,at),v.slice(at+1)];}));
@@ -57,7 +75,7 @@ function runtime(){
    if(row.name.startsWith('merchant-space-booking-atomic-'))assertBookingAtomicWorkerEnvironment(env);
    else need(env.MERCHANT_BOOKING_NOTIFICATION_WORKER_ENABLED==='0','web_worker_not_paused');
   }
-  return {name:row.name,id:row.pm_id,pid:p,status:row.pm2_env.status,ticks,environmentSha256:bytes?templateHash(bytes):null};
+  return templateProcessIdentity(row,{ticks,environmentSha256:bytes?templateHash(bytes):null});
  }).sort((a,b)=>a.id-b.id);
  need(rows.some(r=>r.name==='merchant-space-online-'+TEMPLATE_BASELINE.slice(0,12)&&r.status==='online'&&r.pid>0),'live_process');return rows;
 }
@@ -98,7 +116,7 @@ export async function templateMigrationMain(mode,report){
  }
  return locked(async()=>{
   source();const before=templatePrivateJson(directory+'/before.json');need(before.target===revision,'target');
-  need(fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8')===before.bootId,'boot_changed');same(baseline(),before.active,'active_changed');same(runtime(),before.processes,'processes_changed');
+  need(fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8')===before.bootId,'boot_changed');same(baseline(),before.active,'active_changed');assertTemplateProcessesUnchanged(before.processes,runtime());
   if(mode==='apply'){
    const current=observe();assertTemplateDatabaseObservation(current,evidence);
    same(current.registry,before.state.registry,'registry_changed');same(current.function,before.state.function,'function_changed');
@@ -113,7 +131,7 @@ export async function templateMigrationMain(mode,report){
    table:state.templateTable,createdRowCount:0,businessDataWritten:false,mailEnabled:false,processesUnchanged:true,at:new Date().toISOString()};
   assertTemplateDatabaseObservation(state,evidence,receipt);
   need(templateQuery('begin read only;select count(*) from public.website_templates;commit;')==='0','new_table_not_empty');
-  same(runtime(),before.processes,'processes_changed');same(baseline(),before.active,'active_changed');
+  assertTemplateProcessesUnchanged(before.processes,runtime());same(baseline(),before.active,'active_changed');
   const applyFile=directory+'/applied.json';
   if(!fs.existsSync(applyFile))write(applyFile,receipt);
   else {const saved=templatePrivateJson(applyFile);same({...saved,at:receipt.at},receipt,'receipt_conflict');}
