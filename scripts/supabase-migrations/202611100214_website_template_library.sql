@@ -17,7 +17,7 @@ create table if not exists public.website_templates (
   updated_at timestamptz not null default clock_timestamp()
 );
 alter table public.website_templates enable row level security;
-revoke all on public.website_templates from public, anon, authenticated;
+revoke all on public.website_templates from public, anon, authenticated, service_role;
 grant select, insert, update, delete on public.website_templates to service_role;
 create index if not exists website_templates_catalog_idx on public.website_templates(status, sort_order, updated_at desc);
 comment on table public.website_templates is 'Admin-managed immutable-by-copy website designs; merchant API is read-only. No live relationship to merchant drafts.';

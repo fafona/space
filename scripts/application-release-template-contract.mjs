@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
 export const TEMPLATE_SCHEMA=Object.freeze({kind:'already-applied-website-template-table-v1',version:'202611100214',name:'website_template_library',
  file:'scripts/supabase-migrations/202611100214_website_template_library.sql',
- sha256:'339660d414bb96b5509cb933e78118507c6c3000e9c7e2afde5c765a152de86a',
+ sha256:'20c7c9b3760e57e9de2ed56291db4f54f9dd844fcb6d9475009277c6a4f88db4',
  databaseExecution:'forbidden'});
 export const TEMPLATE_BASELINE='37fe3c3b8220c73090ba953c7d046a63a5ab1bfc';
 export const templateNeed=(value,reason)=>{if(!value)throw Error('application_template_'+reason);};

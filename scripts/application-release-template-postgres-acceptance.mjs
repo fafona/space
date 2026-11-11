@@ -24,6 +24,7 @@ export function runTemplatePostgresAcceptance(env=process.env,args=process.argv.
  const sql=fs.readFileSync(new URL('./supabase-migrations/202611100214_website_template_library.sql',import.meta.url));
  const registry=Array.from({length:212},(_,i)=>({version:i===211?'202611050213':String(202600000000+i),name:'synthetic_'+i}));
  query(`grant usage,create on schema public to supabase_admin;grant usage on schema public to anon,authenticated,service_role;
+ alter default privileges for role supabase_admin in schema public grant all on tables to postgres,anon,authenticated,service_role;
  set role supabase_admin;create table public.faolla_schema_migrations(version bigint primary key,name text not null);
  insert into public.faolla_schema_migrations select (r->>'version')::bigint,r->>'name' from jsonb_array_elements('${JSON.stringify(registry)}'::jsonb)r;
  create table public.template_protected(id integer primary key,value text);insert into public.template_protected values(1,'unchanged');`,database);
