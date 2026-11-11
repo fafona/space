@@ -8,6 +8,11 @@ function record(value: unknown): Record<string, unknown> | null {
 function validDate(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const data = record(value);
+  return data ? `{${Object.keys(data).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(data[key])}`).join(",")}}` : JSON.stringify(value);
+}
 
 /** Only server-confirmed amounts enter recovery, notifications or printing. */
 export function readCashierCheckoutReceipt(value: unknown, siteId: string, operationId?: string): MerchantRedemptionCheckoutReceipt {
@@ -56,16 +61,20 @@ export function cashierCheckoutBlocksNewSale(phase: "checking" | "ready" | "erro
   return phase !== "ready" || Boolean(checkout && !checkout.acknowledgedAt);
 }
 
-/** A complete pending cart is the normal cashier, not a recovery notice.
- * Presentation is independent of the original fail-closed checkout gate. */
-export function cashierCheckoutRecoveryNoticeVisible(
-  phase: "checking" | "ready" | "error" | null,
-  checkout: MerchantRedemptionCheckoutSummary | null,
-  busy: boolean,
+/** Acknowledgement closes only an already terminal operation. Never infer it
+ * from a missing checkout, a pending response or a different operation. */
+export function readCashierCheckoutAcknowledgement(
+  payload: unknown,
+  siteId: string,
+  original: MerchantRedemptionCheckoutSummary,
 ) {
-  return phase !== null && phase !== "checking" &&
-    !(phase === "ready" && checkout?.status === "pending" && checkout.pendingCart) &&
-    (cashierCheckoutBlocksNewSale(phase, checkout) || busy);
+  const checkout = readCashierCheckoutSummary(payload, siteId);
+  if (original.status === "pending" || !checkout || !checkout.acknowledgedAt ||
+    checkout.operationId !== original.operationId || checkout.status !== original.status ||
+    canonicalJson(checkout.result) !== canonicalJson(original.result)) {
+    throw new Error("redemption_checkout_response_invalid");
+  }
+  return checkout;
 }
 
 /** A claim represents one voucher, even when that voucher contains several products. */

@@ -23,13 +23,13 @@ import { createClientMutationOperationId } from "@/lib/mutationOperationId";
 import type { MerchantRedemptionCheckoutReceipt, MerchantRedemptionCheckoutSummary } from "@/lib/merchantRedemptionCheckout";
 import {
   cashierCheckoutBlocksNewSale,
-  cashierCheckoutRecoveryNoticeVisible,
   cashierCheckoutErrorAfterRecovery,
   cashierCheckoutPrintReceipt,
   cashierCheckoutRequestQuantity,
   cashierCouponQuantityLabel,
   createCashierCheckoutRequestGuard,
   readCashierCheckoutReceipt,
+  readCashierCheckoutAcknowledgement,
   readCashierCheckoutSummary,
 } from "@/lib/merchantRedemptionCheckoutRecovery";
 import { fetchWithAdminPerformance } from "@/lib/performanceTelemetry";
@@ -880,11 +880,14 @@ export default function MerchantPointRedemptionCashier({
   checkoutRecoveryGuardRef.current.setScope(checkoutScope);
   const checkoutRecoveryActionRef = useRef(false);
   const checkoutRecoveryFailureRef = useRef<{ operationId: string; message: string } | null>(null);
+  const checkoutPresentedReceiptRef = useRef("");
+  const [lastConfirmedCheckout, setLastConfirmedCheckout] = useState<{ scope: object; receipt: MerchantRedemptionCheckoutReceipt } | null>(null);
   const checkoutRecoveryScopeRef = useRef<object | null>(checkoutScope);
   checkoutRecoveryScopeRef.current = checkoutScope;
   const activeCheckoutRecovery = checkoutRecovery.scope === checkoutScope ? checkoutRecovery : null;
   const checkoutRecoveryBlocksNewSale = !activeCheckoutRecovery || cashierCheckoutBlocksNewSale(activeCheckoutRecovery.phase, activeCheckoutRecovery.checkout);
   const visibleCheckout = activeCheckoutRecovery?.phase === "ready" ? activeCheckoutRecovery.checkout : null;
+  const lastConfirmedReceipt = lastConfirmedCheckout?.scope === checkoutScope ? lastConfirmedCheckout.receipt : null;
   const hasPendingCheckout = activeCheckoutRecovery?.checkout?.status === "pending";
   const pendingCheckoutCart = hasPendingCheckout ? activeCheckoutRecovery.checkout?.pendingCart : undefined;
   const [memberships, setMemberships] = useState<MerchantMembershipListItem[]>([]);
@@ -1901,11 +1904,57 @@ export default function MerchantPointRedemptionCashier({
     }
   }, [canCheckoutRedemptions, normalizedSiteId, requestRedemptionApi, checkoutScope]);
 
+  const finishTerminalCheckout = useCallback(async (checkout: MerchantRedemptionCheckoutSummary) => {
+    if (!canCheckoutRedemptions || checkout.status === "pending" || checkout.acknowledgedAt ||
+      checkoutRecoveryActionRef.current || checkoutSubmittingRef.current) return;
+    const scope = checkoutScope;
+    const ticket = checkoutRecoveryGuardRef.current.begin();
+    checkoutRecoveryActionRef.current = true;
+    setCheckoutRecoveryBusy(true);
+    // A lost response can leave the submitted draft on screen. Clear only that
+    // operation, once; do not erase a new draft composed after a known success.
+    if (checkout.result) {
+      setLastConfirmedCheckout({ scope, receipt: checkout.result });
+      if (checkoutMutationRef.current.operationId === checkout.operationId && checkoutPresentedReceiptRef.current !== checkout.operationId) {
+        checkoutPresentedReceiptRef.current = checkout.operationId;
+        setCart([]); setNote("");
+        setNotice(`原结算已完成：扣减 ${formatPoints(checkout.result.totalPoints)} 积分，核销 ${checkout.result.couponCount} 张卡券。`);
+        void loadData(true, { silent: true });
+      }
+    }
+    try {
+      const response = await requestRedemptionApi("/api/merchant-admin/redemption-checkout", {
+        method: "POST", credentials: "same-origin", cache: "no-store",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ siteId: normalizedSiteId, operationId: checkout.operationId, action: "ack" }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!checkoutRecoveryGuardRef.current.isCurrent(ticket)) return;
+      if (!response.ok) throw new Error(operationErrorMessage(payload?.message ?? payload?.error, "结算状态同步失败，请重试。"));
+      readCashierCheckoutAcknowledgement(payload, normalizedSiteId, checkout);
+      setCheckoutRecovery({ scope, phase: "ready", checkout: null, message: "" });
+      if (checkoutMutationRef.current.operationId === checkout.operationId) checkoutMutationRef.current = { fingerprint: "", operationId: "" };
+      const failedMutation = checkoutRecoveryFailureRef.current;
+      setError((current) => cashierCheckoutErrorAfterRecovery(current, checkout, failedMutation));
+    } catch (syncError) {
+      if (checkoutRecoveryGuardRef.current.isCurrent(ticket)) {
+        setCheckoutRecovery({ scope, phase: "error", checkout,
+          message: operationErrorMessage(syncError instanceof Error ? syncError.message : "", "结算状态同步失败，请重试。") });
+      }
+    } finally {
+      if (checkoutRecoveryScopeRef.current === scope) {
+        checkoutRecoveryActionRef.current = false; setCheckoutRecoveryBusy(false);
+      }
+    }
+  }, [canCheckoutRedemptions, checkoutScope, loadData, normalizedSiteId, requestRedemptionApi]);
+
   useEffect(() => {
     const guard = checkoutRecoveryGuardRef.current;
     checkoutRecoveryScopeRef.current = checkoutScope;
     checkoutRecoveryActionRef.current = false;
     checkoutRecoveryFailureRef.current = null;
+    checkoutPresentedReceiptRef.current = "";
+    setLastConfirmedCheckout(null);
     checkoutSubmittingRef.current = false;
     checkoutPreflightRef.current = false;
     checkoutMutationRef.current = { fingerprint: "", operationId: "" };
@@ -1919,6 +1968,12 @@ export default function MerchantPointRedemptionCashier({
     void refreshCheckoutRecovery();
     return () => { guard.invalidate(); checkoutRecoveryScopeRef.current = null; };
   }, [checkoutScope, refreshCheckoutRecovery]);
+
+  useEffect(() => {
+    if (view === "cashier" && visibleCheckout && visibleCheckout.status !== "pending" && !checkoutRecoveryBusy && !saving) {
+      void finishTerminalCheckout(visibleCheckout);
+    }
+  }, [view, visibleCheckout, checkoutRecoveryBusy, saving, finishTerminalCheckout]);
 
   useEffect(() => {
     const restore = () => {
@@ -2940,6 +2995,8 @@ export default function MerchantPointRedemptionCashier({
     scope: object,
   ) {
     if (checkoutRecoveryScopeRef.current !== scope) return;
+    checkoutPresentedReceiptRef.current = receipt.operationId;
+    setLastConfirmedCheckout({ scope, receipt });
     setCheckoutRecovery({ scope, phase: "ready", message: "", checkout: {
       operationId: receipt.operationId, status: "committed", createdAt: receipt.createdAt, acknowledgedAt: null, result: receipt,
     } });
@@ -2952,13 +3009,13 @@ export default function MerchantPointRedemptionCashier({
       if (selectedMemberIdRef.current === receipt.membershipId) { selectedMemberIdRef.current = ""; setSelectedMemberId(""); }
     }
     setCart([]); setNote("");
-    setNotice(`原结算已完成：扣减 ${formatPoints(receipt.totalPoints)} 积分，核销 ${receipt.couponCount} 张卡券。请确认后开始下一单。`);
+    setNotice(`原结算已完成：扣减 ${formatPoints(receipt.totalPoints)} 积分，核销 ${receipt.couponCount} 张卡券。`);
   }
 
-  async function handleCheckoutRecoveryAction(action: "retry" | "cancel" | "ack") {
+  async function handleCheckoutRecoveryAction(action: "retry" | "cancel") {
     const checkout = visibleCheckout;
     if (!canCheckoutRedemptions || !checkout || checkoutRecoveryActionRef.current || checkoutSubmittingRef.current) return;
-    if (action === "ack" ? checkout.status === "pending" : checkout.status !== "pending") return;
+    if (checkout.status !== "pending") return;
     if (action === "retry" && !pendingCheckoutCart) {
       setError("原单商品明细尚未读取成功，请先重新读取结算状态。");
       return;
@@ -2980,23 +3037,15 @@ export default function MerchantPointRedemptionCashier({
         if (typeof payload.replayed !== "boolean") throw new Error("redemption_checkout_response_invalid");
         const receipt = readCashierCheckoutReceipt(payload.receipt, normalizedSiteId, checkout.operationId);
         acceptConfirmedCheckout(receipt, payload.membership ?? null, scope);
-        // Recovery/replay never automatically prints or acknowledges a result.
+        // Recovery/replay never automatically prints or repeats a financial write.
         void loadData(true, { silent: true });
       } else {
         const result = readCashierCheckoutSummary(payload, normalizedSiteId);
         if (result && result.operationId !== checkout.operationId) throw new Error("redemption_checkout_response_invalid");
-        if (action === "ack") {
-          if (result && (!result.acknowledgedAt || result.status === "pending")) throw new Error("redemption_checkout_response_invalid");
-          setCheckoutRecovery({ scope, phase: "ready", checkout: null, message: "" });
-          checkoutMutationRef.current = { fingerprint: "", operationId: "" };
-          setCart([]); setNote(""); setNotice("原单已确认，可以开始下一单。");
-        } else {
-          if (!result || result.acknowledgedAt) throw new Error("redemption_checkout_response_invalid");
-          setCheckoutRecovery({ scope, phase: "ready", checkout: result, message: "" });
-          setNotice(result.status === "committed"
-            ? "原结算已经完成，未取消、未撤销任何扣减。请核对原单结果后确认。"
-            : result.status === "cancelled" ? "尚未完成的原结算已放弃。请确认后开始下一单。" : "原结算仍待处理，请重新核对。");
-        }
+        if (!result || result.acknowledgedAt) throw new Error("redemption_checkout_response_invalid");
+        setCheckoutRecovery({ scope, phase: "ready", checkout: result, message: "" });
+        if (result.status !== "pending") { setCart([]); setNote(""); }
+        if (result.status === "committed") setNotice("原结算已经完成，未取消、未撤销任何扣减。");
       }
     } catch (recoveryError) {
       if (checkoutRecoveryGuardRef.current.isCurrent(ticket)) {
@@ -5456,20 +5505,8 @@ export default function MerchantPointRedemptionCashier({
           text-align: center;
         }
 
-        .merchant-pos-cashier .checkout-recovery {
-          margin: 0 0 18px;
-          padding: 18px 20px;
-          border: 1px solid #9ab6df;
-          border-left: 5px solid var(--pos-primary);
-          border-radius: 14px;
-          background: #eff5ff;
-        }
-        .merchant-pos-cashier .checkout-recovery h3 { margin: 0 0 8px; font-size: 17px; }
-        .merchant-pos-cashier .checkout-recovery p { margin: 6px 0; }
-        .merchant-pos-cashier .checkout-recovery .recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-        .merchant-pos-cashier .checkout-recovery .recovery-result { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 10px 0; }
-        .merchant-pos-cashier .checkout-recovery .recovery-result strong { font-size: 20px; color: var(--pos-primary-dark); }
-        .merchant-pos-cashier .checkout-recovery .recovery-error { color: #a8251a; }
+        .merchant-pos-cashier .checkout-inline-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; font-size: 13px; color: var(--pos-muted); }
+        .merchant-pos-cashier .checkout-inline-status.is-error { color: #a8251a; }
 
         @media (max-width: 720px) {
           .merchant-pos-cashier .panel-heading.compact { grid-template-columns: minmax(0, 1fr); }
@@ -5574,38 +5611,6 @@ export default function MerchantPointRedemptionCashier({
           </div>
         </div>
       </div>
-
-      {view === "cashier" && canCheckoutRedemptions && cashierCheckoutRecoveryNoticeVisible(activeCheckoutRecovery?.phase ?? null, visibleCheckout, checkoutRecoveryBusy) ? (
-        <section className="checkout-recovery" aria-label="原结算恢复" aria-busy={checkoutRecoveryBusy || activeCheckoutRecovery?.phase === "checking"}>
-          <h3>{activeCheckoutRecovery?.phase === "error" ? "新结算已暂停" :
-            visibleCheckout?.status === "pending" ? "有一笔原结算等待处理" : visibleCheckout?.status === "committed" ? "原结算已完成，等待确认" : "原结算已放弃，等待确认"}</h3>
-          {activeCheckoutRecovery?.message ? <p role="alert" className="recovery-error">{activeCheckoutRecovery.message}</p> : null}
-          {visibleCheckout ? <p>结算编号：{visibleCheckout.operationId} · {new Date(visibleCheckout.createdAt).toLocaleString()}</p> : null}
-          {visibleCheckout?.status === "pending" ? <p>原单商品保留在下方购物车。继续结算沿用原会员、原商品和原结算编号，仍需通过余额、库存与权限检查。</p> : null}
-          {visibleCheckout?.status === "pending" ? <p>放弃仅针对尚未完成的原单；若已经完成，将显示原结果，不会撤销扣减。</p> : null}
-          {visibleCheckout?.result ? <div className="recovery-result" aria-label="服务器确认的原单金额">
-            <span>原单扣减 <strong>{formatPoints(visibleCheckout.result.totalPoints)}</strong> 积分</span>
-            <span>积分券抵扣 {formatPoints(visibleCheckout.result.couponPointDiscountTotal)}</span>
-            <span>原单余额 {formatPoints(visibleCheckout.result.beforePointBalance)} → {formatPoints(visibleCheckout.result.afterPointBalance)}</span>
-            <span>核销卡券 {visibleCheckout.result.couponCount} 张</span>
-          </div> : null}
-          {error && activeCheckoutRecovery?.phase === "ready" ? <p role="alert" className="recovery-error">{error}</p> : null}
-          <div className="recovery-actions">
-            <button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy || activeCheckoutRecovery?.phase === "checking"}
-              onClick={() => void refreshCheckoutRecovery()}>重新读取结算状态</button>
-            {visibleCheckout?.status === "pending" ? <>
-              <button type="button" className="el-button el-button--primary" disabled={checkoutRecoveryBusy || !pendingCheckoutCart}
-                onClick={() => void handleCheckoutRecoveryAction("retry")}>核对/重试原结算</button>
-              <button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy}
-                onClick={() => void handleCheckoutRecoveryAction("cancel")}>放弃尚未完成的原结算</button>
-            </> : null}
-            {visibleCheckout && visibleCheckout.status !== "pending" ? <button type="button" className="el-button el-button--primary" disabled={checkoutRecoveryBusy}
-              onClick={() => void handleCheckoutRecoveryAction("ack")}>确认并开始下一单</button> : null}
-            {canPrint && visibleCheckout?.result ? <button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy}
-              onClick={() => { if (visibleCheckout.result) void printConfirmedCheckout(visibleCheckout.result, checkoutScope, true); }}>重打原单小票</button> : null}
-          </div>
-        </section>
-      ) : null}
 
       {view === "records" || view === "rechargeRecords" ? (
         <>
@@ -6305,8 +6310,18 @@ export default function MerchantPointRedemptionCashier({
                 value={hasPendingCheckout ? "" : note}
                 readOnly={hasPendingCheckout}
                 onChange={(event) => setNote(event.target.value)}
-                placeholder="兑换备注，例如：前台积分兑换"
+                placeholder={hasPendingCheckout ? "继续结算沿用原单备注" : "兑换备注，例如：前台积分兑换"}
               />
+              {activeCheckoutRecovery?.phase === "error" ? <div className="checkout-inline-status is-error" role="alert">
+                <span>{activeCheckoutRecovery.message}</span>
+                <button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy}
+                  onClick={() => void refreshCheckoutRecovery()}>重试</button>
+              </div> : null}
+              {lastConfirmedReceipt ? <div className="checkout-inline-status" aria-label="服务器确认的原单金额">
+                <span>上笔已结算 {formatPoints(lastConfirmedReceipt.totalPoints)} 积分；余额 {formatPoints(lastConfirmedReceipt.afterPointBalance)}</span>
+                {canPrint ? <button type="button" className="el-button el-button--default" disabled={checkoutRecoveryBusy}
+                  onClick={() => void printConfirmedCheckout(lastConfirmedReceipt, checkoutScope, true)}>重打原单小票</button> : null}
+              </div> : null}
               {hasPendingCheckout && error && activeCheckoutRecovery?.phase === "ready" ?
                 <p role="alert" style={{ color: "#a8251a", fontSize: 13, marginTop: 8 }}>{error}</p> : null}
             </div>

@@ -3,9 +3,8 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
   cashierCheckoutBlocksNewSale, cashierCheckoutErrorAfterRecovery, cashierCheckoutPrintReceipt, createCashierCheckoutRequestGuard,
-  cashierCheckoutRecoveryNoticeVisible,
   cashierCheckoutRequestQuantity, cashierCouponQuantityLabel,
-  readCashierCheckoutReceipt, readCashierCheckoutSummary,
+  readCashierCheckoutReceipt, readCashierCheckoutSummary, readCashierCheckoutAcknowledgement,
 } from "./merchantRedemptionCheckoutRecovery";
 
 const receipt = {
@@ -17,22 +16,15 @@ const receipt = {
 };
 const pending = { operationId: receipt.operationId, status: "pending", createdAt: receipt.createdAt, acknowledgedAt: null, result: null };
 
-test("ordinary background recovery checks show no notice while the original checkout gate stays closed", () => {
-  for (const busy of [false, true]) {
-    assert.equal(cashierCheckoutRecoveryNoticeVisible(null, null, busy), false);
-    assert.equal(cashierCheckoutRecoveryNoticeVisible("checking", null, busy), false);
-  }
+test("ordinary background checks keep the original checkout gate closed", () => {
   assert.equal(cashierCheckoutBlocksNewSale("checking", null), true);
-  assert.equal(cashierCheckoutRecoveryNoticeVisible("ready", null, false), false);
   assert.equal(cashierCheckoutBlocksNewSale("ready", null), false);
 });
 
-test("failed checks and unacknowledged original checkouts still show actionable recovery", () => {
-  assert.equal(cashierCheckoutRecoveryNoticeVisible("error", null, false), true);
+test("failed checks and unacknowledged originals still block a new financial operation", () => {
   assert.equal(cashierCheckoutBlocksNewSale("error", null), true);
   for (const status of ["pending", "committed", "cancelled"]) {
     const checkout = readCashierCheckoutSummary({ ok: true, checkout: { ...pending, status, result: status === "committed" ? receipt : null } }, receipt.siteId);
-    assert.equal(cashierCheckoutRecoveryNoticeVisible("ready", checkout, false), true);
     assert.equal(cashierCheckoutBlocksNewSale("ready", checkout), true);
   }
 });
@@ -42,10 +34,32 @@ test("an intact pending cart keeps the original cashier layout without a recover
     version: 1, siteId: receipt.siteId, operationId: receipt.operationId,
     quote: { totalQuantity: 1, grossPoints: 90, couponPointDiscountTotal: 10, totalPoints: 80, couponCount: 1, lines: receipt.lines },
   } } }, receipt.siteId);
-  for (const busy of [false, true]) assert.equal(cashierCheckoutRecoveryNoticeVisible("ready", checkout, busy), false);
-  assert.equal(cashierCheckoutRecoveryNoticeVisible("error", checkout, false), true);
+  assert.equal(cashierCheckoutBlocksNewSale("error", checkout), true);
   assert.equal(cashierCheckoutBlocksNewSale("ready", checkout), true);
   assert.doesNotMatch(cashierSource, /待结算原单|原单会员积分|原单待扣积分|继续原单结算|pending-sale-summary/);
+});
+
+test("terminal acknowledgement must prove the same original outcome before unlocking the cashier", () => {
+  for (const status of ["committed", "cancelled"] as const) {
+    const original = readCashierCheckoutSummary({ ok: true, checkout: { ...pending, status, result: status === "committed" ? receipt : null } }, receipt.siteId)!;
+    const acknowledged = { ...original, acknowledgedAt: receipt.createdAt };
+    assert.equal(cashierCheckoutBlocksNewSale("ready", readCashierCheckoutAcknowledgement({ ok: true, checkout: acknowledged }, receipt.siteId, original)), false);
+    for (const checkout of [null, original, { ...acknowledged, operationId: "another-operation" },
+      { ...acknowledged, status: "pending" }, { ...acknowledged, status: status === "committed" ? "cancelled" : "committed" }]) {
+      assert.throws(() => readCashierCheckoutAcknowledgement({ ok: true, checkout }, receipt.siteId, original));
+    }
+    if (status === "committed") {
+      // A new checkout response carries receipt time; the context itself was
+      // staged earlier. Their timestamps are not operation identity.
+      assert.doesNotThrow(() => readCashierCheckoutAcknowledgement({ ok: true, checkout: { ...acknowledged, createdAt: "2026-09-08T09:59:00.000Z" } }, receipt.siteId, original));
+      assert.throws(() => readCashierCheckoutAcknowledgement({ ok: true, checkout: { ...acknowledged, result: { ...receipt, totalPoints: 79 } } }, receipt.siteId, original));
+      const reorderedReceipt = Object.fromEntries(Object.entries(receipt).reverse());
+      assert.doesNotThrow(() => readCashierCheckoutAcknowledgement({ ok: true, checkout: { ...acknowledged, result: reorderedReceipt } }, receipt.siteId, original));
+    }
+    assert.throws(() => readCashierCheckoutAcknowledgement({ ok: false, checkout: acknowledged }, receipt.siteId, original));
+  }
+  const unfinished = readCashierCheckoutSummary({ ok: true, checkout: pending }, receipt.siteId)!;
+  assert.throws(() => readCashierCheckoutAcknowledgement({ ok: true, checkout: { ...pending, status: "cancelled", acknowledgedAt: receipt.createdAt } }, receipt.siteId, unfinished));
 });
 
 test("loading or failed recovery and all unacknowledged results block new checkout", () => {
@@ -134,9 +148,9 @@ test("recovery helper never persists financial requests or reads browser storage
 
 const cashierSource = readFileSync(new URL("../components/admin/MerchantPointRedemptionCashier.tsx", import.meta.url), "utf8");
 
-test("cashier notice uses presentation-only visibility; routine checking no longer renders the large banner", () => {
-  assert.match(cashierSource, /cashierCheckoutRecoveryNoticeVisible\(activeCheckoutRecovery\?\.phase \?\? null, visibleCheckout, checkoutRecoveryBusy\)/);
-  assert.doesNotMatch(cashierSource, /正在核对原结算|请稍候，正在读取当前账号的未确认结算/);
+test("the normal cashier contains no recovery banner or extra manual acknowledgement step", () => {
+  assert.doesNotMatch(cashierSource, /checkout-recovery|aria-label="原结算恢复"|确认并开始下一单|等待确认|正在核对原结算/);
+  assert.match(cashierSource, /checkout-inline-status is-error/);
   assert.match(cashierSource, /const checkoutRecoveryBlocksNewSale = !activeCheckoutRecovery \|\| cashierCheckoutBlocksNewSale/);
   assert.match(cashierSource, /!checkoutRecoveryBlocksNewSale &&\s*!checkoutRecoveryBusy/);
 });
@@ -152,7 +166,18 @@ test("recovery actions send only the original operation ID and never use current
   assert.match(actions, /JSON\.stringify\(\{ siteId: normalizedSiteId, operationId: checkout\.operationId, action \}\)/);
   assert.doesNotMatch(actions, /cartRows|selectedInsight|stock|totalPoints|createClientMutationOperationId|printConfirmedCheckout/);
   assert.match(actions, /acceptConfirmedCheckout\(receipt, payload\.membership \?\? null, scope\)/);
-  assert.match(actions, /if \(action === "ack"\)/);
+  assert.doesNotMatch(actions, /action === "ack"/);
+});
+
+test("background terminal sync never retries or cancels a checkout, and failures stay closed without a retry loop", () => {
+  const sync = section("const finishTerminalCheckout = useCallback", "useEffect(() => {\n    const guard = checkoutRecoveryGuardRef.current");
+  assert.match(sync, /checkout.status === "pending"/);
+  assert.match(sync, /action: "ack"/);
+  assert.match(sync, /readCashierCheckoutAcknowledgement\(payload, normalizedSiteId, checkout\)/);
+  assert.match(sync, /phase: "error", checkout/);
+  assert.match(sync, /isCurrent\(ticket\)/);
+  assert.doesNotMatch(sync, /action: "retry"|action: "cancel"|createClientMutationOperationId|printConfirmedCheckout|refreshCheckoutRecovery\(/);
+  assert.match(sync, /checkoutMutationRef.current.operationId === checkout.operationId && checkoutPresentedReceiptRef.current !== checkout.operationId/);
 });
 
 test("new checkout is recovery-gated and includes preflight mutual exclusion and scoped response checks", () => {
@@ -190,8 +215,8 @@ test("success and printing use verified server receipt, while replay never autom
   assert.match(submit, /readCashierCheckoutReceipt\(payload\.receipt, normalizedSiteId, operationId\)/);
   assert.match(submit, /if \(canPrint && !payload\.replayed\) void printConfirmedCheckout/);
   assert.doesNotMatch(submit, /receiptBeforePointBalance|receiptCreatedAt|receiptLines|afterPointBalance: updatedMembership/);
-  assert.match(cashierSource, /canPrint && visibleCheckout\?\.result/);
-  assert.match(cashierSource, /确认并开始下一单/);
+  assert.match(cashierSource, /printConfirmedCheckout\(lastConfirmedReceipt, checkoutScope, true\)/);
+  assert.doesNotMatch(cashierSource, /确认并开始下一单/);
 });
 
 test("the synthetic browser harness is opt-in and uses no production business client", () => {
