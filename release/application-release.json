@@ -184,6 +184,18 @@
       ]
     },
     {
+      "file": "scripts/online-unpublished-candidate.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "2ac7014ba2f137663710ee87951b564dc07a332e"
+      ],
+      "after": [
+        "100644",
+        "654a88e17c1e975b55b7f1b5f6f4c98d24e210ce"
+      ]
+    },
+    {
       "file": "scripts/redemption-pending-cart-browser-acceptance.mjs",
       "role": "verification",
       "before": [
@@ -482,7 +494,8 @@
     "scripts/application-release-template.test.mjs",
     "scripts/application-release-compatibility.test.mjs",
     "scripts/application-release-policy.test.mjs",
-    "scripts/ci-workflow-contract.test.mjs"
+    "scripts/ci-workflow-contract.test.mjs",
+    "scripts/online-unpublished-candidate.test.mjs"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
