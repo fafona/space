@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "732a0a4b60f4d7ce497bae06f5b2740da0071b3b",
-  "purpose": "Rename the merchant library card action to Preview while preserving preview, copy and publication behavior",
+  "purpose": "Rename the template preview action and synchronize only the existing partial-frame test fixture, with unchanged production transport and business logic",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -22,6 +22,18 @@
       ]
     },
     {
+      "file": "scripts/deploy-production-contract.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "ee804a262eb16a99cfa007f04927cfeed1a4bbff"
+      ],
+      "after": [
+        "100644",
+        "7d78fb6f023acd122c9a36a51c4c775dcc21d579"
+      ]
+    },
+    {
       "file": "src/components/admin/WebsiteTemplateLibrary.tsx",
       "role": "application",
       "before": [
@@ -38,7 +50,8 @@
     "src/lib/websiteTemplateLibrary.test.ts",
     "src/lib/websiteTemplateRoutes.server.test.ts",
     "src/lib/websiteTemplateHomeSnapshots.test.ts",
-    "src/lib/websiteTemplateHomeSnapshots.server.test.ts"
+    "src/lib/websiteTemplateHomeSnapshots.server.test.ts",
+    "scripts/deploy-production-contract.test.mjs"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
