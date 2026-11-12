@@ -26,10 +26,10 @@ import {
   type MerchantIndustryTabIndustry,
   type MerchantIndustryTabInput,
 } from "@/lib/merchantIndustryTabs";
-import { buildMerchantFrontendHref } from "@/lib/siteRouting";
+import { buildDirectMerchantWebsiteHref } from "@/lib/publicWebsiteNavigation";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText, resolveLocalizedSystemDefaultText } from "@/lib/editorSystemDefaults";
-import { isFaollaAppShellSearch, preserveFaollaAppShellHref } from "@/lib/faollaEntry";
+import { isFaollaAppShellSearch } from "@/lib/faollaEntry";
 import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
@@ -824,17 +824,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                   ? Math.max(0, Math.min(1, site.merchantCardImageOpacity))
                   : 1;
               const hasMerchantCardImage = merchantCardImageUrl.length > 0;
-              const baseMerchantHref = buildMerchantFrontendHref(
-                site.id,
-                site.domainPrefix ?? site.domainSuffix ?? site.domain,
-              );
-              const merchantHref = faollaAppShell
-                ? preserveFaollaAppShellHref(
-                    baseMerchantHref,
-                    locale,
-                    typeof window !== "undefined" ? window.location.origin : undefined,
-                  )
-                : baseMerchantHref;
+              const merchantHref = buildDirectMerchantWebsiteHref(site.id, locale, site.domainPrefix ?? site.domainSuffix ?? site.domain);
               const useNativeMerchantNavigation = faollaAppShell || /^https?:\/\//i.test(merchantHref);
               const merchantCardClassName = `absolute block rounded-xl p-4 overflow-auto hover:brightness-[0.98] ${getBlockBorderClass(
                 styleConfig.borderStyle,
@@ -893,6 +883,7 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
                   <a
                     key={site.id}
                     href={merchantHref}
+                    target="_top"
                     className={merchantCardClassName}
                     style={merchantCardInlineStyle}
                   >

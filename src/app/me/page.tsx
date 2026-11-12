@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
 import dynamic from "next/dynamic";
+import DeferredFaollaFrame from "@/components/admin/DeferredFaollaFrame";
+import { cleanPublicWebsiteReturnUrl, readPublicWebsiteWorkspaceSection } from "@/lib/publicWebsiteNavigation";
 import Link from "next/link";
 import AccountSwitcherDialog from "@/components/AccountSwitcherDialog";
 import FaollaQrPanel from "@/components/FaollaQrPanel";
@@ -2464,9 +2466,14 @@ export default function MePage() {
   );
   const [faollaEmbedHref, setFaollaEmbedHref] = useState(readInitialFaollaEmbedHref);
   const [isMobileViewport, setIsMobileViewport] = useState(readPersonalMobileViewport);
+  const [frameViewportReady, setFrameViewportReady] = useState(false);
+  const [publicWebsiteReturnHref, setPublicWebsiteReturnHref] = useState("");
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const syncViewport = () => setIsMobileViewport(readPersonalMobileViewport());
+    const syncViewport = () => {
+      setIsMobileViewport(readPersonalMobileViewport());
+      setFrameViewportReady(true);
+    };
     syncViewport();
     window.addEventListener("resize", syncViewport);
     window.visualViewport?.addEventListener("resize", syncViewport);
@@ -2527,6 +2534,20 @@ export default function MePage() {
     };
   }, []);
   const [mobileSelfLanguageMenuOpen, setMobileSelfLanguageMenuOpen] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setPublicWebsiteReturnHref(cleanPublicWebsiteReturnUrl(params.get("returnTo"), window.location.origin));
+    const section = readPublicWebsiteWorkspaceSection(window.location.search);
+    if (!section) return;
+    setDesktopSection(section);
+    if (section === "conversations" || section === "consumption") {
+      setMobileTab(section);
+      if (section === "consumption") setConsumptionSection("all");
+    } else {
+      setMobileTab("self");
+      setMobileSelfSection(section === "self" ? "home" : section);
+    }
+  }, []);
   const [conversationInfoOpen, setConversationInfoOpen] = useState(false);
   const [selectedConversationKey, setSelectedConversationKey] = useState<PersonalConversationKey>(OFFICIAL_CONVERSATION_KEY);
   const pendingQrConnectPeerRef = useRef("");
@@ -8848,6 +8869,7 @@ export default function MePage() {
               </div>
             </div>
 
+            {publicWebsiteReturnHref ? <a data-return-to-website href={publicWebsiteReturnHref} className="mt-4 block rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">← 返回商户网站</a> : null}
             <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
               <div className="grid gap-2">
                 {desktopMenuItems.map((item) => (
@@ -8886,19 +8908,21 @@ export default function MePage() {
               <div className="pointer-events-none absolute right-4 top-4 z-20 flex items-center gap-2">
                 {renderFaollaFavoriteButton("pointer-events-auto h-10 w-10")}
               </div>
-              <iframe
+              {frameViewportReady && !isMobileViewport ? <DeferredFaollaFrame
+                active={desktopSection === "faolla"}
                 ref={personalDesktopFaollaFrameRef}
                 title="Faolla"
                 src={desktopFaollaTargetHref}
                 onLoad={(event) => resetPersonalFaollaBackendFrame(event.currentTarget)}
                 className="absolute inset-0 h-full w-full border-0 bg-transparent"
-              />
+              /> : null}
             </div>
           </div>
         </section>
       </main>
 
       <main className="faolla-personal-mobile-shell fixed inset-x-0 top-0 bottom-0 z-[120] flex min-h-0 flex-col overflow-hidden overscroll-none bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_48%,#f8fafc_100%)] touch-manipulation md:hidden">
+        {publicWebsiteReturnHref ? <a data-return-to-website href={publicWebsiteReturnHref} className="m-2 block shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700">← 返回商户网站</a> : null}
         {renderMobileContent()}
         <div className={`support-preserve-light-surface relative min-h-0 flex-1 overflow-hidden bg-white ${mobileTab === "faolla" ? "" : "hidden"}`}>
           {faollaFavoriteToast ? (
@@ -8914,7 +8938,8 @@ export default function MePage() {
               </div>
             </div>
           ) : null}
-          <iframe
+          {frameViewportReady && isMobileViewport ? <DeferredFaollaFrame
+            active={mobileTab === "faolla"}
             ref={personalMobileFaollaFrameRef}
             title="Faolla"
             src={mobileFaollaTargetHref}
@@ -8922,7 +8947,7 @@ export default function MePage() {
             scrolling="yes"
             style={MOBILE_FAOLLA_FRAME_STYLE}
             className="absolute inset-0 h-full w-full border-0 bg-white"
-          />
+          /> : null}
         </div>
       </main>
       {mobileTab === "conversations" && mobileConversationView === "thread" ? null : (

@@ -10,5 +10,6 @@ export function readReviewedApplicationFixture(file){
  if(!entry)return readFileSync(new URL('../../'+file,import.meta.url),'utf8').replaceAll('\r\n','\n');
  const bytes=gunzipSync(Buffer.from(entry.gzipBase64,'base64'),{maxOutputLength:2*1024**2});
  if(bytes.length!==entry.bytes||createHash('sha256').update(bytes).digest('hex')!==entry.sha256||bytes.toString('utf8').includes('\r'))throw Error('reviewed_application_fixture_changed');
- return new TextDecoder('utf8',{fatal:true}).decode(bytes);
+ // Historical pins are byte-exact, including a UTF-8 BOM when present.
+ return new TextDecoder('utf8',{fatal:true,ignoreBOM:true}).decode(bytes);
 }

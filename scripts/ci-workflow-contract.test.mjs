@@ -379,6 +379,7 @@ test("real PM2 fixture pins its version, private home, exact daemon cleanup and 
 
 test("browser journeys use the lockfile-matched official Playwright image", () => {
   const browser = jobBlock("browser");
+  assert.match(browser, /name:\s*Direct Merchant Web Browser Journeys\s+run:\s*node --test --test-concurrency=1 scripts\/direct-merchant-web-browser-acceptance\.mjs/);
   const lockedVersion = lockfile.packages?.["node_modules/playwright"]?.version;
   const imageVersion = browser.match(
     /image:\s*mcr\.microsoft\.com\/playwright:v([^\s-]+)-noble/,
