@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { readMerchantBookingManageRedirect } from "@/lib/merchantBookingSelfService";
 import FaollaPullRefreshIndicator from "@/components/FaollaPullRefreshIndicator";
-import FrontendAuthEntry from "@/components/FrontendAuthEntry";
+import PublicWebsiteActions from "@/components/PublicWebsiteActions";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
 import MerchantMembershipEntry from "@/components/MerchantMembershipEntry";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
@@ -757,7 +757,7 @@ export function SitePageClient({
     return Math.max(max, value);
   }, 0);
   const backgroundExtendPadding = Math.max(0, maxBlockOffsetY) + 160;
-  const showMerchantLoginButton = Boolean(siteId && siteId !== "site-main" && !faollaAppShell);
+  const showPublicWebsiteActions = Boolean(siteId && siteId !== "site-main" && !faollaAppShell);
   const showMembershipEntry = Boolean(siteId && siteId !== "site-main");
   const authEntryClassName = faollaAppShell
     ? "fixed right-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-[2147481200] md:right-16 md:top-5"
@@ -776,7 +776,7 @@ export function SitePageClient({
         refreshing={faollaRefreshing}
       />
       <div style={faollaPullContentStyle}>
-        {showMembershipEntry || showMerchantLoginButton ? (
+        {showMembershipEntry || showPublicWebsiteActions ? (
           <div className={`faolla-site-auth-entry ${authEntryClassName} flex items-start gap-2`}>
             {showMembershipEntry ? (
               <MerchantMembershipEntry
@@ -784,12 +784,8 @@ export function SitePageClient({
                 siteName={effectiveMerchantName}
               />
             ) : null}
-            {showMerchantLoginButton ? (
-              <FrontendAuthEntry
-                currentMerchantId={site?.id ?? siteId}
-                merchantName={effectiveMerchantName}
-                merchantAvatarUrl={site?.chatAvatarImageUrl ?? site?.merchantCardImageUrl ?? ""}
-              />
+            {showPublicWebsiteActions ? (
+              <PublicWebsiteActions siteId={site?.id ?? siteId} />
             ) : null}
           </div>
         ) : null}

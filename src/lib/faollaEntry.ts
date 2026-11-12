@@ -99,8 +99,9 @@ export function shouldRoutePublicSiteToGuestShell({
 }: PublicGuestShellRouteContext) {
   const normalizedSiteId = String(siteId ?? "").trim();
   if (!hydrated || appShell || !normalizedSiteId || normalizedSiteId === "site-main" || !topLevel) return false;
-  if (String(entry ?? "").trim().toLowerCase() === "card") return false;
-  return String(stayPublic ?? "").trim() !== "1";
+  // Browsing a merchant website must not bootstrap the entire personal center.
+  // Keep the old shell as an explicit opt-in, never a prerequisite for viewing.
+  return String(entry ?? "").trim().toLowerCase() === "app" && String(stayPublic ?? "").trim() !== "1";
 }
 
 export function isFaollaBackendShellUrl(value: unknown, fallbackOrigin?: string | null) {

@@ -7,6 +7,7 @@ import type { Block } from "@/data/homeBlocks";
 import * as pagePlans from "@/lib/pagePlans";
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import * as bookingSelfService from "@/lib/merchantBookingSelfService";
+import * as faollaEntry from "@/lib/faollaEntry";
 
 // Run the actual component and touch hook with deterministic hook/effect/JSX
 // adapters. Only browser IO and descendant rendering are replaced; there is no
@@ -113,7 +114,7 @@ function harness(options: { initial?: Block[]; local?: Block[]; hydrated?: boole
   const jsx = (type: string, elementProps: Record<string, unknown>) => ({ type, props: elementProps });
   const componentStubs = new Map([
     ["next/link", "Link"], ["@/components/PublicTrafficProvider", "PublicTrafficProvider"],
-    ["@/components/FaollaPullRefreshIndicator", "FaollaPullRefreshIndicator"], ["@/components/FrontendAuthEntry", "FrontendAuthEntry"],
+    ["@/components/FaollaPullRefreshIndicator", "FaollaPullRefreshIndicator"], ["@/components/PublicWebsiteActions", "PublicWebsiteActions"],
     ["@/components/LoadingProgressScreen", "LoadingProgressScreen"], ["@/components/MerchantMembershipEntry", "MerchantMembershipEntry"],
     ["@/components/ServiceMaintenancePage", "ServiceMaintenancePage"], ["@/components/blocks/BlockRenderer", "BlockRenderer"],
   ]);
@@ -128,7 +129,7 @@ function harness(options: { initial?: Block[]; local?: Block[]; hydrated?: boole
     if (name === "@/lib/blocksSanitizer") return { sanitizeBlocksForRuntime };
     if (name === "@/lib/merchantBookingSelfService") return bookingSelfService;
     if (name === "@/lib/deviceViewport") return { MOBILE_BREAKPOINT: 768 };
-    if (name === "@/lib/faollaEntry") return { shouldRoutePublicSiteToGuestShell: () => false };
+    if (name === "@/lib/faollaEntry") return faollaEntry;
     if (name === "@/lib/pagePlans") return {
       getPagePlanConfigFromBlocks: (blocks: Block[]) => { planReads++; return pagePlans.getPagePlanConfigFromBlocks(blocks); },
       cloneBlocks: (blocks: Block[]) => { directClones++; return pagePlans.cloneBlocks(blocks); },
@@ -195,6 +196,14 @@ function harness(options: { initial?: Block[]; local?: Block[]; hydrated?: boole
 
 function blocksOf(h: ReturnType<typeof harness>) { return h.find("BlockRenderer").props.blocks as Block[]; }
 function titleOf(h: ReturnType<typeof harness>) { return (blocksOf(h)[0].props as { title: string }).title; }
+
+test("a top-level public merchant renders published content without the guest-shell auth wait", () => {
+  const h = harness({ initial: fixture(), search: "?uiLocale=es-ES", width: 1280 });
+  h.render();
+  assert.equal(titleOf(h), "original-desktop-1");
+  assert.equal(h.find("PublicWebsiteActions").props.siteId, "99990001");
+  h.unmount();
+});
 
 test("actual pull touch frames and unrelated renders reuse full plans and current-page clones", () => {
   const source = freezeTree(fixture());

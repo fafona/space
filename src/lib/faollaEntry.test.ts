@@ -167,7 +167,7 @@ test("preserves Faolla shell params for frontend merchant navigation", () => {
   );
 });
 
-test("routes top-level public merchant sites to one guest shell on every viewport", () => {
+test("public merchant sites stay standalone unless a visitor explicitly opts into app entry", () => {
   const base = {
     hydrated: true,
     appShell: false,
@@ -175,7 +175,9 @@ test("routes top-level public merchant sites to one guest shell on every viewpor
     topLevel: true,
   };
 
-  assert.equal(shouldRoutePublicSiteToGuestShell(base), true);
+  assert.equal(shouldRoutePublicSiteToGuestShell(base), false);
+  assert.equal(shouldRoutePublicSiteToGuestShell({ ...base, entry: "app" }), true);
+  assert.equal(shouldRoutePublicSiteToGuestShell({ ...base, entry: "app", stayPublic: "1" }), false);
   assert.equal(shouldRoutePublicSiteToGuestShell({ ...base, appShell: true }), false);
   assert.equal(shouldRoutePublicSiteToGuestShell({ ...base, siteId: "site-main" }), false);
   assert.equal(shouldRoutePublicSiteToGuestShell({ ...base, topLevel: false }), false);

@@ -184,6 +184,9 @@ jobs:
       - name: Super Admin Account Verification Browser Journey
         run: node --test scripts/admin-account-verification-browser-acceptance.mjs
 
+      - name: Direct Merchant Web Browser Journeys
+        run: node --test --test-concurrency=1 scripts/direct-merchant-web-browser-acceptance.mjs
+
   qr-database:
     name: QR Atomic PostgreSQL Acceptance
     runs-on: ubuntu-latest
