@@ -64,7 +64,8 @@ test('historical fixture matches its original approved pin while the old lane st
   const readBlob=file=>file==='.github/workflows/ci.yml'?sealed.workflow:readReviewedApplicationFixture(file);
   const input={baseline:BOOKING_RELEASE_BASELINE,files:[...BOOKING_APPLICATION_FILES,...BOOKING_TOOL_FILES],readBlob};
   assert.match(assertBookingReleaseClosure(input),/^[a-f0-9]{64}$/);
-  for(const changed of ['package.json','scripts/booking-atomic-postgres-acceptance.mjs','src/components/admin/BookingWorkbenchDialog.tsx','scripts/booking-atomic-preparation-contract.test.mjs'])
+  for(const changed of ['package.json','scripts/booking-atomic-postgres-acceptance.mjs','src/components/admin/BookingWorkbenchDialog.tsx','scripts/booking-atomic-preparation-contract.test.mjs',
+    'src/app/site/[siteId]/SitePageClient.tsx','src/components/SitePageClient.behavior.test.ts'])
     assert.throws(()=>assertBookingReleaseClosure({...input,readBlob:file=>file===changed?read(changed):readBlob(file)}),/application_content_rejected/);
 });
 
