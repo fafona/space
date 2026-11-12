@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "732a0a4b60f4d7ce497bae06f5b2740da0071b3b",
-  "purpose": "Rename the template preview action and synchronize only the existing partial-frame test fixture, with unchanged production transport and business logic",
+  "purpose": "Rename the template preview action, retain complete deployment regressions in isolated CI, and limit production focused tests to the four existing template functional suites",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -50,8 +50,7 @@
     "src/lib/websiteTemplateLibrary.test.ts",
     "src/lib/websiteTemplateRoutes.server.test.ts",
     "src/lib/websiteTemplateHomeSnapshots.test.ts",
-    "src/lib/websiteTemplateHomeSnapshots.server.test.ts",
-    "scripts/deploy-production-contract.test.mjs"
+    "src/lib/websiteTemplateHomeSnapshots.server.test.ts"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
