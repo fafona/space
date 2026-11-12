@@ -7,6 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { createPortal } from "react-dom";
 import { buildMerchantBusinessCardShareUrl, resolveMerchantBusinessCardShareOrigin } from "@/lib/merchantBusinessCardShare";
 import { showGlobalToast } from "@/lib/globalToast";
+import { AccountEmailVerificationStatus, VerifyAccountEmailButton } from "@/components/admin/AccountEmailVerification";
+import { confirmSuperAdminAccountEmail } from "@/lib/superAdminAccountEmailVerificationClient";
 import {
   getBlocksSnapshot,
   getPublishedBlocksSnapshot,
@@ -1948,6 +1950,7 @@ type BackendMerchantAccount = {
   createdAt: string | null;
   authUserId: string | null;
   emailConfirmed: boolean;
+  emailVerificationKnown?: boolean;
   emailConfirmedAt: string | null;
   lastSignInAt: string | null;
   manualCreated: boolean;
@@ -2349,6 +2352,8 @@ export default function SuperAdminClient() {
   const [personalConfigError, setPersonalConfigError] = useState("");
   const [personalConfigSubmitting, setPersonalConfigSubmitting] = useState(false);
   const [personalAccountActionSubmittingId, setPersonalAccountActionSubmittingId] = useState("");
+  const [accountEmailVerificationSubmittingId, setAccountEmailVerificationSubmittingId] = useState("");
+  const accountEmailVerificationBusyRef = useRef(false);
   const [supportThreads, setSupportThreads] = useState<PlatformSupportThread[]>([]);
   const [supportThreadsLoading, setSupportThreadsLoading] = useState(false);
   const [supportThreadsError, setSupportThreadsError] = useState("");
@@ -4736,6 +4741,31 @@ export default function SuperAdminClient() {
     setPersonalPanelOpen(false);
     setPersonalConfigError("");
   }, []);
+
+  async function verifyAccountEmailAction(account: BackendMerchantAccount | null | undefined) {
+    if (!account || account.emailConfirmed || account.emailVerificationKnown === false || accountEmailVerificationBusyRef.current) return;
+    if (!guard("user.manage", SUPER_ADMIN_MESSAGES.noUserPermission)) return;
+    accountEmailVerificationBusyRef.current = true;
+    setAccountEmailVerificationSubmittingId(account.authUserId || account.accountId);
+    try {
+      const result = await confirmSuperAdminAccountEmail(account, {
+        confirm: (message) => window.confirm(message), request: requestSuperAdminWithSessionRecovery,
+      });
+      if (!result) return;
+      const verified = result.verification;
+      setBackendMerchantAccounts(prev => prev.map(item => item.authUserId === verified.authUserId &&
+        item.accountType === verified.accountType && item.accountId === verified.accountId ? {...item,
+          emailConfirmed: true, emailVerificationKnown: true, emailConfirmedAt: verified.emailConfirmedAt} : item));
+      if (!result.alreadyVerified) recordAuditBestEffort("account_email_verify", account.accountType, account.accountId,
+        `人工完成注册邮箱验证；账号：${account.email}；authUserId:${account.authUserId}；用户无需再次输入注册验证码`);
+      setTip(result.alreadyVerified ? "该账号已完成验证" : "账号验证完成，用户可使用原邮箱和密码登录");
+    } catch (error) {
+      setTip(error instanceof Error ? error.message : "验证结果未确认，请刷新后重试");
+    } finally {
+      accountEmailVerificationBusyRef.current = false;
+      setAccountEmailVerificationSubmittingId("");
+    }
+  }
 
   function buildAccountDeleteTargetFromMerchantRow(row: MerchantUserRow | null | undefined) {
     if (!row) return null;
@@ -8847,6 +8877,7 @@ export default function SuperAdminClient() {
                                 <td className="px-3 py-2 text-xs text-slate-500">{fmt(row.registerAt)}</td>
                                 <td className="px-3 py-2 text-xs text-slate-500">{fmt(row.expireAt)}</td>
                                 <td className="px-3 py-2">
+                                  <div className="flex flex-col items-start gap-1">
                                   <span
                                     className={`rounded border px-2 py-0.5 text-xs ${badgeClass(
                                       row.statusKey === "paused"
@@ -8858,6 +8889,8 @@ export default function SuperAdminClient() {
                                   >
                                     {row.statusLabel}
                                   </span>
+                                  <AccountEmailVerificationStatus account={row.backendAccount}/>
+                                  </div>
                                 </td>
                                 <td className="px-3 py-2 text-xs">
                                   <div className="flex flex-wrap gap-1">
@@ -8867,6 +8900,8 @@ export default function SuperAdminClient() {
                                     >
                                       详情
                                     </button>
+                                    <VerifyAccountEmailButton account={row.backendAccount} busy={Boolean(accountEmailVerificationSubmittingId)} pending={accountEmailVerificationSubmittingId === row.backendAccount?.authUserId}
+                                      onVerify={() => void verifyAccountEmailAction(row.backendAccount)}/>
                                     {row.hasSite ? (
                                       <>
                                         <Link
@@ -9004,15 +9039,11 @@ export default function SuperAdminClient() {
                                 <td className="px-3 py-2 text-xs text-slate-500">{fmt(account.createdAt)}</td>
                                 <td className="px-3 py-2 text-xs text-slate-500">{fmt(account.lastSignInAt)}</td>
                                 <td className="px-3 py-2 text-xs">
-                                  <span
-                                    className={`rounded border px-2 py-0.5 ${
-                                      account.emailConfirmed
-                                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                        : "border-amber-200 bg-amber-50 text-amber-700"
-                                    }`}
-                                  >
-                                    {account.emailConfirmed ? "已验证" : "未验证"}
-                                  </span>
+                                  <div className="flex flex-col items-start gap-1">
+                                    <AccountEmailVerificationStatus account={account}/>
+                                    <VerifyAccountEmailButton account={account} busy={Boolean(accountEmailVerificationSubmittingId)} pending={accountEmailVerificationSubmittingId === account.authUserId}
+                                      onVerify={() => void verifyAccountEmailAction(account)}/>
+                                  </div>
                                 </td>
                                 <td className="px-3 py-2 text-xs">
                                   <div className="flex flex-col gap-1">
@@ -9760,6 +9791,11 @@ export default function SuperAdminClient() {
                               >
                                 删除账号
                               </button>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span>注册邮箱验证</span><AccountEmailVerificationStatus account={selectedMerchantRow.backendAccount}/>
+                              <VerifyAccountEmailButton account={selectedMerchantRow.backendAccount} busy={Boolean(accountEmailVerificationSubmittingId)} pending={accountEmailVerificationSubmittingId === selectedMerchantRow.backendAccount?.authUserId}
+                                onVerify={() => void verifyAccountEmailAction(selectedMerchantRow.backendAccount)}/>
                             </div>
                             {!selectedMerchantRow.hasSite ? (
                               <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-800">
@@ -11021,7 +11057,9 @@ export default function SuperAdminClient() {
                                 <div className="rounded border px-3 py-2">
                                   <div className="text-slate-500">邮箱验证</div>
                                   <div className="mt-1 font-medium text-slate-900">
-                                    {selectedPersonalAccount.emailConfirmed ? "已验证" : "未验证"}
+                                    <AccountEmailVerificationStatus account={selectedPersonalAccount}/>
+                                    <VerifyAccountEmailButton account={selectedPersonalAccount} busy={Boolean(accountEmailVerificationSubmittingId)} pending={accountEmailVerificationSubmittingId === selectedPersonalAccount.authUserId}
+                                      onVerify={() => void verifyAccountEmailAction(selectedPersonalAccount)}/>
                                   </div>
                                 </div>
                                 <div className="rounded border px-3 py-2">

@@ -26,6 +26,7 @@ import {
   maskEmailAddress,
 } from "@/lib/superAdminServer";
 import { isSuperAdminRequestAuthorized } from "@/lib/superAdminRequestAuth";
+import { verifySuperAdminAccountEmail } from "@/lib/superAdminAccountEmailVerification.server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -119,6 +120,7 @@ type MerchantAccountItem = {
   createdAt: string | null;
   authUserId: string | null;
   emailConfirmed: boolean;
+  emailVerificationKnown: boolean;
   emailConfirmedAt: string | null;
   lastSignInAt: string | null;
   manualCreated: boolean;
@@ -649,6 +651,7 @@ function buildSupportScopeItems(merchants: MerchantRow[]) {
         createdAt: merchant.created_at ?? null,
         authUserId,
         emailConfirmed: email === manualEmail ? true : false,
+        emailVerificationKnown: false,
         emailConfirmedAt: null,
         lastSignInAt: null,
         manualCreated: email === manualEmail,
@@ -692,6 +695,7 @@ function buildSnapshotMerchantAccountItems(
       createdAt: site.createdAt ?? null,
       authUserId: null,
       emailConfirmed: false,
+      emailVerificationKnown: false,
       emailConfirmedAt: null,
       lastSignInAt: null,
       manualCreated: false,
@@ -729,6 +733,7 @@ function buildPersonalAccountItemFromAuthUser(user: AuthUserSummary): MerchantAc
     createdAt: user.created_at ?? null,
     authUserId: String(user.id ?? "").trim() || null,
     emailConfirmed: Boolean(user.email_confirmed_at),
+    emailVerificationKnown: true,
     emailConfirmedAt: user.email_confirmed_at ?? null,
     lastSignInAt: user.last_sign_in_at ?? null,
     manualCreated: metadata.manualCreated,
@@ -834,6 +839,7 @@ export async function GET(request: Request) {
             createdAt: merchant.created_at ?? authUser?.created_at ?? null,
             authUserId: (authUser?.id ?? fallbackAuthUserId) || null,
             emailConfirmed: Boolean(authUser?.email_confirmed_at),
+            emailVerificationKnown: Boolean(authUser),
             emailConfirmedAt: authUser?.email_confirmed_at ?? null,
             lastSignInAt: authUser?.last_sign_in_at ?? null,
             manualCreated: metadata.manualCreated,
@@ -882,6 +888,7 @@ export async function GET(request: Request) {
           createdAt: user.created_at ?? null,
           authUserId: user.id,
           emailConfirmed: Boolean(user.email_confirmed_at),
+          emailVerificationKnown: true,
           emailConfirmedAt: user.email_confirmed_at ?? null,
           lastSignInAt: user.last_sign_in_at ?? null,
           manualCreated: metadata.manualCreated,
@@ -1047,9 +1054,17 @@ export async function POST(request: Request) {
       loginAccount?: unknown;
       username?: unknown;
       password?: unknown;
+      authUserId?: unknown;
+      email?: unknown;
+      confirmed?: unknown;
     } | null;
     if (payload?.action === "request_delete_code") {
       return sendAccountDeleteVerificationCode();
+    }
+    if (payload?.action === "verify_email") {
+      // Clear even for an uncertain result: the auth mutation may have landed.
+      try { return await verifySuperAdminAccountEmail(request, payload, supabase.auth.admin); }
+      finally { merchantAccountsCache.clear(); }
     }
 
     const accountType: PlatformAccountType = payload?.accountType === "personal" ? "personal" : "merchant";
@@ -1225,6 +1240,7 @@ export async function POST(request: Request) {
       createdAt: authUser.created_at ?? new Date().toISOString(),
       authUserId,
       emailConfirmed: true,
+      emailVerificationKnown: true,
       emailConfirmedAt: authUser.email_confirmed_at ?? new Date().toISOString(),
       lastSignInAt: null,
       manualCreated: true,
