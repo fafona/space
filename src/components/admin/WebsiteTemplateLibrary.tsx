@@ -1,8 +1,10 @@
 "use client";
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { WEBSITE_TEMPLATE_CATEGORIES, type WebsiteTemplate, type WebsiteTemplateCard } from '@/lib/websiteTemplateLibrary';
 import type { PlanId } from '@/lib/pagePlans';
+import { getWebsiteTemplateHomeSnapshot } from '@/lib/websiteTemplateHomeSnapshots';
 const BUTTON = 'rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40';
+const PREVIEW_BUTTON = 'whitespace-nowrap rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40 sm:px-4 sm:text-sm';
 const INPUT = 'min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900';
 type Props = {
     admin?: boolean;
@@ -27,6 +29,8 @@ export default function WebsiteTemplateLibrary({ admin = false, onClose, onApply
     const [loading, setLoading] = useState(true);
     const [notice, setNotice] = useState('');
     const dialog = useRef<HTMLDivElement>(null);
+    const scrollArea = useRef<HTMLDivElement>(null);
+    const catalogScrollTop = useRef(0);
     const alive = useRef(true);
     const loadGeneration = useRef(0);
     const [nextOffset, setNextOffset] = useState<number | null>(null);
@@ -68,6 +72,9 @@ export default function WebsiteTemplateLibrary({ admin = false, onClose, onApply
         }
     }
     useEffect(() => { alive.current = true; void load(); return () => { alive.current = false; loadGeneration.current++; }; }, []); // Fetch on entry only; never subscribe user designs to library changes.
+    useLayoutEffect(() => {
+        if (scrollArea.current) scrollArea.current.scrollTop = selected ? 0 : catalogScrollTop.current;
+    }, [selected?.id, mobile]);
     useEffect(() => {
         if (!onClose)
             return;
@@ -103,7 +110,8 @@ export default function WebsiteTemplateLibrary({ admin = false, onClose, onApply
         setBusy(true);
         setNotice('');
         try {
-            const body = await api(endpoint + '?id=' + encodeURIComponent(card.id));
+            const body = await api(endpoint + '?id=' + encodeURIComponent(card.id) + '&homeSnapshot=1');
+            catalogScrollTop.current = scrollArea.current?.scrollTop ?? 0;
             setSelected(body.template);
             setMobile(false);
         }
@@ -176,14 +184,8 @@ export default function WebsiteTemplateLibrary({ admin = false, onClose, onApply
     }
     const visible = cards.filter(c => (category === '全部' || c.category === category) && c.name.toLowerCase().includes(search.toLowerCase()));
     const previewHref = selected ? (admin ? '/super-admin/template-preview' : '/admin/template-preview') + '?' + new URLSearchParams({ id: selected.id, revision: selected.revision, viewport: mobile ? 'mobile' : 'desktop' }) : '';
-    const shell = <div ref={dialog} tabIndex={-1} role={onClose ? 'dialog' : undefined} aria-modal={onClose ? true : undefined} aria-label={admin ? '模板管理' : '网站模板库'} className="flex h-full min-h-0 flex-col overflow-hidden rounded-3xl bg-[#f5f7fa] text-slate-900 shadow-xl outline-none">
-  <header className="flex flex-wrap items-start justify-between gap-4 border-b bg-white px-5 py-5 sm:px-7"><div><div className="mb-1 text-xs font-semibold tracking-[0.18em] text-teal-700">FAOLLA · WEBSITE TEMPLATES</div><h2 className="text-2xl font-bold">{admin ? '模板管理' : '网站模板库'}</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">{admin ? '维护独立的官方模板快照。只有上架模板对商户可见，变更不会同步到已套用的网站。' : '选一套喜欢的设计，复制到自己的方案后自由编辑。模板更新不影响你的网站，使用模板也不会自动发布。'}</p></div><div className="flex gap-2"><button className={BUTTON} disabled={busy || loading} onClick={() => { setSelected(null); void load(); }}>刷新模板</button>{onClose ? <button className={BUTTON} disabled={busy} onClick={onClose}>关闭</button> : null}</div></header>
-  <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-7">
-   {notice ? <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">{notice}</p> : null}
-   {admin && selected ? <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border bg-white p-4"><span className="mr-auto text-sm text-slate-600">设计来源：{selected.sourceSiteId} · {selected.sourcePlanId?.replace('plan-', '方案')}。请先在来源编辑器点击“保存云端草稿”，再更新模板。</span><button type="button" className={BUTTON} disabled={busy} onClick={() => void recapture(selected)}>从来源更新设计</button></div> : null}
-   {admin && !selected ? <form onSubmit={capture} className="mb-6 space-y-3 rounded-2xl border bg-white p-5"><h3 className="font-semibold">从已保存方案收录新模板</h3><p className="text-xs leading-5 text-slate-500">只读取指定方案的电脑／手机草稿；移除业务数据与投票身份，图片转为独立快照。已有模板和来源网站都不会被覆盖。</p><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><input required name="site" pattern="[0-9]{8}" placeholder="来源用户 ID，如 10000000" aria-label="来源用户 ID" className={INPUT}/><select name="plan" aria-label="来源方案" className={INPUT}>{[1, 2, 3].map(i => <option key={i} value={'plan-' + i}>方案{['一', '二', '三'][i - 1]}</option>)}</select><input required name="name" maxLength={100} aria-label="模板名称" placeholder="模板名称，如亲子游乐场" className={INPUT}/><select name="category" aria-label="模板行业" className={INPUT}>{WEBSITE_TEMPLATE_CATEGORIES.map(c => <option key={c}>{c}</option>)}</select><button disabled={busy} className={BUTTON}>收录为模板草稿</button></div></form> : null}
-   {selected ? <div className="space-y-4"><div className="flex flex-wrap items-center gap-2"><button className={BUTTON} disabled={busy} onClick={() => setSelected(null)}>← 返回模板库</button><h3 className="mr-auto text-lg font-bold">{selected.name}</h3><button className={BUTTON} aria-pressed={!mobile} onClick={() => setMobile(false)}>电脑端</button><button className={BUTTON} aria-pressed={mobile} onClick={() => setMobile(true)}>手机端</button></div>
-    {!admin && onApply ? <div className="flex flex-wrap items-center gap-3 rounded-2xl border bg-white p-4"><span className="text-sm">复制到</span><select aria-label="目标方案" className={INPUT} disabled={busy} value={target} onChange={e => setTarget(e.target.value as PlanId)}>{plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><button className="rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40" disabled={busy || !plans.length} onClick={async () => {
+    const homeSnapshot = selected ? getWebsiteTemplateHomeSnapshot(selected, mobile) : null;
+    const applyControls = selected && !admin && onApply ? <div role="group" aria-label="复制模板到方案" className="flex min-w-0 flex-col items-center gap-1.5"><div className="flex max-w-full flex-wrap items-center justify-center gap-2"><span className="text-xs sm:text-sm">复制到</span><select aria-label="目标方案" className={INPUT + ' h-10 w-28 sm:w-32'} disabled={busy} value={target} onChange={e => setTarget(e.target.value as PlanId)}>{plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><button className="rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-40 sm:px-5 sm:text-sm" disabled={busy || !plans.length} onClick={async () => {
                     setBusy(true);
                     setNotice('');
                     try {
@@ -195,15 +197,27 @@ export default function WebsiteTemplateLibrary({ admin = false, onClose, onApply
                     finally {
                         setBusy(false);
                     }
-                }}>{busy ? '正在处理…' : '使用模板'}</button><span className="text-xs text-slate-500">仅替换所选方案 · 覆盖前确认并备份 · 不发布</span></div> : null}
+                }}>{busy ? '正在处理…' : '使用模板'}</button></div><span className="text-center text-[11px] leading-4 text-slate-500">仅替换所选方案 · 覆盖前确认并备份 · 不发布</span></div> : null;
+    const shell = <div ref={dialog} tabIndex={-1} role={onClose ? 'dialog' : undefined} aria-modal={onClose ? true : undefined} aria-label={admin ? '模板管理' : '网站模板库'} className="flex h-full min-h-0 flex-col overflow-hidden rounded-3xl bg-[#f5f7fa] text-slate-900 shadow-xl outline-none">
+  {selected ? <header data-template-preview-toolbar className="grid shrink-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-3 border-b bg-white px-3 py-3 sm:px-5 lg:grid-cols-[minmax(9rem,1fr)_auto_minmax(9rem,1fr)] lg:px-7">
+    <button className={PREVIEW_BUTTON + ' col-start-1 row-start-1 justify-self-start'} disabled={busy} onClick={() => setSelected(null)}>← 返回模板库</button>
+    <div className="col-span-2 col-start-1 row-start-2 min-w-0 lg:col-span-1 lg:col-start-2 lg:row-start-1">{applyControls ?? <div className="text-center text-sm font-semibold text-slate-600">模板设计预览</div>}</div>
+    <div className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5 lg:col-start-3"><button className={PREVIEW_BUTTON} aria-pressed={!mobile} onClick={() => setMobile(false)}>电脑端</button><button className={PREVIEW_BUTTON} aria-pressed={mobile} onClick={() => setMobile(true)}>手机端</button>{onClose ? <button type="button" aria-label="关闭模板库" title="关闭模板库" className="h-9 w-8 shrink-0 rounded-lg border border-slate-200 bg-white text-xl text-slate-600 disabled:opacity-40" disabled={busy} onClick={onClose}>×</button> : null}</div>
+    {notice ? <p role="status" className="col-span-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm lg:col-span-3">{notice}</p> : null}
+  </header> : <header className="flex shrink-0 flex-wrap items-start justify-between gap-4 border-b bg-white px-5 py-5 sm:px-7"><div><div className="mb-1 text-xs font-semibold tracking-[0.18em] text-teal-700">FAOLLA · WEBSITE TEMPLATES</div><h2 className="text-2xl font-bold">{admin ? '模板管理' : '网站模板库'}</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">{admin ? '维护独立的官方模板快照。只有上架模板对商户可见，变更不会同步到已套用的网站。' : '选一套喜欢的设计，复制到自己的方案后自由编辑。模板更新不影响你的网站，使用模板也不会自动发布。'}</p></div><div className="flex gap-2"><button className={BUTTON} disabled={busy || loading} onClick={() => { setSelected(null); void load(); }}>刷新模板</button>{onClose ? <button className={BUTTON} disabled={busy} onClick={onClose}>关闭</button> : null}</div></header>}
+  <div ref={scrollArea} data-template-library-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-7">
+   {notice && !selected ? <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">{notice}</p> : null}
+   {admin && selected ? <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border bg-white p-4"><span className="mr-auto text-sm text-slate-600">设计来源：{selected.sourceSiteId} · {selected.sourcePlanId?.replace('plan-', '方案')}。请先在来源编辑器点击“保存云端草稿”，再更新模板。</span><button type="button" className={BUTTON} disabled={busy} onClick={() => void recapture(selected)}>从来源更新设计</button></div> : null}
+   {admin && !selected ? <form onSubmit={capture} className="mb-6 space-y-3 rounded-2xl border bg-white p-5"><h3 className="font-semibold">从已保存方案收录新模板</h3><p className="text-xs leading-5 text-slate-500">只读取指定方案的电脑／手机草稿；移除业务数据与投票身份，图片转为独立快照。已有模板和来源网站都不会被覆盖。</p><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><input required name="site" pattern="[0-9]{8}" placeholder="来源用户 ID，如 10000000" aria-label="来源用户 ID" className={INPUT}/><select name="plan" aria-label="来源方案" className={INPUT}>{[1, 2, 3].map(i => <option key={i} value={'plan-' + i}>方案{['一', '二', '三'][i - 1]}</option>)}</select><input required name="name" maxLength={100} aria-label="模板名称" placeholder="模板名称，如亲子游乐场" className={INPUT}/><select name="category" aria-label="模板行业" className={INPUT}>{WEBSITE_TEMPLATE_CATEGORIES.map(c => <option key={c}>{c}</option>)}</select><button disabled={busy} className={BUTTON}>收录为模板草稿</button></div></form> : null}
+   {selected ? <div className="space-y-4"><h3 className="text-lg font-bold">{selected.name}</h3>
     <div className="grid gap-5 rounded-2xl border bg-white p-5 md:grid-cols-2">
-      <div className="overflow-hidden rounded-xl bg-teal-50">{selected.coverImageUrl ? <img src={selected.coverImageUrl} alt={selected.name + '封面'} className="aspect-[4/3] w-full object-cover"/> : <div className="flex aspect-[4/3] items-center justify-center text-xl font-bold text-teal-900">{selected.name}</div>}</div>
+      <figure data-template-home-snapshot={homeSnapshot ? 'full' : 'cover'} className="min-w-0 overflow-hidden rounded-xl bg-teal-50">{homeSnapshot ? <img src={homeSnapshot.imageUrl} alt={selected.name + ' · ' + (mobile ? '手机端' : '电脑端') + '完整首页快照'} width={homeSnapshot.width} height={homeSnapshot.height} className="mx-auto block h-auto w-full" style={{ maxWidth: mobile ? 430 : undefined }}/> : selected.coverImageUrl ? <img src={selected.coverImageUrl} alt={selected.name + '封面（非完整首页快照）'} className="block h-auto w-full"/> : <div className="p-8 text-center text-lg font-bold text-teal-900">{selected.name}</div>}<figcaption className="border-t border-teal-100 bg-white/90 px-3 py-2 text-xs leading-5 text-slate-500">{homeSnapshot ? (mobile ? '手机端' : '电脑端') + '完整首页快照 · 可向下滚动查看全部内容' : '当前仅有封面，完整首页快照尚未生成。可打开完整预览查看全部内容。'}</figcaption></figure>
       <div className="space-y-4"><h4 className="font-semibold">{mobile ? '手机端' : '电脑端'}包含的页面</h4><ol className="grid gap-2 text-sm text-slate-600">{selected.design[mobile ? 'mobile' : 'desktop'].map((page, index) => <li key={page.id}>{String(index + 1).padStart(2, '0')} · {page.name}</li>)}</ol>
         <a className={BUTTON + ' inline-block'} href={previewHref} target="_blank" rel="noopener noreferrer" onClick={event => { const opened = window.open(previewHref, '_blank', mobile ? 'popup,width=430,height=860' : 'popup,width=1280,height=900'); if (opened) {
             opened.opener = null;
             event.preventDefault();
         } }}>打开{mobile ? '手机端' : '电脑端'}完整预览 ↗</a>
-        <p className="text-xs leading-5 text-slate-500">完整预览使用独立窗口，不会改动编辑器。若浏览器限制窗口尺寸，可直接在手机上打开手机端预览。预览不提交预约、下单或投票。</p>
+        <p className="text-xs leading-5 text-slate-500">首页快照展示完整首页；独立预览可以浏览全部页面，不会改动编辑器。若浏览器限制窗口尺寸，可直接在手机上打开手机端预览。预览不提交预约、下单或投票。</p>
       </div>
     </div>
    </div> : <><form onSubmit={e => { e.preventDefault(); void load(); }} className="mb-5 flex flex-wrap gap-3"><input type="search" maxLength={80} aria-label="搜索模板" placeholder="搜索全部模板名称" value={search} onChange={e => setSearch(e.target.value)} className={INPUT + ' flex-1'}/><select aria-label="按行业筛选" value={category} onChange={e => setCategory(e.target.value)} className={INPUT}>{['全部', ...WEBSITE_TEMPLATE_CATEGORIES].map(c => <option key={c}>{c}</option>)}</select><button className={BUTTON} disabled={loading || busy}>搜索 / 筛选</button></form>

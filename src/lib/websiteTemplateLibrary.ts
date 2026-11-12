@@ -4,6 +4,7 @@ import { cloneBlocks, type PagePlanConfig, type PlanId, type PlanPage } from "@/
 import { sanitizeBlocksForRuntime } from "@/lib/blocksSanitizer";
 import { getEmbeddedMobilePlanConfig } from "@/lib/planTemplateRuntime";
 import { getPagePlanConfigFromBlocks } from "@/lib/pagePlans";
+import type { WebsiteTemplateHomeSnapshots } from './websiteTemplateHomeSnapshots';
 export const WEBSITE_TEMPLATE_CATEGORIES = ["餐饮", "娱乐", "零售", "服务", "组织", "其他"] as const;
 export type WebsiteTemplateDesign = {
     desktop: PlanPage[];
@@ -25,6 +26,7 @@ export type WebsiteTemplateCard = {
 };
 export type WebsiteTemplate = WebsiteTemplateCard & {
     design: WebsiteTemplateDesign;
+    homeSnapshots?: WebsiteTemplateHomeSnapshots;
 };
 const PRIVATE_KEYS = new Set([
     "pagePlanConfig", "pagePlanConfigMobile", "publishedMerchantSnapshot", "publishedMerchantDefaultSortRule",
