@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "240e759ef04523e974600a4cf072c5c008171dc7",
-  "purpose": "Open merchant websites directly by default, retain on-demand personal features and avoid duplicate responsive iframe loads; no business data, authentication boundary, dependencies or worker changes",
+  "purpose": "Open merchant websites directly and defer personal frames; retain on-demand features, original origins and guest history; preserve byte-exact historical test snapshots without changing production guards, data, dependencies or workers",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -19,6 +19,18 @@
       "after": [
         "100644",
         "391a73c11fc5019be850aea1f6d259b948fac14d"
+      ]
+    },
+    {
+      "file": "scripts/booking-safeupdate-online.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "d8d0b4380c5a81b7c4917a433a492f9c07e38dab"
+      ],
+      "after": [
+        "100644",
+        "3567d833c451f591d0ac04c3b73e958ce0ef4465"
       ]
     },
     {
@@ -40,6 +52,39 @@
       "after": [
         "100644",
         "32aa27d9e9fd27681ca1eab8c7acd4d2ff47fcab"
+      ]
+    },
+    {
+      "file": "scripts/test-support/reviewed-application-fixture.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "3c80af6892bf06f1e1a99930912e21683c037b85"
+      ],
+      "after": [
+        "100644",
+        "2dbe4f785d34910eb1a9f67d2904fb1377fc4959"
+      ]
+    },
+    {
+      "file": "scripts/test-support/reviewed-application-fixture.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "6282f20edc192c21361cc62a6a76aa6200d457eb"
+      ]
+    },
+    {
+      "file": "scripts/test-support/reviewed-application-fixtures.json",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "87ac80462c9def72b32221f366854514ad5a880d"
+      ],
+      "after": [
+        "100644",
+        "10adc0a56a47320d6c3ee63a0ae351c8de1ec031"
       ]
     },
     {
@@ -149,7 +194,10 @@
     "src/components/MerchantMembershipEntry.test.tsx",
     "src/lib/personalGuestSession.test.ts",
     "src/lib/personalGuestPeerMerge.test.ts",
-    "src/lib/personalLoginNavigation.test.ts"
+    "src/lib/personalLoginNavigation.test.ts",
+    "scripts/booking-publication-policy.test.mjs",
+    "scripts/booking-safeupdate-online.test.mjs",
+    "scripts/test-support/reviewed-application-fixture.test.mjs"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
