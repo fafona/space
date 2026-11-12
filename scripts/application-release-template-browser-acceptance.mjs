@@ -38,7 +38,8 @@ test('merchant library works on desktop/mobile, copies only the selected plan, a
  const browser=await chromium.launch({headless:true});try{for(const mobile of [false,true]){
   const f=await fixture(browser,false,mobile);try{
    assert.equal(await f.page.getByText('来源用户 ID',{exact:true}).count(),0);
-   await f.page.getByRole('button',{name:'预览 Synthetic park',exact:true}).click();
+   assert.equal(await f.page.getByText('预览并选择使用 →',{exact:true}).count(),0);
+   await f.page.getByRole('button',{name:'预览',exact:true}).click();
    await f.page.getByRole('button',{name:'手机端',exact:true}).click();
    assert.match(await f.page.getByRole('link',{name:/完整预览/}).getAttribute('href'),/viewport=mobile/);
    await f.page.getByRole('combobox',{name:'目标方案'}).selectOption('plan-3');await f.page.getByRole('button',{name:'使用模板',exact:true}).click();

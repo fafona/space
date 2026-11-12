@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "3b4c49cf20f7edc9e81e93dee56fd7e652a16978",
-  "purpose": "Pin template preview controls and display revision-bound complete desktop and mobile homepage snapshots without changing merchant designs",
+  "baseline": "732a0a4b60f4d7ce497bae06f5b2740da0071b3b",
+  "purpose": "Rename the template preview action and synchronize only the existing partial-frame test fixture, with unchanged production transport and business logic",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,24 +10,27 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
-      "file": "docs/website-template-home-snapshots.md",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "fc0759ecfcc8b27845dea856e8a6d532b69d010d"
-      ]
-    },
-    {
       "file": "scripts/application-release-template-browser-acceptance.mjs",
       "role": "verification",
       "before": [
         "100644",
-        "9340f002828f34366b3b058a023df7f95410da85"
+        "59b45f37d269d8c85ddc704bd2dcffe2c9b12cc6"
       ],
       "after": [
         "100644",
-        "59b45f37d269d8c85ddc704bd2dcffe2c9b12cc6"
+        "aa418b0fcd2b62c7f526db088c3a5d07bbb2f5a0"
+      ]
+    },
+    {
+      "file": "scripts/deploy-production-contract.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "ee804a262eb16a99cfa007f04927cfeed1a4bbff"
+      ],
+      "after": [
+        "100644",
+        "7d78fb6f023acd122c9a36a51c4c775dcc21d579"
       ]
     },
     {
@@ -35,93 +38,20 @@
       "role": "application",
       "before": [
         "100644",
-        "72baaff30ebbd41a5d5a5c0bf5e686c1394f0230"
-      ],
-      "after": [
-        "100644",
         "bb2bb800987332e2c83316b67fc748eb10926600"
-      ]
-    },
-    {
-      "file": "src/lib/websiteTemplateHomeSnapshots.server.test.ts",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "fff126abf7cf04737af7a14f58df01d8b883202f"
-      ]
-    },
-    {
-      "file": "src/lib/websiteTemplateHomeSnapshots.server.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "d10c4e1104fe354ea5a8c3ad570913120fa6eb6e"
-      ]
-    },
-    {
-      "file": "src/lib/websiteTemplateHomeSnapshots.test.ts",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "8ae151b8e43f9bfa34f4259ae000e915b6472abe"
-      ]
-    },
-    {
-      "file": "src/lib/websiteTemplateHomeSnapshots.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "0d61628deca4538658351306f9b55c2358a30bf0"
-      ]
-    },
-    {
-      "file": "src/lib/websiteTemplateLibrary.ts",
-      "role": "application",
-      "before": [
-        "100644",
-        "747ae1e50829524db5f4936825dbd49a0ff7e1f9"
       ],
       "after": [
         "100644",
-        "2bd5a675a81e990933056bd095bf46942429e4fc"
-      ]
-    },
-    {
-      "file": "src/lib/websiteTemplateRoutes.server.test.ts",
-      "role": "verification",
-      "before": [
-        "100644",
-        "f9e0d13b8bb1146e27936b78505ca87f27acef7c"
-      ],
-      "after": [
-        "100644",
-        "b62714e3e4989f70f4b0280bf64ee769517f913f"
-      ]
-    },
-    {
-      "file": "src/lib/websiteTemplateRoutes.server.ts",
-      "role": "application",
-      "before": [
-        "100644",
-        "26588a1da236300b682a91c6cb1f290680417937"
-      ],
-      "after": [
-        "100644",
-        "af232c0a81bce5979b090c88ac8de8c0cc6978d2"
+        "a77f6d09e65822ef3d9ab0b287752b44b6d7b5fc"
       ]
     }
   ],
   "focusedTests": [
+    "src/lib/websiteTemplateLibrary.test.ts",
+    "src/lib/websiteTemplateRoutes.server.test.ts",
     "src/lib/websiteTemplateHomeSnapshots.test.ts",
     "src/lib/websiteTemplateHomeSnapshots.server.test.ts",
-    "src/lib/websiteTemplateRoutes.server.test.ts",
-    "src/lib/websiteTemplateLibrary.test.ts",
-    "src/lib/websiteTemplateStore.server.test.ts",
-    "src/lib/websiteTemplateAssets.server.test.ts"
+    "scripts/deploy-production-contract.test.mjs"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
