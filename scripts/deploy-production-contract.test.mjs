@@ -644,6 +644,34 @@ async function runDeployTransportScenario({
   const transport = extractDeployTransport();
   const captureSizesPath = join(captureDirectory, "capture-sizes");
   const fakeSsh = String.raw`
+printf() {
+  local fake_printf_status
+  local fake_barrier_attempt
+  command printf "$@"
+  fake_printf_status=$?
+  if [ "$fake_printf_status" != "0" ]; then
+    return "$fake_printf_status"
+  fi
+  if [ "$FAKE_SSH_MODE" = "partial-frame" ] \
+    && [ "$#" = "2" ] \
+    && [ "$1" = '%s\n' ] \
+    && [ "$2" = "FAOLLA_DEPLOY_ENVELOPE_V2" ]; then
+    # Only the first short header has been written. Keep the producer here
+    # until the fake SSH has really closed its read descriptor, so pipe
+    # capacity/scheduling cannot let the whole frame finish before closure.
+    fake_barrier_attempt=0
+    while [ ! -f "$FAKE_SSH_CAPTURE_DIR/stdin-closed" ]; do
+      if [ "$fake_barrier_attempt" -ge "500" ]; then
+        return 97
+      fi
+      fake_barrier_attempt=$((fake_barrier_attempt + 1))
+      command sleep 0.01
+    done
+    command printf '%s\n' 'frame-resumed-after-stdin-close' \
+      > "$FAKE_SSH_CAPTURE_DIR/frame-resumed-after-stdin-close"
+  fi
+  return "$fake_printf_status"
+}
 grep() {
   local capture_path
   local capture_size
@@ -667,6 +695,8 @@ ssh() {
   env > "$FAKE_SSH_CAPTURE_DIR/env-$fake_index"
   if [ "$FAKE_SSH_MODE" = "partial-frame" ]; then
     head -c 1 > "$FAKE_SSH_CAPTURE_DIR/stdin-$fake_index" || true
+    exec 0<&-
+    command printf '%s\n' 'stdin-closed' > "$FAKE_SSH_CAPTURE_DIR/stdin-closed"
   else
     cat > "$FAKE_SSH_CAPTURE_DIR/stdin-$fake_index"
   fi
@@ -813,6 +843,19 @@ sleep() { :; }
   });
 
   try {
+    if (sshMode === "partial-frame") {
+      // A timeout or missing handshake is a fixture failure, never proof that
+      // the transport preserved the producer's failure status.
+      assert.equal(result.signal, null);
+      assert.equal(
+        await readFile(join(captureDirectory, "stdin-closed"), "utf8"),
+        "stdin-closed\n",
+      );
+      assert.equal(
+        await readFile(join(captureDirectory, "frame-resumed-after-stdin-close"), "utf8"),
+        "frame-resumed-after-stdin-close\n",
+      );
+    }
     if (expectedStatus === "nonzero") {
       assert.notEqual(result.status, 0, result.stderr);
     } else {
