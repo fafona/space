@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "732a0a4b60f4d7ce497bae06f5b2740da0071b3b",
-  "purpose": "Rename the template preview action, retain complete deployment regressions in isolated CI, and limit production focused tests to the four existing template functional suites",
+  "baseline": "b3c73f393cefdc983438b5a0e084a98a2ca4a350",
+  "purpose": "Expose unverified registration status and provide audited super-admin email confirmation without changing account credentials, subscriptions or login OTP requirements",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,47 +10,115 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
-      "file": "scripts/application-release-template-browser-acceptance.mjs",
+      "file": ".github/workflows/ci.yml",
       "role": "verification",
       "before": [
         "100644",
-        "59b45f37d269d8c85ddc704bd2dcffe2c9b12cc6"
+        "4b569a9e8f9647724fe87ac3c6be6f1d7e969c9e"
       ],
       "after": [
         "100644",
-        "aa418b0fcd2b62c7f526db088c3a5d07bbb2f5a0"
+        "64363c20e040e08335564b3fe13292a27441273d"
       ]
     },
     {
-      "file": "scripts/deploy-production-contract.test.mjs",
+      "file": "scripts/admin-account-verification-browser-acceptance.mjs",
       "role": "verification",
-      "before": [
-        "100644",
-        "ee804a262eb16a99cfa007f04927cfeed1a4bbff"
-      ],
+      "before": null,
       "after": [
         "100644",
-        "7d78fb6f023acd122c9a36a51c4c775dcc21d579"
+        "00de233f3ec6afbbc79916642c9832c0c0ec7520"
       ]
     },
     {
-      "file": "src/components/admin/WebsiteTemplateLibrary.tsx",
+      "file": "src/app/api/super-admin/merchant-accounts/route-handler.ts",
       "role": "application",
       "before": [
         "100644",
-        "bb2bb800987332e2c83316b67fc748eb10926600"
+        "9f81ee95213a7a98e2b0e293b315e917ebeec670"
       ],
       "after": [
         "100644",
-        "a77f6d09e65822ef3d9ab0b287752b44b6d7b5fc"
+        "aeb97eb5482cc6a0c173cebcc4dcdf77fc0c310f"
+      ]
+    },
+    {
+      "file": "src/app/super-admin/SuperAdminClient.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "96785f4d0c456a6d1b0cf024875a7a99b9aa8113"
+      ],
+      "after": [
+        "100644",
+        "86c65751d16191e41ab1d6f599961e246884dc51"
+      ]
+    },
+    {
+      "file": "src/components/admin/AccountEmailVerification.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "6e6f5ec1d7093236c3ae1d9ea767fc1fdb3e0c9d"
+      ]
+    },
+    {
+      "file": "src/lib/accountEmailVerification.test.tsx",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "f918c91c5d55c27f715320e8fd502d395e0afff0"
+      ]
+    },
+    {
+      "file": "src/lib/accountEmailVerification.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "ffbc8df6fb3083c3b6ecfe8ebce5721da9d23a38"
+      ]
+    },
+    {
+      "file": "src/lib/superAdminAccountEmailVerification.server.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "8f4c736e08bc8bb6f4555999cfe770bdf22a80c1"
+      ]
+    },
+    {
+      "file": "src/lib/superAdminAccountEmailVerification.server.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "d918542808accbc0b84096ed58e66e79fad1b039"
+      ]
+    },
+    {
+      "file": "src/lib/superAdminAccountEmailVerificationClient.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "5379630e7f793e2755151631972a12dcdf9021e5"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/websiteTemplateLibrary.test.ts",
-    "src/lib/websiteTemplateRoutes.server.test.ts",
-    "src/lib/websiteTemplateHomeSnapshots.test.ts",
-    "src/lib/websiteTemplateHomeSnapshots.server.test.ts"
+    "src/lib/superAdminAccountEmailVerification.server.test.ts",
+    "src/lib/accountEmailVerification.test.tsx",
+    "src/app/api/super-admin/merchant-accounts/route.test.ts",
+    "src/app/api/auth/merchant-signup/route.test.ts",
+    "src/lib/platformAccounts.test.ts",
+    "src/lib/platformAccountIdentity.test.ts",
+    "src/lib/superAdminRequestAuth.test.ts",
+    "src/app/api/auth/merchant-login/route.test.ts",
+    "src/app/super-admin/SuperAdminClient.contract.test.ts"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {

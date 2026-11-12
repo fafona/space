@@ -181,6 +181,9 @@ jobs:
       - name: Website Template Browser Journeys
         run: node --test scripts/application-release-template-browser-acceptance.mjs
 
+      - name: Super Admin Account Verification Browser Journey
+        run: node --test scripts/admin-account-verification-browser-acceptance.mjs
+
   qr-database:
     name: QR Atomic PostgreSQL Acceptance
     runs-on: ubuntu-latest
