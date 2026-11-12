@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "b3c73f393cefdc983438b5a0e084a98a2ca4a350",
-  "purpose": "Expose unverified registration status and provide audited super-admin email confirmation without changing account credentials, subscriptions or login OTP requirements",
+  "baseline": "240e759ef04523e974600a4cf072c5c008171dc7",
+  "purpose": "Open merchant websites directly by default, retain on-demand personal features and avoid duplicate responsive iframe loads; no business data, authentication boundary, dependencies or worker changes",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -14,111 +14,142 @@
       "role": "verification",
       "before": [
         "100644",
-        "4b569a9e8f9647724fe87ac3c6be6f1d7e969c9e"
-      ],
-      "after": [
-        "100644",
         "64363c20e040e08335564b3fe13292a27441273d"
-      ]
-    },
-    {
-      "file": "scripts/admin-account-verification-browser-acceptance.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "00de233f3ec6afbbc79916642c9832c0c0ec7520"
-      ]
-    },
-    {
-      "file": "src/app/api/super-admin/merchant-accounts/route-handler.ts",
-      "role": "application",
-      "before": [
-        "100644",
-        "9f81ee95213a7a98e2b0e293b315e917ebeec670"
       ],
       "after": [
         "100644",
-        "aeb97eb5482cc6a0c173cebcc4dcdf77fc0c310f"
+        "391a73c11fc5019be850aea1f6d259b948fac14d"
       ]
     },
     {
-      "file": "src/app/super-admin/SuperAdminClient.tsx",
-      "role": "application",
+      "file": "scripts/ci-workflow-contract.test.mjs",
+      "role": "verification",
       "before": [
         "100644",
-        "96785f4d0c456a6d1b0cf024875a7a99b9aa8113"
+        "0f0d2bab68b0314a674611a4a8cb9d8d52b1a003"
       ],
       "after": [
         "100644",
-        "86c65751d16191e41ab1d6f599961e246884dc51"
+        "9f88cfbfa7d34f8f4a40b7c64e314b4a613ea02a"
       ]
     },
     {
-      "file": "src/components/admin/AccountEmailVerification.tsx",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "6e6f5ec1d7093236c3ae1d9ea767fc1fdb3e0c9d"
-      ]
-    },
-    {
-      "file": "src/lib/accountEmailVerification.test.tsx",
+      "file": "scripts/direct-merchant-web-browser-acceptance.mjs",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
-        "f918c91c5d55c27f715320e8fd502d395e0afff0"
+        "32aa27d9e9fd27681ca1eab8c7acd4d2ff47fcab"
       ]
     },
     {
-      "file": "src/lib/accountEmailVerification.ts",
+      "file": "src/app/me/page.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "a264b89eb255a1c784b4345bd6042aceb9fbadc8"
+      ],
+      "after": [
+        "100644",
+        "7d31f55620f5403bcbd0bf01c04d8e931497a0ab"
+      ]
+    },
+    {
+      "file": "src/app/site/[siteId]/SitePageClient.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "e3643a1bfb417b0937322ec24d0aa52cc63d25b6"
+      ],
+      "after": [
+        "100644",
+        "9d98b56d93af9bae13efe6f63716cdb08e425dbe"
+      ]
+    },
+    {
+      "file": "src/components/PublicWebsiteActions.tsx",
       "role": "application",
       "before": null,
       "after": [
         "100644",
-        "ffbc8df6fb3083c3b6ecfe8ebce5721da9d23a38"
+        "39ed6fbd769d8113edba822e32079931a9d08162"
       ]
     },
     {
-      "file": "src/lib/superAdminAccountEmailVerification.server.test.ts",
+      "file": "src/components/SitePageClient.behavior.test.ts",
+      "role": "verification",
+      "before": [
+        "100644",
+        "c875771476598a4934190a8a5d55dc626511a466"
+      ],
+      "after": [
+        "100644",
+        "092d0260805f22b19b9ddebd782d15bf1137376b"
+      ]
+    },
+    {
+      "file": "src/components/blocks/MerchantListBlock.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "1ae17306a5ac22479dec459929f9bdb2313e0c25"
+      ],
+      "after": [
+        "100644",
+        "50670d44949fa3f2fe705bd9aa6fd6dad447b2e7"
+      ]
+    },
+    {
+      "file": "src/lib/faollaEntry.test.ts",
+      "role": "verification",
+      "before": [
+        "100644",
+        "b386ff6bb4f369fe0bd55499ebd6f6f0f0e2e960"
+      ],
+      "after": [
+        "100644",
+        "b005a20f79f26295e26b889f283092608d50c961"
+      ]
+    },
+    {
+      "file": "src/lib/faollaEntry.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "c1fb03759b3d7a9bd747f59de4ca013c2396ee7b"
+      ],
+      "after": [
+        "100644",
+        "29772be2c2f33a56c0bec1a10bb55d3ea80b96c3"
+      ]
+    },
+    {
+      "file": "src/lib/publicWebsiteNavigation.test.ts",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
-        "8f4c736e08bc8bb6f4555999cfe770bdf22a80c1"
+        "f35e45579dad7d059dfc51dd7680335bb1366bd2"
       ]
     },
     {
-      "file": "src/lib/superAdminAccountEmailVerification.server.ts",
+      "file": "src/lib/publicWebsiteNavigation.ts",
       "role": "application",
       "before": null,
       "after": [
         "100644",
-        "d918542808accbc0b84096ed58e66e79fad1b039"
-      ]
-    },
-    {
-      "file": "src/lib/superAdminAccountEmailVerificationClient.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "5379630e7f793e2755151631972a12dcdf9021e5"
+        "4a158d7a9a225cc1b25c987a0eb95c81243272b9"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/superAdminAccountEmailVerification.server.test.ts",
-    "src/lib/accountEmailVerification.test.tsx",
-    "src/app/api/super-admin/merchant-accounts/route.test.ts",
-    "src/app/api/auth/merchant-signup/route.test.ts",
-    "src/lib/platformAccounts.test.ts",
-    "src/lib/platformAccountIdentity.test.ts",
-    "src/lib/superAdminRequestAuth.test.ts",
-    "src/app/api/auth/merchant-login/route.test.ts",
-    "src/app/super-admin/SuperAdminClient.contract.test.ts"
+    "src/lib/faollaEntry.test.ts",
+    "src/lib/publicWebsiteNavigation.test.ts",
+    "src/components/SitePageClient.behavior.test.ts",
+    "src/components/MerchantMembershipEntry.test.tsx",
+    "src/lib/personalGuestSession.test.ts",
+    "src/lib/personalGuestPeerMerge.test.ts",
+    "src/lib/personalLoginNavigation.test.ts"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
