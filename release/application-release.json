@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "5866382e014a0d7bb51ed9306ad2bae6e333ed42",
-  "purpose": "Publish checkout cart recovery UI with bounded signed CI package downloads and read-only process-exit race handling; retain all acceptance and no-maintenance guards",
+  "baseline": "3b4c49cf20f7edc9e81e93dee56fd7e652a16978",
+  "purpose": "Pin template preview controls and display revision-bound complete desktop and mobile homepage snapshots without changing merchant designs",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,204 +10,118 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
-      "file": ".github/scripts/install-ci-packages.sh",
+      "file": "docs/website-template-home-snapshots.md",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
-        "380cc7981a8b0c4ad57e56d11c088e6bc8f2bf88"
+        "fc0759ecfcc8b27845dea856e8a6d532b69d010d"
       ]
     },
     {
-      "file": ".github/workflows/ci.yml",
+      "file": "scripts/application-release-template-browser-acceptance.mjs",
       "role": "verification",
       "before": [
         "100644",
-        "1acd21572c27032c08cc3ad0c9478b4f0a0b94f1"
+        "9340f002828f34366b3b058a023df7f95410da85"
       ],
       "after": [
         "100644",
-        "4b569a9e8f9647724fe87ac3c6be6f1d7e969c9e"
+        "59b45f37d269d8c85ddc704bd2dcffe2c9b12cc6"
       ]
     },
     {
-      "file": ".github/workflows/release-toolchain.yml",
-      "role": "verification",
+      "file": "src/components/admin/WebsiteTemplateLibrary.tsx",
+      "role": "application",
       "before": [
         "100644",
-        "54dd0ed570cee101a11941c4a6b1db30eee7258c"
+        "72baaff30ebbd41a5d5a5c0bf5e686c1394f0230"
       ],
       "after": [
         "100644",
-        "4bc95eb6dc7b8fb42ddbfc84cae4fbbd41e5cf00"
+        "bb2bb800987332e2c83316b67fc748eb10926600"
       ]
     },
     {
-      "file": ".github/workflows/website-template-table-online.yml",
-      "role": "verification",
-      "before": [
-        "100644",
-        "3b5938fdef7258fb582c4fc67248a60de0d54b1a"
-      ],
-      "after": [
-        "100644",
-        "88502f6ad611e4e5a768fee63ef352b34934dd7a"
-      ]
-    },
-    {
-      "file": "docs/ordinary-application-release.md",
-      "role": "verification",
-      "before": [
-        "100644",
-        "2418bce80314b6ad99686065b772f2dec29e7ecf"
-      ],
-      "after": [
-        "100644",
-        "606d551fec2578bf1cceb8aa2c3f5a9161de19a8"
-      ]
-    },
-    {
-      "file": "scripts/application-release-template-workflow.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "8f9c6ae891ab4245eb20da4332edbf18e48eb26b"
-      ],
-      "after": [
-        "100644",
-        "1fbbbade76f78fc1aa1eff8bfd4f8f8ef0dde49b"
-      ]
-    },
-    {
-      "file": "scripts/application-release-template.test.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "0690dba3dd1a8d938ade3e0ce09b6290681a0956"
-      ],
-      "after": [
-        "100644",
-        "a5ec1538176d59a40edde7156471e01f221d2ab8"
-      ]
-    },
-    {
-      "file": "scripts/ci-package-install.test.mjs",
+      "file": "src/lib/websiteTemplateHomeSnapshots.server.test.ts",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
-        "7a0b19d08fee3754ed06a9e38249fbfc4901f95f"
+        "fff126abf7cf04737af7a14f58df01d8b883202f"
       ]
     },
     {
-      "file": "scripts/ci-workflow-contract.test.mjs",
+      "file": "src/lib/websiteTemplateHomeSnapshots.server.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "d10c4e1104fe354ea5a8c3ad570913120fa6eb6e"
+      ]
+    },
+    {
+      "file": "src/lib/websiteTemplateHomeSnapshots.test.ts",
       "role": "verification",
-      "before": [
-        "100644",
-        "a702d9d3529a9c08dbff47a53733b1540bd21b6f"
-      ],
+      "before": null,
       "after": [
         "100644",
-        "0f0d2bab68b0314a674611a4a8cb9d8d52b1a003"
+        "8ae151b8e43f9bfa34f4259ae000e915b6472abe"
       ]
     },
     {
-      "file": "scripts/redemption-pending-cart-browser-acceptance.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "4a8d55e5ab837bf7b921e7684ecb692a23e566ce"
-      ],
+      "file": "src/lib/websiteTemplateHomeSnapshots.ts",
+      "role": "application",
+      "before": null,
       "after": [
         "100644",
-        "ed7ced878c5bbbd46420c9dc761cd60938c6c8f0"
+        "0d61628deca4538658351306f9b55c2358a30bf0"
       ]
     },
     {
-      "file": "scripts/release-toolchain-process-birth.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "c2f008a9a6bd55a28ae779ca8de5406ac66b6b28"
-      ],
-      "after": [
-        "100644",
-        "ef237b3b71b8bb71fc292249c2c8654c30928e3d"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-process-birth.test.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "315cfc45cd23fda41ba53019b2abfcbfa5049f07"
-      ],
-      "after": [
-        "100644",
-        "19ab932329b6b3512db5d57629c8a48fcb356871"
-      ]
-    },
-    {
-      "file": "src/app/test-harness/redemption-checkout/RedemptionCheckoutHarness.tsx",
+      "file": "src/lib/websiteTemplateLibrary.ts",
       "role": "application",
       "before": [
         "100644",
-        "57cea909c71245cdbfd93a8bd139e3f9ab8471b8"
+        "747ae1e50829524db5f4936825dbd49a0ff7e1f9"
       ],
       "after": [
         "100644",
-        "5e835c8cbf51557a2ec2cb8eeab98f94ee449fbb"
+        "2bd5a675a81e990933056bd095bf46942429e4fc"
       ]
     },
     {
-      "file": "src/components/admin/MerchantPointRedemptionCashier.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "36e2434148c5816319b293da48fe3000992b647a"
-      ],
-      "after": [
-        "100644",
-        "53ea07d81d3bd0e283b92093fea21edbe13b61c6"
-      ]
-    },
-    {
-      "file": "src/lib/merchantRedemptionCheckoutRecovery.test.ts",
+      "file": "src/lib/websiteTemplateRoutes.server.test.ts",
       "role": "verification",
       "before": [
         "100644",
-        "2b650062230f70d289538ef48b288da1e94b80e7"
+        "f9e0d13b8bb1146e27936b78505ca87f27acef7c"
       ],
       "after": [
         "100644",
-        "f0bb70533227437672aea41bb95d087d4d9bb60d"
+        "b62714e3e4989f70f4b0280bf64ee769517f913f"
       ]
     },
     {
-      "file": "src/lib/merchantRedemptionCheckoutRecovery.ts",
+      "file": "src/lib/websiteTemplateRoutes.server.ts",
       "role": "application",
       "before": [
         "100644",
-        "65b4eded9257b6d8e1b0ec44a24b387c1b04c9e0"
+        "26588a1da236300b682a91c6cb1f290680417937"
       ],
       "after": [
         "100644",
-        "ad938f482227fa1e8db5786bd626ff2d0c2f1625"
+        "af232c0a81bce5979b090c88ac8de8c0cc6978d2"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/merchantRedemptionCheckoutRecovery.test.ts",
-    "src/lib/merchantRedemptionPendingCart.test.ts",
-    "src/lib/merchantRedemptionCheckout.server.test.ts",
-    "src/lib/merchantRedemptionTransaction.server.test.ts",
-    "src/app/api/merchant-admin/redemption-checkout/route.test.ts",
-    "scripts/application-release-policy.test.mjs",
-    "scripts/application-release-compatibility.test.mjs",
-    "scripts/application-release-template.test.mjs",
-    "scripts/ci-package-install.test.mjs",
-    "scripts/ci-workflow-contract.test.mjs",
-    "scripts/release-toolchain-process-birth.test.mjs"
+    "src/lib/websiteTemplateHomeSnapshots.test.ts",
+    "src/lib/websiteTemplateHomeSnapshots.server.test.ts",
+    "src/lib/websiteTemplateRoutes.server.test.ts",
+    "src/lib/websiteTemplateLibrary.test.ts",
+    "src/lib/websiteTemplateStore.server.test.ts",
+    "src/lib/websiteTemplateAssets.server.test.ts"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {

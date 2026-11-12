@@ -9,7 +9,8 @@ import { freezeWebsiteTemplateAssets } from '@/lib/websiteTemplateAssets.server'
 import { listWebsiteTemplates, readWebsiteTemplate, createWebsiteTemplate, updateWebsiteTemplate, replaceWebsiteTemplateDesign, canInitializeWebsiteTemplateDraft } from '@/lib/websiteTemplateStore.server';
 import type { PlanId } from '@/lib/pagePlans';
 import { resolveCanonicalPortalOrigin } from '@/lib/canonicalPortalRequest';
-export const websiteTemplateDependencies = { createClient: createServerSupabaseServiceClient, isAdmin: isSuperAdminRequestAuthorized, merchantSession: resolveMerchantSessionFromRequest, trusted: isTrustedSameOriginMutationRequest, loadDraft: loadStoredMerchantDraft, freeze: freezeWebsiteTemplateAssets, list: listWebsiteTemplates, read: readWebsiteTemplate, create: createWebsiteTemplate, update: updateWebsiteTemplate, replaceDesign: replaceWebsiteTemplateDesign, canInitialize:canInitializeWebsiteTemplateDraft };
+import { readWebsiteTemplateHomeSnapshots } from '@/lib/websiteTemplateHomeSnapshots.server';
+export const websiteTemplateDependencies = { createClient: createServerSupabaseServiceClient, isAdmin: isSuperAdminRequestAuthorized, merchantSession: resolveMerchantSessionFromRequest, trusted: isTrustedSameOriginMutationRequest, loadDraft: loadStoredMerchantDraft, freeze: freezeWebsiteTemplateAssets, list: listWebsiteTemplates, read: readWebsiteTemplate, create: createWebsiteTemplate, update: updateWebsiteTemplate, replaceDesign: replaceWebsiteTemplateDesign, canInitialize:canInitializeWebsiteTemplateDraft, homeSnapshots:readWebsiteTemplateHomeSnapshots };
 type Dependencies = typeof websiteTemplateDependencies;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'Vary': 'Cookie, x-merchant-access-token' } });
@@ -29,6 +30,10 @@ export async function websiteTemplateGet(request: Request, admin = false, deps: 
         if(editorSiteId)return json({canInitializeDraft:await deps.canInitialize(db,editorSiteId)});
         if (id) {
             const template = await deps.read(db, id, admin);
+            if (template && new URL(request.url).searchParams.get('homeSnapshot') === '1') {
+                const homeSnapshots = await deps.homeSnapshots(template.id, template.revision).catch(() => undefined);
+                return json({ template: { ...template, ...(homeSnapshots ? { homeSnapshots } : {}) } });
+            }
             return template ? json({ template }) : json({ error: 'template_not_found' }, 404);
         }
         const params = new URL(request.url).searchParams;
