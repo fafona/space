@@ -104,7 +104,7 @@ test('daily report cannot call cleanup; runtime cannot stop processes or delete 
   assert.doesNotMatch(daily, /applyWebpack|unlinkSync|rmdirSync|executeStorageEvent|pollStorage/);
   assert.doesNotMatch(source, /process\.kill|rmSync|unlinkSync|rmdirSync|pm2[^\n]*(?:stop|delete|save|restart)|docker[^\n]*prune/);
   assert.match(source, /referenceGuard\(c.releaseDirectory/); assert.match(source, /assertEventCertificate/);
-  assert.match(source, /withOnlineToolPreparationLocks/); assert.match(source, /inspectPinnedExecutionSource/);
+  assert.match(source, /withStorageDeploymentLock/); assert.match(source, /inspectPinnedExecutionSource/);
   const installer = fs.readFileSync(new URL('./release-toolchain-storage-install.mjs', import.meta.url), 'utf8');
   for (const token of ['collectRemoteReleaseReview', 'assertReviewFresh', 'assertUnchangedApplicationSource', 'systemd-analyze',
     'initial_publication_changed', 'protectedPins()', 'already_attempted', 'existing_unit']) assert.ok(installer.includes(token), token);
@@ -124,7 +124,7 @@ function actualPoll({entries = [], existing = false, completed = false, failed =
     fs: {readdirSync: () => entries.map(name => ({name, isDirectory: () => true, isSymbolicLink: () => false})),
       existsSync: file => file.endsWith('/operation.lock') ? busy : file.endsWith('/failed.json') ? failed : file.endsWith('/completed.json') ? completed : existing},
     storageRead: () => JSON.stringify({kind: 'storage-lifecycle-event-completed', event}),
-    withOnlineToolPreparationLocks: (options, fn) => {events.push('lock'); if (lockFailure) throw lockFailure; return fn();},
+    withStorageDeploymentLock: fn => {events.push('lock'); if (lockFailure) throw lockFailure; return fn(() => {});},
     executeStorageEvent: (e, operations) => {events.push('execute'); if (executeFailure) throw executeFailure; return operations.status(e.key);},
   };
   const poll = vm.runInNewContext(body + '\npollStorage;', context);
@@ -144,13 +144,12 @@ test('real poll blocks ALL prior incomplete events even when publication key cha
 });
 test('routine publication lock and exact acquisition races defer before destructive intent; unknown errors still fail', () => {
   const busy = actualPoll({busy: true}); assert.equal(busy.run().status, 'deferred-publication-busy'); assert.deepEqual(busy.events, []);
-  for (const lockFailure of [Error('online_tool_deploy_lock_busy'), Object.assign(Error('private path'), {
-    code: 'EEXIST', syscall: 'mkdir', path: '/var/lib/faolla-maintenance/merchant-space/operation.lock'})]) {
+  for (const lockFailure of [Error('storage_lifecycle_publication_busy')]) {
     const f = actualPoll({lockFailure}); assert.equal(f.run().status, 'deferred-publication-busy'); assert.deepEqual(f.events, ['lock']);
   }
   for (const lockFailure of [Error('storage_lifecycle_previous_attempt_requires_review'), Object.assign(Error('other'),
     {code: 'EEXIST', syscall: 'mkdir', path: '/unrelated'})]) assert.throws(actualPoll({lockFailure}).run);
-  assert.throws(actualPoll({executeFailure: Error('online_tool_deploy_lock_busy')}).run, /deploy_lock_busy/,
+  assert.throws(actualPoll({executeFailure: Error('storage_lifecycle_publication_busy')}).run, /publication_busy/,
     'an error after acquiring the fence cannot masquerade as harmless pre-intent deferral');
 });
 if (process.platform === 'linux') test('real Linux systemd parser accepts exact generated services and timers', () => {
