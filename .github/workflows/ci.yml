@@ -129,6 +129,15 @@ jobs:
       - name: Lint
         run: npm run lint -- --quiet
 
+      - name: Prepare Native Storage Interpreter Path
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          # Native storage-unit parsing checks the actual production interpreter
+          # path. Use this job's already selected Node, only on its disposable VM.
+          sudo -n install -m 755 "$(command -v node)" /usr/bin/node
+
       - name: Tests
         # Exact, contract-checked complement of the required explicit test steps.
         # npm test remains the complete local entrypoint; do not repeat the

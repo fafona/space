@@ -269,6 +269,15 @@ export function selectReleaseRetentionProtection({history, active, pm2, states})
 
 export function observeReleaseResources(revision) {
   validateTool(revision);
+  return observeReleaseResourcesReadOnly(revision);
+}
+
+// Read-only host facts, NOT cleanup/release authority. The established CLI above
+// still requires exact current-main validation. Independent installed storage
+// maintenance verifies its own immutable source and installation receipt before
+// using these facts, so a later application release cannot silently disable it.
+export function observeReleaseResourcesReadOnly(revision) {
+  if (!SHA.test(revision ?? '')) fail('invalid_revision');
   const daemon = daemonIdentity(); // Refuse absent daemon before pm2 can auto-start it.
   const pm2 = JSON.parse(run('pm2', ['jlist'])).map(normalizeRetirementProcess).sort((a, b) => a.pmId - b.pmId);
   same(daemonIdentity(), daemon, 'daemon_changed');

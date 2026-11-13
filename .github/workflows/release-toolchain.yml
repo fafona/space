@@ -44,6 +44,14 @@ jobs:
           cache: npm
       - name: Install Development Test Dependencies
         run: npm ci
+      - name: Prepare Native Storage Interpreter Path
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          # Same pinned interpreter as the later native rehearsal. No server is
+          # contacted; this only prepares the disposable runner's standard path.
+          sudo -n install -m 755 "$(command -v node)" /usr/bin/node
       - name: Unit And Existing Handoff Regression Tests
         run: node --test scripts/release-toolchain-*.test.mjs scripts/ci-package-install.test.mjs scripts/booking-ci-continuation-tool.test.mjs scripts/booking-ready-*.test.mjs scripts/booking-handoff-activation.test.mjs scripts/booking-handoff-rule-repair.test.mjs scripts/booking-publication-database.test.mjs scripts/booking-handoff-execution.test.mjs scripts/booking-handoff-host.test.mjs scripts/booking-handoff-native-acceptance.test.mjs scripts/booking-handoff-retention.test.mjs scripts/booking-handoff-active-retention.test.mjs scripts/booking-atomic-worker.test.mjs scripts/application-release-*.test.mjs
       - name: Install Disposable Runner Nginx
