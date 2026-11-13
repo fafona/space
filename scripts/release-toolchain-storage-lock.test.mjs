@@ -61,8 +61,8 @@ if (process.platform === 'linux') test('real kernel flock blocks a second owner 
   fs.writeFileSync(lock, '', {mode: 0o600});
   let child;
   try {
-    const module = new URL('./release-toolchain-storage-lock.mjs', import.meta.url).href;
-    const code = `import * as fs from 'node:fs';import {withStorageDeploymentLock} from ${JSON.stringify(module)};
+    const fixtureModuleUrl = new URL('./release-toolchain-storage-lock.mjs', import.meta.url).href;
+    const code = `import * as fs from 'node:fs';import {withStorageDeploymentLock} from ${JSON.stringify(fixtureModuleUrl)};
 const map=p=>p===${JSON.stringify(LOCK)}?${JSON.stringify(lock)}:p===${JSON.stringify(OP)}?${JSON.stringify(operation)}:(()=>{throw Error('fixture path')})();
 const io={lstatSync:p=>fs.lstatSync(map(p)),openSync:(p,f)=>fs.openSync(map(p),f),fstatSync:fs.fstatSync,closeSync:fs.closeSync};
 withStorageDeploymentLock(verify=>{verify();fs.writeSync(1,'held\\n');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);},{io,check:p=>fs.lstatSync(map(p))});`;
