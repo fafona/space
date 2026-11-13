@@ -28,6 +28,17 @@ function verificationChange(input){
  return{file:APPLICATION_VERIFICATION_FILE.file,role:'verification',before:[a.mode,a.oid],after:[b.mode,b.oid]};
 }
 const changes=(base,change)=>[...base.changes,change].sort((a,b)=>a.file<b.file?-1:a.file>b.file?1:0);
+function assertDescriptor(value){
+ need(value?.schemaVersion===4&&[1,2,3].includes(value.verificationBaseSchemaVersion)&&
+  isDeepStrictEqual(value.verificationFile,APPLICATION_VERIFICATION_FILE),'descriptor');
+}
+export function verificationSchemaManifest(value){
+ if(value?.schemaVersion!==4&&value?.verificationFile===undefined&&value?.verificationBaseSchemaVersion===undefined)return value;
+ assertDescriptor(value);need(Array.isArray(value.changes),'scope_changed');
+ const plain={...value,schemaVersion:value.verificationBaseSchemaVersion,
+  changes:value.changes.filter(row=>row.file!==APPLICATION_VERIFICATION_FILE.file)};
+ delete plain.verificationBaseSchemaVersion;delete plain.verificationFile;return plain;
+}
 
 export function createVerificationApplicationManifest(input,createBase,assertBase){
  const change=verificationChange(input);
@@ -39,14 +50,12 @@ export function createVerificationApplicationManifest(input,createBase,assertBas
 }
 export function assertVerificationApplicationManifest(value,input,createBase,assertBase){
  if(value?.schemaVersion!==4&&value?.verificationFile===undefined&&value?.verificationBaseSchemaVersion===undefined)return assertBase(value,input);
- need(value?.schemaVersion===4&&[1,2,3].includes(value.verificationBaseSchemaVersion)&&
-  isDeepStrictEqual(value.verificationFile,APPLICATION_VERIFICATION_FILE),'descriptor');
+ assertDescriptor(value);
  const change=verificationChange(input);need(change,'unchanged_source');
  const selected=projected(input);
  const base=createBase({...selected,purpose:value.purpose,focusedTests:value.focusedTests});
  need(value.verificationBaseSchemaVersion===base.schemaVersion&&isDeepStrictEqual(value.changes,changes(base,change)),'scope_changed');
- const plain={...value,schemaVersion:value.verificationBaseSchemaVersion,changes:base.changes};
- delete plain.verificationBaseSchemaVersion;delete plain.verificationFile;
+ const plain=verificationSchemaManifest(value);
  const proof=assertBase(plain,selected);
  return{...proof,manifestSha256:applicationReleaseHash(value),changedPaths:value.changes.length,verificationFileVerified:true};
 }

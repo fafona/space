@@ -4,10 +4,10 @@ import {isDeepStrictEqual} from 'node:util';
 import {applicationReleaseRole,applicationReleaseChanges,applicationReleaseHash,createApplicationReleaseManifest as createV1,
   assertApplicationReleaseManifest as assertV1} from './application-release-policy.mjs';
 export * from './application-release-policy.mjs';
-export {assertRecordedSchemaDatabase} from './application-release-template-database.mjs';
+import {assertRecordedSchemaDatabase as assertSchemaDatabase} from './application-release-template-database.mjs';
 import {TEMPLATE_SCHEMA,templateNeed,templateGitBlob,assertTemplateSql} from './application-release-template-contract.mjs';
 import {readFileSync} from 'node:fs';
-import {createVerificationApplicationManifest,assertVerificationApplicationManifest} from './application-release-verification.mjs';
+import {createVerificationApplicationManifest,assertVerificationApplicationManifest,verificationSchemaManifest} from './application-release-verification.mjs';
 
 export const RECORDED_APPLICATION_SCHEMA=Object.freeze({
  kind:'already-applied-booking-safeupdate-v1',version:'202611050213',
@@ -109,4 +109,9 @@ export function createApplicationReleaseManifest(input){
 }
 export function assertApplicationReleaseManifest(value,input){
  return assertVerificationApplicationManifest(value,input,createSchemaApplicationManifest,assertSchemaApplicationManifest);
+}
+export function assertRecordedSchemaDatabase(value){
+ // Run the original read-only database proof with its exact nested schema,
+ // never let a new outer manifest version turn an existing proof into a no-op.
+ return assertSchemaDatabase(verificationSchemaManifest(value));
 }

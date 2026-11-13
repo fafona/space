@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createApplicationReleaseManifest as original,applicationReleaseRole} from './application-release-policy.mjs';
 import {createApplicationReleaseManifest,assertApplicationReleaseManifest,RECORDED_APPLICATION_ARTIFACTS as records} from './application-release-compatibility.mjs';
-import {APPLICATION_VERIFICATION_FILE as descriptor} from './application-release-verification.mjs';
+import {APPLICATION_VERIFICATION_FILE as descriptor,verificationSchemaManifest} from './application-release-verification.mjs';
 import {TEMPLATE_SCHEMA,templateGitBlob} from './application-release-template-contract.mjs';
 const oid='a'.repeat(40),next='b'.repeat(40),base='c'.repeat(40),file=descriptor.file;
 const row=(file,value=oid)=>({file,mode:'100644',oid:value});
@@ -74,6 +74,12 @@ test('recorded and template schema proofs compose without enabling SQL or relaxi
  assert.equal(value.verificationBaseSchemaVersion,3);assert.equal(value.baseSchemaVersion,2);
  assert.equal(proof.templateSchemaVerified,true);assert.equal(proof.recordedSchemaVerified,true);
  assert.equal(proof.verificationFileVerified,true);assert.equal(value.templateSchema.databaseExecution,'forbidden');
+ const projected=verificationSchemaManifest(value);
+ assert.equal(projected.schemaVersion,3);assert.equal(projected.baseSchemaVersion,2);
+ assert.deepEqual(projected.templateSchema,value.templateSchema);assert.deepEqual(projected.recordedSchema,value.recordedSchema);
+ assert.deepEqual(projected.changes,value.changes.filter(r=>r.file!==file));
+ assert.equal(projected.verificationFile,undefined);assert.equal(projected.verificationBaseSchemaVersion,undefined);
+ assert.equal(value.schemaVersion,4,'database projection does not mutate the reviewed manifest');
  for(const mutate of [v=>v.templateSchema.databaseExecution='allow',v=>v.recordedSchema.databaseExecution='allow',
   v=>v.baseSchemaVersion=1,v=>v.templateSchema.sha256='0'.repeat(64)]){
   const bad=structuredClone(value);mutate(bad);assert.throws(()=>assertApplicationReleaseManifest(bad,input));
@@ -86,6 +92,20 @@ test('recorded and template schema proofs compose without enabling SQL or relaxi
  const successor=createApplicationReleaseManifest(future);
  assert.equal(successor.schemaVersion,4);assert.equal(successor.verificationBaseSchemaVersion,3);assert.equal(successor.baseSchemaVersion,1);
  assertApplicationReleaseManifest(successor,future);
+});
+
+test('database proof receives the original nested schema instead of silently ignoring the outer version',()=>{
+ const input=fixture(),value=createApplicationReleaseManifest(input),projected=verificationSchemaManifest(value);
+ assert.equal(projected.schemaVersion,1);assert.equal(verificationSchemaManifest(projected),projected);
+ for(const mutate of [v=>v.verificationFile.role='application',v=>v.verificationBaseSchemaVersion=4,v=>v.schemaVersion=3,
+  v=>delete v.verificationFile,v=>delete v.changes]){
+  const bad=structuredClone(value);mutate(bad);assert.throws(()=>verificationSchemaManifest(bad));
+ }
+ const source=readFileSync(new URL('./application-release-compatibility.mjs',import.meta.url),'utf8');
+ assert.match(source,/import \{assertRecordedSchemaDatabase as assertSchemaDatabase\} from '\.\/application-release-template-database\.mjs'/);
+ assert.match(source,/return assertSchemaDatabase\(verificationSchemaManifest\(value\)\)/);
+ for(const path of ['application-release-authority.mjs','online-traffic-release.mjs','application-release-audit.mjs'])
+  assert.match(readFileSync(new URL('./'+path,import.meta.url),'utf8'),/assertRecordedSchemaDatabase\(/);
 });
 
 test('adapter only imports pure validation helpers, never a process, network or database executor',()=>{
