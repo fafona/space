@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "240e759ef04523e974600a4cf072c5c008171dc7",
-  "purpose": "Open merchant websites directly and defer personal frames; retain on-demand features, original origins and guest history; preserve byte-exact historical test snapshots without changing production guards, data, dependencies or workers",
+  "baseline": "f42a76d6c35982e4c2b37f2c8f0d591f665a25a8",
+  "purpose": "Merchant native web service center, isolated personal functions, membership favorites and immediate language selection; exact auth build verifier classification only; no database, dependency, worker or mail changes",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -14,65 +14,104 @@
       "role": "verification",
       "before": [
         "100644",
-        "64363c20e040e08335564b3fe13292a27441273d"
-      ],
-      "after": [
-        "100644",
         "391a73c11fc5019be850aea1f6d259b948fac14d"
-      ]
-    },
-    {
-      "file": "scripts/booking-safeupdate-online.test.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "d8d0b4380c5a81b7c4917a433a492f9c07e38dab"
       ],
       "after": [
         "100644",
-        "3567d833c451f591d0ac04c3b73e958ce0ef4465"
+        "bf14ad0b0fa54f3f97b3d42b3f82f3bc8dae7b46"
       ]
     },
     {
-      "file": "scripts/ci-workflow-contract.test.mjs",
-      "role": "verification",
+      "file": "scripts/application-release-policy.mjs",
+      "role": "release-tool",
       "before": [
         "100644",
-        "0f0d2bab68b0314a674611a4a8cb9d8d52b1a003"
+        "4d71e317692e6921f5c87309e6feb30cfd736b17"
       ],
       "after": [
         "100644",
-        "9f88cfbfa7d34f8f4a40b7c64e314b4a613ea02a"
+        "0c6967492a3d578fd6fef71932eb8118756d5a29"
+      ]
+    },
+    {
+      "file": "scripts/application-release-policy.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "04584576bff87b934f64922235fb0c81cf212711"
+      ],
+      "after": [
+        "100644",
+        "adc9adca7b0b1703c83d4b2a914d10fc41d26fb8"
+      ]
+    },
+    {
+      "file": "scripts/check-auth-middleware-build.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "0c296cbbe33a076b694d1f4d39ffb2fdbe79e9cd"
+      ],
+      "after": [
+        "100644",
+        "db54f364a5eb6fceb4b8315c61d1f49f1250856d"
+      ]
+    },
+    {
+      "file": "scripts/check-auth-middleware-build.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "975a4c53804bcf40b4f81efb42ee09f62e0dacaf"
+      ],
+      "after": [
+        "100644",
+        "44a478853b80e83c266b8153807926bb126f693c"
       ]
     },
     {
       "file": "scripts/direct-merchant-web-browser-acceptance.mjs",
       "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "32aa27d9e9fd27681ca1eab8c7acd4d2ff47fcab"
-      ]
-    },
-    {
-      "file": "scripts/test-support/reviewed-application-fixture.mjs",
-      "role": "release-tool",
       "before": [
         "100644",
-        "3c80af6892bf06f1e1a99930912e21683c037b85"
+        "32aa27d9e9fd27681ca1eab8c7acd4d2ff47fcab"
       ],
       "after": [
         "100644",
-        "2dbe4f785d34910eb1a9f67d2904fb1377fc4959"
+        "07e696caf5734956b7db71fc274929011b43bd62"
+      ]
+    },
+    {
+      "file": "scripts/google-oauth-transition-release-policy.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "d240ad7f76eedf84af455a5163a3c1bc78fbc740"
+      ],
+      "after": [
+        "100644",
+        "eb889814fcedf9856d4640d87ca4ee4fa9338a62"
+      ]
+    },
+    {
+      "file": "scripts/merchant-service-center-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "972e1ea60966319919c48f26a854fe2746867be7"
       ]
     },
     {
       "file": "scripts/test-support/reviewed-application-fixture.test.mjs",
       "role": "verification",
-      "before": null,
-      "after": [
+      "before": [
         "100644",
         "6282f20edc192c21361cc62a6a76aa6200d457eb"
+      ],
+      "after": [
+        "100644",
+        "800167f993c423c66b0b6eb3d3478b339a45f48d"
       ]
     },
     {
@@ -80,11 +119,101 @@
       "role": "release-tool",
       "before": [
         "100644",
-        "87ac80462c9def72b32221f366854514ad5a880d"
+        "10adc0a56a47320d6c3ee63a0ae351c8de1ec031"
       ],
       "after": [
         "100644",
-        "10adc0a56a47320d6c3ee63a0ae351c8de1ec031"
+        "d8c8ae5bf1a341512c5fd5f44ab0fdb0a9da1125"
+      ]
+    },
+    {
+      "file": "src/app/api/merchant-service/status/route-handler.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "4d7c42e440ddb78de2059bbf2e67f96e16ac8151"
+      ]
+    },
+    {
+      "file": "src/app/api/merchant-service/status/route.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "b08dcb20e3e1066a16844b4ed5ddd0ab1f087d0c"
+      ]
+    },
+    {
+      "file": "src/app/api/merchant-service/status/route.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "beb7956df0a074e7587c6864d3ec2b0b1b96c7dc"
+      ]
+    },
+    {
+      "file": "src/app/api/personal-favorites/route-handler.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "79188ca715e29b24824feb8180e7c8262d4ed5b2"
+      ]
+    },
+    {
+      "file": "src/app/api/personal-favorites/route.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "fac6cbec14e60689347d7a1b27b7bfec1952cbb6"
+      ]
+    },
+    {
+      "file": "src/app/api/personal-favorites/route.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "8c6a5b877e061fa358ae786e9006a54409d547bb"
+      ]
+    },
+    {
+      "file": "src/app/globals.css",
+      "role": "application",
+      "before": [
+        "100644",
+        "47e60abe442e6fe3415cb6dffa01b1972a0a2192"
+      ],
+      "after": [
+        "100644",
+        "79feb97aeaab65a6984a7709f762ff2587a4cf39"
+      ]
+    },
+    {
+      "file": "src/app/login/googleOAuthTransition.test.ts",
+      "role": "verification",
+      "before": [
+        "100644",
+        "d44ea0b2e468b6d6e958c8aad182416115fb2a46"
+      ],
+      "after": [
+        "100644",
+        "7f8e50b444c0fe55a046ac0dea40d671a34add01"
+      ]
+    },
+    {
+      "file": "src/app/login/page.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "00a805bcd33bd1ea7962f9f4724a04da7731a23a"
+      ],
+      "after": [
+        "100644",
+        "3bae2b9418bf09b0dccc7843dcc1f7006227b272"
       ]
     },
     {
@@ -92,11 +221,32 @@
       "role": "application",
       "before": [
         "100644",
-        "a264b89eb255a1c784b4345bd6042aceb9fbadc8"
+        "7d31f55620f5403bcbd0bf01c04d8e931497a0ab"
       ],
       "after": [
         "100644",
-        "7d31f55620f5403bcbd0bf01c04d8e931497a0ab"
+        "4d0009c68180bdceb5c2e018d332c32ee84560f0"
+      ]
+    },
+    {
+      "file": "src/app/page.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "0cdd329ac166d944a88101f33f6a911202804d1e"
+      ],
+      "after": [
+        "100644",
+        "c07600bd447a7bc44d64d5be010046338014cfb9"
+      ]
+    },
+    {
+      "file": "src/app/service-center/page.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "6080583d075ad60256bdb014ecbf96e167ecc473"
       ]
     },
     {
@@ -104,32 +254,104 @@
       "role": "application",
       "before": [
         "100644",
-        "e3643a1bfb417b0937322ec24d0aa52cc63d25b6"
+        "9d98b56d93af9bae13efe6f63716cdb08e425dbe"
       ],
       "after": [
         "100644",
-        "9d98b56d93af9bae13efe6f63716cdb08e425dbe"
+        "ed57fdc89c667fe44e3e791aa799bdcb13534095"
+      ]
+    },
+    {
+      "file": "src/app/site/[siteId]/page.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "d759b2bb36c8b04034e1c07182931f19ce420fe4"
+      ],
+      "after": [
+        "100644",
+        "601f33ecb6f01b253d4f4de030cbfa1452ab9663"
+      ]
+    },
+    {
+      "file": "src/authMiddlewareEntry.test.ts",
+      "role": "verification",
+      "before": [
+        "100644",
+        "d91fc4b0d2b4487f324d27c36bce80b390f0dcf6"
+      ],
+      "after": [
+        "100644",
+        "ed9bdfc965fee792ae5bad5b6965a459d1677d9d"
+      ]
+    },
+    {
+      "file": "src/components/ClientDomTranslator.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "10f69ff6a4e91b9414ffaea55fdbcee406701f82"
+      ],
+      "after": [
+        "100644",
+        "e37a2f192e5264bc63b73fa5db14c38d1fbb85bb"
+      ]
+    },
+    {
+      "file": "src/components/GlobalLanguageSwitcher.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "9cd744443b8567cf012e55d5b62caab1daffc7bd"
+      ],
+      "after": [
+        "100644",
+        "e56c9faf3a5130d683ef35a0eeab0d8577f0a634"
+      ]
+    },
+    {
+      "file": "src/components/I18nProvider.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "517f6ac442c51df271c62d42460ec9333e67982d"
+      ],
+      "after": [
+        "100644",
+        "2522739c25e92fa42324d43a72fe28c14034ce2e"
+      ]
+    },
+    {
+      "file": "src/components/MerchantHostEntry.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "899eae299400d3590d621fcb7f31b0418d26902c"
       ]
     },
     {
       "file": "src/components/PublicWebsiteActions.tsx",
       "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "39ed6fbd769d8113edba822e32079931a9d08162"
-      ]
-    },
-    {
-      "file": "src/components/SitePageClient.behavior.test.ts",
-      "role": "verification",
       "before": [
         "100644",
-        "c875771476598a4934190a8a5d55dc626511a466"
+        "39ed6fbd769d8113edba822e32079931a9d08162"
       ],
       "after": [
         "100644",
-        "092d0260805f22b19b9ddebd782d15bf1137376b"
+        "52b509b7d80497b56bafc1f929da23c78413c85a"
+      ]
+    },
+    {
+      "file": "src/components/PwaBootstrapLoader.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "e20965bce2b431384a1bc5a47444b7d25fa709d1"
+      ],
+      "after": [
+        "100644",
+        "6e54c866a725c6fd43a3e90adff2524e7f774d8e"
       ]
     },
     {
@@ -137,67 +359,311 @@
       "role": "application",
       "before": [
         "100644",
-        "1ae17306a5ac22479dec459929f9bdb2313e0c25"
-      ],
-      "after": [
-        "100644",
         "50670d44949fa3f2fe705bd9aa6fd6dad447b2e7"
-      ]
-    },
-    {
-      "file": "src/lib/faollaEntry.test.ts",
-      "role": "verification",
-      "before": [
-        "100644",
-        "b386ff6bb4f369fe0bd55499ebd6f6f0f0e2e960"
       ],
       "after": [
         "100644",
-        "b005a20f79f26295e26b889f283092608d50c961"
+        "73df76790eeca399d324b5f4e131d8bf5c4eaf35"
       ]
     },
     {
-      "file": "src/lib/faollaEntry.ts",
+      "file": "src/components/blocks/SearchBarBlock.tsx",
       "role": "application",
       "before": [
         "100644",
-        "c1fb03759b3d7a9bd747f59de4ca013c2396ee7b"
+        "63ca65193c65e57d775fdb2f1f5d3356faa5db6f"
       ],
       "after": [
         "100644",
-        "29772be2c2f33a56c0bec1a10bb55d3ea80b96c3"
+        "6b35334c7acc6b6664ed8d12c5878be08254476f"
       ]
     },
     {
-      "file": "src/lib/publicWebsiteNavigation.test.ts",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "f35e45579dad7d059dfc51dd7680335bb1366bd2"
-      ]
-    },
-    {
-      "file": "src/lib/publicWebsiteNavigation.ts",
+      "file": "src/components/service-center/ServiceAccount.tsx",
       "role": "application",
       "before": null,
       "after": [
         "100644",
-        "4a158d7a9a225cc1b25c987a0eb95c81243272b9"
+        "3cad413bc795b88aa9423f6948c5061273d25dad"
+      ]
+    },
+    {
+      "file": "src/components/service-center/ServiceCenterSheet.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "5e4e03fb7a8524dc8ecb5aa4ebfd71f31ac6b12c"
+      ]
+    },
+    {
+      "file": "src/components/service-center/ServiceConversations.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "000ef91ac05c5293a7cd6bee5408a111b64ffa01"
+      ]
+    },
+    {
+      "file": "src/components/service-center/ServiceDirectory.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "baeaed13e6f374f33aacf5c7291829736a33ed74"
+      ]
+    },
+    {
+      "file": "src/components/service-center/ServiceFavorite.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "b4d74aed0b8d50569046fbcb7107513335939afa"
+      ]
+    },
+    {
+      "file": "src/components/service-center/ServiceFrameClient.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "a492c10678d3207f8973df9755f94e2e343aa02d"
+      ]
+    },
+    {
+      "file": "src/components/service-center/ServiceOrders.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "3df407a6e6d9221236991ae77113cbb61542f0d7"
+      ]
+    },
+    {
+      "file": "src/components/service-center/serviceCenterClient.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "e9e9b0c5581e8fe7317ae898a6cf2a6598cffc29"
+      ]
+    },
+    {
+      "file": "src/components/service-center/serviceCenterClient.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "d717f10d918b7dac57052e66103c2623535d7b0e"
+      ]
+    },
+    {
+      "file": "src/lib/domTranslations.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "b17c9f4b54b138a5a5dd17c0f5943cef3962b5b3"
+      ],
+      "after": [
+        "100644",
+        "3cb45eae58dc69fdcd24673e2f8ae576b200ce8c"
+      ]
+    },
+    {
+      "file": "src/lib/i18n.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "9f53e806328d788bf07727530acbfe8806db0179"
+      ],
+      "after": [
+        "100644",
+        "b67d12c28c48514fbadab0a85e4a0821e1010a0c"
+      ]
+    },
+    {
+      "file": "src/lib/membershipFavoriteLifecycle.server.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "80c89d8a6f063e6640ae4285b7e505b21fa7ec09"
+      ]
+    },
+    {
+      "file": "src/lib/merchantMemberships.server.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "9a0e37d66a5534cb30de60b8a6a55a5b508281dc"
+      ],
+      "after": [
+        "100644",
+        "67bcff884d36112bf936c650d1e7b9afff0e9d0f"
+      ]
+    },
+    {
+      "file": "src/lib/merchantServiceFrame.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "fa465fe02de96c23e19e57786d66f3b80a732354"
+      ]
+    },
+    {
+      "file": "src/lib/merchantServiceFrame.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "dc2dc01c6c2a928a455cb5b52f09b880691b39c9"
+      ]
+    },
+    {
+      "file": "src/lib/merchantServiceFrameEntry.server.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "50fb8b10be2657b337dacb5ed9773adea1604a7b"
+      ]
+    },
+    {
+      "file": "src/lib/merchantServiceFrameEntry.server.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "547d87666193a79a99be6f60b2058a6abfa3290c"
+      ]
+    },
+    {
+      "file": "src/lib/merchantServiceLocale.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "7992a76acb9444bd99540f134b0939b9bd697055"
+      ]
+    },
+    {
+      "file": "src/lib/merchantServiceLogin.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "997110c570426e7c7cae88fa29a16964ed98ef55"
+      ]
+    },
+    {
+      "file": "src/lib/merchantServiceOrigin.server.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "4de6c07accc4938f0a97506f64debdc8ed5aa550"
+      ]
+    },
+    {
+      "file": "src/lib/personalFavorites.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "1820c55f8e249c9ff6a2a4bbe3bc66846b859606"
+      ]
+    },
+    {
+      "file": "src/lib/personalFavorites.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "60c0bb65bd649bac077ac9e67385879bb607ee71"
+      ]
+    },
+    {
+      "file": "src/lib/publicMerchantHost.server.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "9ee6565c5b8e1c3e516a0e8958a76db5d03787ba"
+      ]
+    },
+    {
+      "file": "src/lib/publicMerchantHost.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "f709c6bd448af2c5a3f8af37e7e078ef1415d1f2"
+      ]
+    },
+    {
+      "file": "src/lib/serviceDirectory.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "aa6c732b56b1cfbf2b5b4be0e053cc8330be2908"
+      ]
+    },
+    {
+      "file": "src/lib/serviceDirectory.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "df4ac75b730d3d53ab3608256925b36a4f4274c1"
+      ]
+    },
+    {
+      "file": "src/proxy.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "282a1d315616b38c22298dcb2133e4f6e4292943"
+      ],
+      "after": [
+        "100644",
+        "b4b9342d64056d95de84caa1288c381857f5a5c0"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/faollaEntry.test.ts",
-    "src/lib/publicWebsiteNavigation.test.ts",
-    "src/components/SitePageClient.behavior.test.ts",
-    "src/components/MerchantMembershipEntry.test.tsx",
+    "src/lib/publicMerchantHost.test.ts",
+    "src/lib/merchantServiceFrame.test.ts",
+    "src/lib/merchantServiceFrameEntry.server.test.ts",
+    "src/lib/merchantServiceLocale.test.ts",
+    "src/lib/personalFavorites.test.ts",
+    "src/lib/membershipFavoriteLifecycle.server.test.ts",
+    "src/lib/serviceDirectory.test.ts",
+    "src/components/service-center/serviceCenterClient.test.ts",
+    "src/app/api/merchant-service/status/route.test.ts",
+    "src/app/api/personal-favorites/route.test.ts",
     "src/lib/personalGuestSession.test.ts",
     "src/lib/personalGuestPeerMerge.test.ts",
     "src/lib/personalLoginNavigation.test.ts",
-    "scripts/booking-publication-policy.test.mjs",
-    "scripts/booking-safeupdate-online.test.mjs",
-    "scripts/test-support/reviewed-application-fixture.test.mjs"
+    "src/lib/canonicalPortalRequest.test.ts",
+    "src/lib/requestMutationGuard.test.ts",
+    "src/app/login/googleOAuthTransition.test.ts",
+    "src/authMiddlewareEntry.test.ts",
+    "src/lib/publicWebsiteNavigation.test.ts",
+    "src/lib/faollaEntry.test.ts",
+    "src/components/SitePageClient.behavior.test.ts",
+    "scripts/check-auth-middleware-build.test.mjs",
+    "scripts/ci-workflow-contract.test.mjs",
+    "scripts/test-support/reviewed-application-fixture.test.mjs",
+    "scripts/google-oauth-transition-release-policy.test.mjs",
+    "scripts/attendance-records-ui-release-policy.test.mjs",
+    "scripts/application-release-policy.test.mjs",
+    "scripts/application-release-authority.test.mjs",
+    "scripts/application-release-compatibility.test.mjs",
+    "scripts/application-release-publish.test.mjs"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
