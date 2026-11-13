@@ -128,6 +128,12 @@ export function inspectStorageCandidates(revision) {
 }
 
 export function pollStorage(revision) {
+  // A publisher owning the normal fence is routine, not a failed release or a
+  // cleanup attempt. Never read a half-updated active/completed pair in it.
+  if (fs.existsSync(MAINTENANCE + '/operation.lock')) {
+    ownedReleasePath(MAINTENANCE + '/operation.lock', {directory: true, privateMode: true});
+    return {status: 'deferred-publication-busy', deletionsPerformed: false};
+  }
   const current = currentStorageEvent(), location = STORAGE_ROOT + '/events/' + current.event.key;
   const assertNoIncomplete = () => {
     const entries = fs.readdirSync(STORAGE_ROOT + '/events', {withFileTypes: true});
@@ -151,7 +157,7 @@ export function pollStorage(revision) {
     same(receipt.event, current.event, 'completion_binding');
     return {status: 'already-completed', key: current.event.key};
   }
-  return withOnlineToolPreparationLocks({deployLock: APP + '.deploy.lock', maintenance: MAINTENANCE}, () => {
+  try {return withOnlineToolPreparationLocks({deployLock: APP + '.deploy.lock', maintenance: MAINTENANCE}, () => {
     assertNoIncomplete();
     same(currentStorageEvent(), current, 'publication_changed');
     return executeStorageEvent(current.event, {
@@ -183,7 +189,14 @@ export function pollStorage(revision) {
       fail: () => storageWrite(location + '/failed.json', {kind: 'storage-lifecycle-review-required',
         event: current.event, automaticRetryAllowed: false, at: new Date().toISOString()}),
     });
-  });
+  });} catch (error) {
+    // Lock acquisition may lose a race after the read-only check above. Only
+    // these exact pre-intent acquisition failures may defer automatically.
+    if (error?.message === 'online_tool_deploy_lock_busy' || (error?.code === 'EEXIST'
+      && error.path === MAINTENANCE + '/operation.lock' && error.syscall === 'mkdir'))
+      return {status: 'deferred-publication-busy', deletionsPerformed: false};
+    throw error;
+  }
 }
 
 function availableBytes() {const s = fs.statfsSync('/www'); return s.bavail * s.bsize;}

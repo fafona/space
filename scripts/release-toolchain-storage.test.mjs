@@ -67,6 +67,8 @@ test('separate timers are bounded, low priority, persistent daily, no app contro
   const units = storageUnitFiles(target); assert.deepEqual(Object.keys(units).sort(), [...STORAGE_UNITS].sort());
   assert.match(units['faolla-storage-daily.timer'], /OnCalendar=.*UTC\n[\s\S]*Persistent=true/);
   assert.match(units['faolla-storage-post-release.timer'], /OnUnitInactiveSec=5min/);
+  assert.match(units['faolla-storage-post-release.timer'], /OnActiveSec=5min/);
+  assert.doesNotMatch(units['faolla-storage-post-release.timer'], /OnBootSec=/);
   for (const name of ['faolla-storage-daily.service', 'faolla-storage-post-release.service']) {
     assert.match(units[name], /Nice=19/); assert.match(units[name], /CPUQuota=20%/); assert.match(units[name], /TimeoutStartSec=600/);
     assert.match(units[name], /MemoryMax=512M/); assert.doesNotMatch(units[name], /Restart=|ExecStart=[^\n]*pm2|publish|rm -/);
@@ -111,7 +113,7 @@ test('daily report cannot call cleanup; runtime cannot stop processes or delete 
   for (const name of ['policy', 'host', 'install']) assert.equal(toolOnlySourcePath('scripts/release-toolchain-storage-' + name + '.mjs'), true);
 });
 
-function actualPoll({entries = [], existing = false, completed = false, failed = false} = {}) {
+function actualPoll({entries = [], existing = false, completed = false, failed = false, busy = false, lockFailure = null} = {}) {
   const source = fs.readFileSync(new URL('./release-toolchain-storage-host.mjs', import.meta.url), 'utf8');
   const body = source.match(/export function pollStorage\(revision\) \{[\s\S]*?\n\}/)[0].replace('export ', '');
   const event = storageEvent(eventInput()), current = {event}, root = '/var/lib/faolla-storage-lifecycle';
@@ -120,9 +122,9 @@ function actualPoll({entries = [], existing = false, completed = false, failed =
     currentStorageEvent: () => current, need: (v, r) => {if (!v) throw Error('storage_lifecycle_' + r);},
     same: assert.deepEqual, ownedReleasePath: () => {}, JSON,
     fs: {readdirSync: () => entries.map(name => ({name, isDirectory: () => true, isSymbolicLink: () => false})),
-      existsSync: file => file.endsWith('/failed.json') ? failed : file.endsWith('/completed.json') ? completed : existing},
+      existsSync: file => file.endsWith('/operation.lock') ? busy : file.endsWith('/failed.json') ? failed : file.endsWith('/completed.json') ? completed : existing},
     storageRead: () => JSON.stringify({kind: 'storage-lifecycle-event-completed', event}),
-    withOnlineToolPreparationLocks: (options, fn) => {events.push('lock'); return fn();},
+    withOnlineToolPreparationLocks: (options, fn) => {events.push('lock'); if (lockFailure) throw lockFailure; return fn();},
     executeStorageEvent: (e, operations) => {events.push('execute'); return operations.status(e.key);},
   };
   const poll = vm.runInNewContext(body + '\npollStorage;', context);
@@ -139,6 +141,15 @@ test('real poll blocks ALL prior incomplete events even when publication key cha
     const f = actualPoll(fixture); assert.throws(f.run, /previous_attempt_requires_review/); assert.deepEqual(f.events, []);
   }
   const f = actualPoll({entries: ['invalid']}); assert.throws(f.run, /event_layout/);
+});
+test('routine publication lock and exact acquisition races defer before destructive intent; unknown errors still fail', () => {
+  const busy = actualPoll({busy: true}); assert.equal(busy.run().status, 'deferred-publication-busy'); assert.deepEqual(busy.events, []);
+  for (const lockFailure of [Error('online_tool_deploy_lock_busy'), Object.assign(Error('private path'), {
+    code: 'EEXIST', syscall: 'mkdir', path: '/var/lib/faolla-maintenance/merchant-space/operation.lock'})]) {
+    const f = actualPoll({lockFailure}); assert.equal(f.run().status, 'deferred-publication-busy'); assert.deepEqual(f.events, ['lock']);
+  }
+  for (const lockFailure of [Error('storage_lifecycle_previous_attempt_requires_review'), Object.assign(Error('other'),
+    {code: 'EEXIST', syscall: 'mkdir', path: '/unrelated'})]) assert.throws(actualPoll({lockFailure}).run);
 });
 if (process.platform === 'linux') test('real Linux systemd parser accepts exact generated services and timers', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'faolla-storage-units-'));

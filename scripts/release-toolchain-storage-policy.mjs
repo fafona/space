@@ -84,7 +84,7 @@ export function storageUnitFiles(revision) {
     'faolla-storage-daily.service': service('daily'),
     'faolla-storage-daily.timer': '[Unit]\nDescription=Faolla daily read-only disk inventory\n\n[Timer]\nOnCalendar=*-*-* 04:40:00 UTC\nRandomizedDelaySec=600\nPersistent=true\nUnit=faolla-storage-daily.service\n\n[Install]\nWantedBy=timers.target\n',
     'faolla-storage-post-release.service': service('poll'),
-    'faolla-storage-post-release.timer': '[Unit]\nDescription=Faolla completed-publication cache reclamation observer\n\n[Timer]\nOnBootSec=5min\nOnUnitInactiveSec=5min\nRandomizedDelaySec=30\nUnit=faolla-storage-post-release.service\n\n[Install]\nWantedBy=timers.target\n',
+    'faolla-storage-post-release.timer': '[Unit]\nDescription=Faolla completed-publication cache reclamation observer\n\n[Timer]\nOnActiveSec=5min\nOnUnitInactiveSec=5min\nRandomizedDelaySec=30\nUnit=faolla-storage-post-release.service\n\n[Install]\nWantedBy=timers.target\n',
   };
 }
 
