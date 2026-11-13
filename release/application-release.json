@@ -133,6 +133,18 @@
       ]
     },
     {
+      "file": "scripts/online-unpublished-candidate.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "654a88e17c1e975b55b7f1b5f6f4c98d24e210ce"
+      ],
+      "after": [
+        "100644",
+        "3018cff412c92d68545d447030b48a77c90ace74"
+      ]
+    },
+    {
       "file": "scripts/test-support/reviewed-application-fixture.test.mjs",
       "role": "verification",
       "before": [
