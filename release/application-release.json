@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "f42a76d6c35982e4c2b37f2c8f0d591f665a25a8",
   "purpose": "Merchant native web service center, isolated personal functions, membership favorites and immediate language selection; exact auth build verifier classification and fixed booking layout fixture clock only; no database, dependency, worker or mail changes",
@@ -22,27 +22,45 @@
       ]
     },
     {
-      "file": "scripts/application-release-policy.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "4d71e317692e6921f5c87309e6feb30cfd736b17"
-      ],
-      "after": [
-        "100644",
-        "0c6967492a3d578fd6fef71932eb8118756d5a29"
-      ]
-    },
-    {
-      "file": "scripts/application-release-policy.test.mjs",
+      "file": "docs/ordinary-application-release.md",
       "role": "verification",
       "before": [
         "100644",
-        "04584576bff87b934f64922235fb0c81cf212711"
+        "606d551fec2578bf1cceb8aa2c3f5a9161de19a8"
       ],
       "after": [
         "100644",
-        "adc9adca7b0b1703c83d4b2a914d10fc41d26fb8"
+        "4fa0e903aa588b211769de5c03d3b4350e52fca8"
+      ]
+    },
+    {
+      "file": "scripts/application-release-compatibility.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "318b71f6433dc8befd7d95bd3084ee3811907d73"
+      ],
+      "after": [
+        "100644",
+        "53d3aeb2c973b0dd80e3e149dbb7b366a9b03802"
+      ]
+    },
+    {
+      "file": "scripts/application-release-verification.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f0920f04176bcee9d0ba009a4d69d6941fb26743"
+      ]
+    },
+    {
+      "file": "scripts/application-release-verification.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "dc4f7eadb38125b42d8d999746c9b02fa8bf69a2"
       ]
     },
     {
@@ -675,7 +693,9 @@
     "scripts/application-release-policy.test.mjs",
     "scripts/application-release-authority.test.mjs",
     "scripts/application-release-compatibility.test.mjs",
-    "scripts/application-release-publish.test.mjs"
+    "scripts/application-release-publish.test.mjs",
+    "scripts/application-release-verification.test.mjs",
+    "scripts/application-release-template.test.mjs"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
@@ -685,5 +705,11 @@
     "file": "scripts/supabase-migrations/202611100214_website_template_library.sql",
     "sha256": "20c7c9b3760e57e9de2ed56291db4f54f9dd844fcb6d9475009277c6a4f88db4",
     "databaseExecution": "forbidden"
+  },
+  "verificationBaseSchemaVersion": 3,
+  "verificationFile": {
+    "kind": "auth-build-verifier-only-v1",
+    "file": "scripts/check-auth-middleware-build.mjs",
+    "role": "verification"
   }
 }
