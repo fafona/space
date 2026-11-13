@@ -185,7 +185,7 @@ jobs:
         run: node --test scripts/admin-account-verification-browser-acceptance.mjs
 
       - name: Direct Merchant Web Browser Journeys
-        run: node --test --test-concurrency=1 scripts/direct-merchant-web-browser-acceptance.mjs scripts/merchant-service-center-browser-acceptance.mjs
+        run: node --test --test-concurrency=1 scripts/direct-merchant-web-browser-acceptance.mjs scripts/merchant-service-center-browser-acceptance.mjs scripts/locale-switch-browser-acceptance.mjs
 
   qr-database:
     name: QR Atomic PostgreSQL Acceptance
