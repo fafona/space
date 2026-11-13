@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import LoadingProgressScreen from "../../components/LoadingProgressScreen";
 import * as callback from "../../lib/googleOAuthCallback";
 import * as credentialValidation from "../../lib/authCredentialValidation";
+import * as serviceLogin from "../../lib/merchantServiceLogin";
 
 // Execute the complete, real login component with deterministic React hooks.
 // Only browser IO, imported descendants and auth transports are substituted.
@@ -62,6 +63,7 @@ function harness(options: { search?: string; hash?: string; locale?: string; ssr
     "@/components/LoadingProgressScreen": { default: options.actualSsr ? LoadingProgressScreen : "LoadingProgressScreen" },
     "@/lib/authCredentialValidation": credentialValidation,
     "@/lib/googleOAuthCallback": callback,
+    "@/lib/merchantServiceLogin": serviceLogin,
     "@/lib/merchantIdentity": { isMerchantNumericId: (id: string) => /^\d{8}$/.test(id) },
     "@/lib/authSessionRecovery": {
       readMerchantSessionMerchantIds: (payload: typeof merchant | null) => payload?.merchantIds ?? [],

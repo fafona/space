@@ -71,7 +71,7 @@ function collectMissingAndApplyText(
   sourceRecoveryLocale?: string | null,
 ) {
   let source = getTextSource(node);
-  if (locale === "zh-CN") {
+  if (locale === "zh-CN" && !hasTranslatableText(source, locale)) {
     if (sourceRecoveryLocale && source === (node.nodeValue ?? "")) {
       const recovered = reverseTranslateDomText(source, sourceRecoveryLocale);
       if (recovered && recovered !== source) {
@@ -118,7 +118,7 @@ function collectMissingAndApplyAttrs(
     let source = sources[attr] ?? "";
     if (!source) return;
 
-    if (locale === "zh-CN") {
+    if (locale === "zh-CN" && !hasTranslatableText(source, locale)) {
       if (sourceRecoveryLocale && source === (current ?? "")) {
         const recovered = reverseTranslateDomText(source, sourceRecoveryLocale);
         if (recovered && recovered !== source) {
@@ -155,7 +155,7 @@ function collectMissingAndApplyAttrs(
     let source = input.__merchantSourceInputValue ?? "";
     if (!source) return;
 
-    if (locale === "zh-CN") {
+    if (locale === "zh-CN" && !hasTranslatableText(source, locale)) {
       if (sourceRecoveryLocale && source === input.value) {
         const recovered = reverseTranslateDomText(source, sourceRecoveryLocale);
         if (recovered && recovered !== source) {
@@ -290,8 +290,10 @@ export default function ClientDomTranslator() {
     const sourceRecoveryLocale =
       isZhCn && previousLocale.toLowerCase() !== "zh-cn" ? previousLocale : null;
     previousLocaleRef.current = normalizedLocale;
+    const publicMerchantPage = Boolean(document.querySelector("[data-public-merchant-site]"));
+    if (publicMerchantPage) document.documentElement.removeAttribute("data-i18n-pending");
     const shouldBlockFirstPaint =
-      !isZhCn &&
+      !publicMerchantPage && !isZhCn &&
       (document.documentElement.getAttribute("data-i18n-pending") === "1" || routeChanged);
 
     let disposed = false;
@@ -325,11 +327,6 @@ export default function ClientDomTranslator() {
         });
       } finally {
         applying = false;
-      }
-
-      if (isZhCn) {
-        document.documentElement.removeAttribute("data-i18n-pending");
-        return;
       }
 
       if (missing.size === 0) {

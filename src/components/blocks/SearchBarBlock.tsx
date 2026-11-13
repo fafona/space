@@ -13,6 +13,7 @@ import { toRichHtml } from "./richText";
 
 type SearchBarBlockProps = BackgroundEditableProps &
   TypographyEditableProps & {
+  searchEventName?: string;
   heading?: string;
   text?: string;
   cityPlaceholder?: string;
@@ -657,7 +658,7 @@ export default function SearchBarBlock(props: SearchBarBlockProps) {
 
   const dispatchPortalSearch = (detail: PortalSearchDetail) => {
     if (typeof window === "undefined") return;
-    window.dispatchEvent(new CustomEvent("portal-search", { detail }));
+    window.dispatchEvent(new CustomEvent(props.searchEventName || "portal-search", { detail }));
   };
 
   const triggerSearch = (override?: Partial<PortalSearchDetail>) => {

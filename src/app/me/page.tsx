@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, ty
 import dynamic from "next/dynamic";
 import DeferredFaollaFrame from "@/components/admin/DeferredFaollaFrame";
 import { cleanPublicWebsiteReturnUrl, readPublicWebsiteWorkspaceSection } from "@/lib/publicWebsiteNavigation";
+import { readFavoriteSiteId } from "@/lib/personalFavorites";
 import Link from "next/link";
 import AccountSwitcherDialog from "@/components/AccountSwitcherDialog";
 import FaollaQrPanel from "@/components/FaollaQrPanel";
@@ -88,7 +89,6 @@ import {
   readPersonalGuestProfile,
   readPersonalGuestSupportMessages,
   readPersonalGuestSupportThread,
-  savePersonalGuestFavoriteSites,
   savePersonalGuestProfile,
   upsertPersonalGuestPeerContact,
 } from "@/lib/personalGuestSession";
@@ -343,13 +343,6 @@ type PersonalMembershipsResponsePayload = {
   error?: unknown;
   message?: unknown;
   memberships?: PersonalMembershipCard[];
-};
-
-type MembershipMutationResponsePayload = {
-  ok?: unknown;
-  error?: unknown;
-  message?: unknown;
-  membership?: PersonalMembershipCard | null;
 };
 
 type PersonalMerchantContact = {
@@ -2575,6 +2568,8 @@ export default function MePage() {
   const [personalProfileDraft, setPersonalProfileDraft] = useState<PersonalProfileDraft>(EMPTY_PERSONAL_PROFILE);
   const [personalBusinessCards, setPersonalBusinessCards] = useState<MerchantBusinessCardAsset[]>([]);
   const [personalFavoriteSites, setPersonalFavoriteSites] = useState<PersonalFavoriteSite[]>([]);
+  const [pendingFavoriteRemoval, setPendingFavoriteRemoval] = useState("");
+  const [favoriteMutationError, setFavoriteMutationError] = useState("");
   const [personalCoupons, setPersonalCoupons] = useState<PersonalClaimedCoupon[]>([]);
   const [personalCouponsLoading, setPersonalCouponsLoading] = useState(false);
   const [personalCouponsLoadError, setPersonalCouponsLoadError] = useState("");
@@ -2987,50 +2982,27 @@ export default function MePage() {
   );
   const persistPersonalFavoriteSites = useCallback(
     async (sites: PersonalFavoriteSite[]) => {
-      if (isGuestSession) {
-        const normalizedSites = normalizePersonalFavoriteSites(sites);
-        personalFavoriteSitesRef.current = normalizedSites;
-        setPersonalFavoriteSites(normalizedSites);
-        savePersonalGuestFavoriteSites(normalizedSites);
-        setPersonalProfileMessage("");
-        return;
-      }
-      if (!accountId) return;
+      if (isGuestSession || !accountId) return;
       const normalizedSites = normalizePersonalFavoriteSites(sites);
       const previousSites = personalFavoriteSitesRef.current;
       const requestId = personalFavoriteSitesSaveRequestIdRef.current + 1;
       personalFavoriteSitesSaveRequestIdRef.current = requestId;
-      personalFavoriteSitesRef.current = normalizedSites;
-      setPersonalFavoriteSites(normalizedSites);
-      setPersonalProfileMessage("");
+      setFavoriteMutationError("");
       try {
-        const response = await fetch("/api/personal-profile", {
-          method: "POST",
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: {
-            "Content-Type": "application/json",
-            accept: "application/json",
-          },
-          body: JSON.stringify({
-            favoriteSites: normalizedSites,
-          }),
-        });
-        const result = (await response.json().catch(() => null)) as PersonalProfileResponsePayload | null;
-        if (!response.ok || !result || result.ok !== true) {
-          throw new Error(readPayloadMessage(result?.message, "收藏保存失败，请稍后重试"));
+        for (const removed of previousSites.filter(site => !normalizedSites.some(next => isSamePersonalFavoriteSite(site, next)))) {
+          const response = await fetch("/api/personal-favorites", { method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "unfavorite", favoriteId: removed.id, siteId: readFavoriteSiteId(removed) }) });
+          const result = await response.json() as { ok?: boolean; message?: string; membership?: PersonalMembershipCard };
+          if (!response.ok || !result.ok) throw new Error(result.message || "取消收藏失败，请重试");
+          if (result.membership) setPersonalMemberships(current => current.map(member => member.siteId === result.membership!.siteId ? result.membership! : member));
         }
-        const nextSites = normalizePersonalFavoriteSites(result.favoriteSites);
         if (personalFavoriteSitesSaveRequestIdRef.current === requestId) {
-          personalFavoriteSitesRef.current = nextSites;
-          setPersonalFavoriteSites(nextSites);
+          personalFavoriteSitesRef.current = normalizedSites;
+          setPersonalFavoriteSites(normalizedSites);
+          setPendingFavoriteRemoval("");
         }
       } catch (error) {
-        if (personalFavoriteSitesSaveRequestIdRef.current === requestId) {
-          personalFavoriteSitesRef.current = previousSites;
-          setPersonalFavoriteSites(previousSites);
-          setPersonalProfileMessage(error instanceof Error ? error.message : "收藏保存失败，请稍后重试");
-        }
+        setFavoriteMutationError(error instanceof Error ? error.message : "取消收藏失败，请稍后重试");
         throw error;
       }
     },
@@ -3106,37 +3078,11 @@ export default function MePage() {
 
   const leavePersonalMembership = useCallback(
     async (membership: PersonalMembershipCard) => {
-      if (!membership.siteId || personalActionBusyKey) return;
-      const busyKey = `membership:${membership.siteId}`;
-      setPersonalActionBusyKey(busyKey);
-      setPersonalMembershipsLoadError("");
-      try {
-        const response = await fetch("/api/memberships", {
-          method: "PATCH",
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: {
-            "Content-Type": "application/json",
-            accept: "application/json",
-          },
-          body: JSON.stringify({
-            siteId: membership.siteId,
-          }),
-        });
-        const payload = (await response.json().catch(() => null)) as MembershipMutationResponsePayload | null;
-        if (!response.ok || payload?.ok !== true || !payload.membership) {
-          throw new Error(readPayloadMessage(payload?.message || payload?.error, "退出会员失败，请稍后重试"));
-        }
-        setPersonalMemberships((current) =>
-          current.map((item) => (item.id === membership.id ? { ...item, ...payload.membership } : item)),
-        );
-      } catch (error) {
-        setPersonalMembershipsLoadError(error instanceof Error ? error.message : "退出会员失败，请稍后重试");
-      } finally {
-        setPersonalActionBusyKey((current) => (current === busyKey ? "" : current));
-      }
+      const bookmark = { id: membership.siteId, url: `https://faolla.com/site/${membership.siteId}`, name: membership.siteName, subtitle: "已有会员身份", addedAt: membership.joinedAt };
+      setPersonalFavoriteSites(current => current.some(site => readFavoriteSiteId(site) === membership.siteId) ? current : [bookmark, ...current]);
+      setDesktopSection("favorites"); setMobileTab("self"); setMobileSelfSection("favorites");
     },
-    [personalActionBusyKey],
+    [],
   );
   const personalBusinessCardProfile = useMemo(
     () =>
@@ -3941,42 +3887,19 @@ export default function MePage() {
     },
     [isMobileViewport, locale],
   );
-  const showFaollaFavoriteToast = useCallback((text: string, tone: "success" | "error" = "success") => {
-    setFaollaFavoriteToast({
-      id: Date.now(),
-      text,
-      tone,
-    });
-  }, []);
   const toggleCurrentFaollaFavorite = useCallback(() => {
-    if (!currentFaollaFavoriteSite) return;
-    const removingFavorite = currentFaollaFavoriteActive;
-    const nextSites = currentFaollaFavoriteActive
-      ? personalFavoriteSites.filter((site) => !isSamePersonalFavoriteSite(site, currentFaollaFavoriteSite))
-      : [
-          { ...currentFaollaFavoriteSite, addedAt: new Date().toISOString() },
-          ...personalFavoriteSites.filter((site) => !isSamePersonalFavoriteSite(site, currentFaollaFavoriteSite)),
-        ].slice(0, PERSONAL_FAVORITE_SITE_LIMIT);
-    void persistPersonalFavoriteSites(nextSites)
-      .then(() => {
-        if (isMobileViewport) {
-          showFaollaFavoriteToast(removingFavorite ? "已取消收藏" : "收藏成功");
-        }
-      })
-      .catch(() => {
-        if (isMobileViewport) {
-          showFaollaFavoriteToast("收藏保存失败，请稍后重试", "error");
-        }
-      });
+    if (!currentFaollaFavoriteSite || isGuestSession || currentFaollaFavoriteActive) return;
+    const website = cleanPublicWebsiteReturnUrl(currentFaollaFavoriteSite.url, window.location.origin);
+    if (!website) return;
+    const url = new URL(website); url.searchParams.set("openService", "favorite");
+    window.location.assign(url.toString());
   }, [
     currentFaollaFavoriteActive,
     currentFaollaFavoriteSite,
-    isMobileViewport,
-    persistPersonalFavoriteSites,
-    personalFavoriteSites,
-    showFaollaFavoriteToast,
+    isGuestSession,
   ]);
   const renderFaollaFavoriteButton = (className = "") => (
+    isGuestSession || currentFaollaFavoriteActive ? null :
     <button
       type="button"
       className={`inline-flex items-center justify-center rounded-full border border-white/80 bg-white/95 text-slate-700 shadow-[0_12px_30px_rgba(15,23,42,0.18)] ring-1 ring-slate-950/10 transition hover:scale-[1.03] hover:text-amber-500 disabled:cursor-not-allowed disabled:opacity-45 ${className}`}
@@ -3997,7 +3920,7 @@ export default function MePage() {
     </button>
   );
   const renderMobileCurrentFavoriteAction = () => {
-    if (!currentFaollaFavoriteSite) return null;
+    if (!currentFaollaFavoriteSite || isGuestSession || currentFaollaFavoriteActive) return null;
     return (
       <section className="overflow-hidden rounded-[28px] border border-amber-200/80 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.08)]">
         <button
@@ -7495,6 +7418,7 @@ export default function MePage() {
 
     return (
       <div className={compact ? "space-y-3" : "space-y-4"}>
+        {favoriteMutationError ? <p role="alert" className="text-sm text-rose-600">{favoriteMutationError}</p> : null}
         {!compact ? (
           <div className="flex items-center justify-between rounded-[24px] border border-slate-200 bg-white px-5 py-4 shadow-[0_12px_32px_rgba(15,23,42,0.05)]">
             <div>
@@ -7531,6 +7455,7 @@ export default function MePage() {
               trimText(site.url);
 
             return (
+              <div key={site.id} className="space-y-2">
               <button
                 key={site.id}
                 type="button"
@@ -7564,6 +7489,14 @@ export default function MePage() {
                   </div>
                 </div>
               </button>
+              {!isGuestSession ? <div className="text-sm">
+                {pendingFavoriteRemoval === site.id ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                  <p>取消收藏后同时退出本店会员，积分、订单与历史记录仍保留。</p>
+                  <button type="button" className="mr-3 mt-2 rounded-lg border bg-white px-3 py-2" onClick={() => { void persistPersonalFavoriteSites(personalFavoriteSites.filter(item => item.id !== site.id)).catch(() => undefined); }}>确认取消并退会</button>
+                  <button type="button" onClick={() => setPendingFavoriteRemoval("")}>保留</button>
+                </div> : <button type="button" className="rounded-lg border bg-white px-3 py-2" onClick={() => setPendingFavoriteRemoval(site.id)}>取消收藏</button>}
+              </div> : null}
+              </div>
             );
           })}
         </div>
@@ -7705,7 +7638,7 @@ export default function MePage() {
                       }}
                       disabled={!active || leaving || Boolean(personalActionBusyKey && !leaving)}
                     >
-                      {leaving ? "处理中..." : active ? "退出会员" : "已退会"}
+                      {leaving ? "处理中..." : active ? "到收藏管理" : "已退会"}
                     </button>
                   </div>
                 </div>

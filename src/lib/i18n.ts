@@ -770,6 +770,16 @@ export function writeStoredLocale(
   writeStoredLocaleCookie(resolved, source);
 }
 
+/** Keep the explicit URL preference in sync without navigating/remounting the merchant page. */
+export function writeManualLocale(locale: string) {
+  const resolved = resolveSupportedLocale(locale);
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.set(I18N_URL_PARAM, resolved);
+  window.history.replaceState(window.history.state, "", url.toString());
+  writeStoredLocale(resolved, { source: "manual" });
+}
+
 export function hasStoredLocalePreference() {
   if (typeof window === "undefined" && typeof document === "undefined") return false;
   try {

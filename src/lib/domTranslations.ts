@@ -4,7 +4,7 @@ import { findUiGlossarySource, getUiGlossaryText } from "@/lib/uiGlossary";
 
 export type DomLocale = string;
 
-const CACHE_PREFIX = "merchant-space:dom-i18n-cache:v3:";
+const CACHE_PREFIX = "merchant-space:dom-i18n-cache:v4:";
 const REQUEST_TIMEOUT_MS = 10000;
 const DEFAULT_CONCURRENCY = 6;
 
@@ -130,12 +130,13 @@ function hasLetterLikeContent(input: string) {
 function isLikelyCodeOrToken(input: string) {
   if (/^(https?:\/\/|www\.)/i.test(input)) return true;
   if (/\S+@\S+/.test(input)) return true;
-  if (/^[\w-./:@#%?=&]+$/.test(input) && !input.includes(" ")) return true;
+  if (/^[\w-./:@#%?=&]+$/.test(input) && !input.includes(" ") && /[\d_./:@#%?=&]/.test(input)) return true;
   return false;
 }
 
 function shouldTranslateCoreText(input: string, locale: string) {
-  if (toApiTarget(locale) === "zh-CN") return false;
+  // Merchant-authored content need not be Chinese. Only restore Chinese source text unchanged.
+  if (toApiTarget(locale) === "zh-CN" && /[\u3400-\u9FFF]/.test(input)) return false;
   const trimmed = input.trim();
   if (!trimmed) return false;
   if (trimmed.length > 320) return false;
@@ -227,7 +228,6 @@ function parseTranslateResponse(json: unknown, fallback: string) {
 
 async function requestTranslation(source: string, locale: string) {
   const target = toApiTarget(locale);
-  if (target === "zh-CN") return source;
 
   const query = new URLSearchParams({
     client: "gtx",
@@ -249,11 +249,11 @@ async function requestTranslation(source: string, locale: string) {
         Accept: "application/json",
       },
     });
-    if (!response.ok) return source;
+    if (!response.ok) return null;
     const json = await response.json();
     return parseTranslateResponse(json, source);
   } catch {
-    return source;
+    return null;
   } finally {
     window.clearTimeout(timer);
   }
@@ -276,7 +276,8 @@ async function getOrRequestTranslation(source: string, locale: string) {
 
   const promise = requestTranslation(source, normalized)
     .then((translated) => {
-      setCachedTranslation(normalized, source, translated || source);
+      // An unavailable translator must not permanently cache the original as a successful translation.
+      if (translated !== null) setCachedTranslation(normalized, source, translated || source);
       return translated || source;
     })
     .finally(() => {
@@ -294,7 +295,6 @@ export function hasTranslatableText(input: string, locale: string) {
 
 export function isDomTranslationCached(input: string, locale: string) {
   const normalized = normalizeDomLocale(locale);
-  if (toApiTarget(normalized) === "zh-CN") return true;
   const { core } = splitOuterWhitespace(input);
   if (!shouldTranslateCoreText(core, normalized)) return true;
   if (getManualDomTranslation(core, normalized)) return true;
@@ -303,7 +303,6 @@ export function isDomTranslationCached(input: string, locale: string) {
 
 export function translateDomText(input: string, locale: string) {
   const normalized = normalizeDomLocale(locale);
-  if (toApiTarget(normalized) === "zh-CN") return input;
 
   const { leading, core, trailing } = splitOuterWhitespace(input);
   if (!shouldTranslateCoreText(core, normalized)) return input;
@@ -337,7 +336,6 @@ export function reverseTranslateDomText(input: string, locale: string) {
 
 export async function ensureDomTranslations(texts: Iterable<string>, locale: string, concurrency = DEFAULT_CONCURRENCY) {
   const normalized = normalizeDomLocale(locale);
-  if (toApiTarget(normalized) === "zh-CN") return;
 
   const unique = new Set<string>();
   for (const sourceText of texts) {

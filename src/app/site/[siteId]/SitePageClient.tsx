@@ -8,7 +8,6 @@ import { readMerchantBookingManageRedirect } from "@/lib/merchantBookingSelfServ
 import FaollaPullRefreshIndicator from "@/components/FaollaPullRefreshIndicator";
 import PublicWebsiteActions from "@/components/PublicWebsiteActions";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
-import MerchantMembershipEntry from "@/components/MerchantMembershipEntry";
 import ServiceMaintenancePage from "@/components/ServiceMaintenancePage";
 import BlockRenderer from "@/components/blocks/BlockRenderer";
 import { getBackgroundStyle } from "@/components/blocks/backgroundStyle";
@@ -391,6 +390,7 @@ async function fetchPublishedSiteBlocksWithRetries(siteId: string): Promise<Publ
 }
 
 type SitePageClientProps = {
+  serviceOrigin?: string;
   forcedSiteId?: string;
   initialIsMobileViewport?: boolean;
   initialPublishedBlocks?: Block[];
@@ -399,6 +399,7 @@ type SitePageClientProps = {
 };
 
 export function SitePageClient({
+  serviceOrigin,
   forcedSiteId,
   initialIsMobileViewport = false,
   initialPublishedBlocks = EMPTY_BLOCKS,
@@ -758,7 +759,6 @@ export function SitePageClient({
   }, 0);
   const backgroundExtendPadding = Math.max(0, maxBlockOffsetY) + 160;
   const showPublicWebsiteActions = Boolean(siteId && siteId !== "site-main" && !faollaAppShell);
-  const showMembershipEntry = Boolean(siteId && siteId !== "site-main");
   const authEntryClassName = faollaAppShell
     ? "fixed right-4 top-[calc(env(safe-area-inset-top)+0.75rem)] z-[2147481200] md:right-16 md:top-5"
     : "fixed right-16 top-3 z-[20000] md:right-20 md:top-5";
@@ -766,6 +766,7 @@ export function SitePageClient({
   return (
     <PublicTrafficProvider siteId={site?.id ?? siteId} pageId={resolvedPageId} viewport={isMobileViewport ? "mobile" : "desktop"}>
     <main
+      data-public-merchant-site={siteId !== "site-main" ? siteId : undefined}
       {...faollaPullRefreshBind}
       className="faolla-public-site-shell min-h-screen w-full overflow-x-hidden bg-gray-50 py-8"
       style={{ ...pageBackgroundStyle, paddingBottom: `calc(2rem + ${backgroundExtendPadding}px)` }}
@@ -776,17 +777,9 @@ export function SitePageClient({
         refreshing={faollaRefreshing}
       />
       <div style={faollaPullContentStyle}>
-        {showMembershipEntry || showPublicWebsiteActions ? (
+        {showPublicWebsiteActions ? (
           <div className={`faolla-site-auth-entry ${authEntryClassName} flex items-start gap-2`}>
-            {showMembershipEntry ? (
-              <MerchantMembershipEntry
-                siteId={site?.id ?? siteId}
-                siteName={effectiveMerchantName}
-              />
-            ) : null}
-            {showPublicWebsiteActions ? (
-              <PublicWebsiteActions siteId={site?.id ?? siteId} />
-            ) : null}
+            <PublicWebsiteActions siteId={site?.id ?? siteId} siteName={effectiveMerchantName} serviceOrigin={serviceOrigin} />
           </div>
         ) : null}
         <BlockRenderer

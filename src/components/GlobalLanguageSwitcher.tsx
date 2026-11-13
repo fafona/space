@@ -167,6 +167,7 @@ export default function GlobalLanguageSwitcher() {
   }, [isMobileAdminPage, open]);
 
   if (!hydrated) return null;
+  if (pathname === "/service-center") return null;
   if (faollaAppShell) return null;
 
   const isLoginPage = pathname === "/login";
