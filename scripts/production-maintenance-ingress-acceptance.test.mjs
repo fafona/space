@@ -99,19 +99,20 @@ test("raw tool stderr exception is bounded and only matches the immutable synthe
   assert.ok(Buffer.byteLength(read("nft", ["-f", "-"], input, "baseline_tables", "界".repeat(5000))) <= 1024);
 });
 
-test("bridge fixture accepts Linux 6 and only the observed CI 7 kernel, preserving every per-net check", () => {
+test("bridge fixture accepts Linux 6 and only the two observed CI 7 kernels, preserving every per-net check", () => {
   const calls = [];
   const values = { "/proc/sys/kernel/osrelease": "6.14.0-1017-azure\n", "/proc/sys/net/bridge/bridge-nf-call-iptables": "0\n",
     "/proc/sys/net/bridge/bridge-nf-call-ip6tables": "1\n" };
   const read = (path) => { calls.push(path); assert.ok(Object.hasOwn(values, path)); return values[path]; };
-  for (const kernel of ["6.14.0-1017-azure", "6.17.0-1022-azure", "7.0.0-1017-azure"]) {
+  for (const kernel of ["6.14.0-1017-azure", "6.17.0-1022-azure", "7.0.0-1017-azure", "7.0.0-1014-aws"]) {
     calls.length = 0;
     values["/proc/sys/kernel/osrelease"] = kernel + "\n";
     assert.deepEqual(readIngressAcceptanceBridgeState(read), { kernelRelease: kernel, bridge4: "0", bridge6: "1" });
     assert.deepEqual(calls, Object.keys(values));
   }
   for (const kernel of ["4.18.0-348.7.1.el8_5.x86_64", "5.15.0-1", "7.0.0-unknown", "untrusted/path", "6.0",
-    "7.0.0-1018-azure", "7.0.1-1017-azure", "7.1.0-1017-azure", "8.0.0-1017-azure", "7.0.0-1017-azure-extra", "7.0.0-1017-azure\nsecret", "6.0.0-" + "x".repeat(128)]) {
+    "7.0.0-1018-azure", "7.0.1-1017-azure", "7.1.0-1017-azure", "8.0.0-1017-azure", "7.0.0-1017-azure-extra", "7.0.0-1017-azure\nsecret",
+    "7.0.0-1015-aws", "7.0.1-1014-aws", "7.0.0-1014-aws-extra", "7.0.0-1014-aws\nsecret", "6.0.0-" + "x".repeat(128)]) {
     calls.length = 0;
     assert.throws(() => readIngressAcceptanceBridgeState((path) => {
       calls.push(path);

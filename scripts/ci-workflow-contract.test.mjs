@@ -250,7 +250,7 @@ test("real ingress acceptance is an opt-in isolated job and package installation
   assert.equal(discoverLocalTests(fileURLToPath(new URL("../", import.meta.url))).includes("scripts/production-maintenance-ingress-acceptance.mjs"), false);
 });
 
-const ingressKernelGuard = 'case "$(uname -r)" in 6.*|7.0.0-1017-azure) ;; *) exit 1 ;; esac';
+const ingressKernelGuard = 'case "$(uname -r)" in 6.*|7.0.0-1017-azure|7.0.0-1014-aws) ;; *) exit 1 ;; esac';
 
 test("bridge module initialization is fixed and confined to the disposable Ubuntu ingress job", () => {
   const job = jobBlock("maintenance-ingress");
@@ -319,14 +319,17 @@ function sudo {
   const cases = [
     { name: "valid host", status: 0, privileged: true },
     { name: "observed new CI kernel", kernel: "7.0.0-1017-azure", status: 0, privileged: true },
+    { name: "observed AWS CI kernel", kernel: "7.0.0-1014-aws", status: 0, privileged: true },
     { name: "non-CI", github: "SECRET_CI_VALUE", status: 1, command: 'test "$GITHUB_ACTIONS" = true' },
     { name: "non-Linux", runner: "SECRET_RUNNER_VALUE", status: 1, command: 'test "$RUNNER_OS" = Linux' },
     { name: "other OS", id: "debian", status: 1, command: 'test "$(. /etc/os-release; printf \'%s:%s\' "$ID" "$VERSION_ID")" = ubuntu:24.04' },
     { name: "other OS version", version: "22.04", status: 1, command: 'test "$(. /etc/os-release; printf \'%s:%s\' "$ID" "$VERSION_ID")" = ubuntu:24.04' },
-    ...["7.0.0-fixture", "7.0.0-1018-azure", "7.0.1-1017-azure", "7.1.0-1017-azure", "8.0.0-1017-azure", "7.0.0-1017-azure-extra"].map((kernel) =>
+    ...["7.0.0-fixture", "7.0.0-1018-azure", "7.0.1-1017-azure", "7.1.0-1017-azure", "8.0.0-1017-azure", "7.0.0-1017-azure-extra",
+      "7.0.0-1015-aws", "7.0.1-1014-aws", "7.0.0-1014-aws-extra"].map((kernel) =>
       ({ name: `unapproved kernel ${kernel}`, kernel, status: 1, command: ingressKernelGuard })),
     { name: "failed module command", moduleStatus: "42", status: 42, privileged: true, command: "sudo -n /usr/sbin/modprobe br_netfilter" },
     { name: "failed module command on observed new CI kernel", kernel: "7.0.0-1017-azure", moduleStatus: "42", status: 42, privileged: true, command: "sudo -n /usr/sbin/modprobe br_netfilter" },
+    { name: "failed module command on AWS CI kernel", kernel: "7.0.0-1014-aws", moduleStatus: "42", status: 42, privileged: true, command: "sudo -n /usr/sbin/modprobe br_netfilter" },
   ];
   for (const entry of cases) {
     const result = spawnSync(gateBash, ["--noprofile", "--norc", "-c", fixture + ingressPreflightScript()], {
