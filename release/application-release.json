@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "f42a76d6c35982e4c2b37f2c8f0d591f665a25a8",
-  "purpose": "Merchant native web service center, isolated personal functions, membership favorites and immediate language selection; exact auth build verifier classification only; no database, dependency, worker or mail changes",
+  "purpose": "Merchant native web service center, isolated personal functions, membership favorites and immediate language selection; exact auth build verifier classification and fixed booking layout fixture clock only; no database, dependency, worker or mail changes",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -43,6 +43,18 @@
       "after": [
         "100644",
         "adc9adca7b0b1703c83d4b2a914d10fc41d26fb8"
+      ]
+    },
+    {
+      "file": "scripts/booking-list-alignment-browser-acceptance.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "bf5839f318da35f991d159986bb074fd52ac1f9f"
+      ],
+      "after": [
+        "100644",
+        "a630c7272c660bfb514b7e17cdcde7996f643605"
       ]
     },
     {
