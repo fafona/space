@@ -550,7 +550,9 @@ test('absent v2 retains the exact legacy three-state and rolling unresolved guar
 function observedResources(f, readHistory = () => clone(f.history), extra = {}) {
   const source = readFileSync(new URL('./online-release-cache-cleanup.mjs', import.meta.url), 'utf8');
   const match = source.match(/export function observeReleaseResources\(revision\) \{[\s\S]*?\n\}/);
+  const readOnly = source.match(/export function observeReleaseResourcesReadOnly\(revision\) \{[\s\S]*?\n\}/);
   assert.ok(match, 'execute the actual complete observation entrypoint, with only host I/O helpers injected');
+  assert.ok(readOnly, 'execute the same complete read-only body, not a substitute observer');
   const events = [], root = '/www/wwwroot/merchant-space', online = '/var/lib/faolla-online-release';
   const maintenance = '/var/lib/faolla-maintenance/merchant-space';
   const refs = extra.references ?? [], scheduled = extra.scheduled ?? [];
@@ -573,7 +575,7 @@ function observedResources(f, readHistory = () => clone(f.history), extra = {}) 
       readdirSync: () => [...new Set(f.pm2.filter(p => p.cwd.startsWith(root + '.web-releases/')).map(p => p.cwd.split('/').at(-1)))]
         .map(name => ({name, isDirectory: () => true, isSymbolicLink: () => false}))},
   };
-  const observe = vm.runInNewContext(match[0].replace('export ', '') + '\nobserveReleaseResources;', context);
+  const observe = vm.runInNewContext(readOnly[0].replace('export ', '') + '\n' + match[0].replace('export ', '') + '\nobserveReleaseResources;', context);
   return {run: () => JSON.parse(JSON.stringify(observe(targetOf('8')))), events};
 }
 
