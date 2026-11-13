@@ -150,3 +150,14 @@ if (process.platform === 'linux') test('real Linux systemd parser accepts exact 
     assert.equal(result.status, 0, result.stderr);
   } finally {fs.rmSync(root, {recursive: true, force: true});}
 });
+test('both mandatory CI invocations prepare the selected interpreter on disposable hosted runners only', () => {
+  for (const name of ['ci.yml', 'release-toolchain.yml']) {
+    const text = fs.readFileSync(new URL('../.github/workflows/' + name, import.meta.url), 'utf8');
+    const step = text.match(/- name: Prepare Native Storage Interpreter Path\n([\s\S]*?)(?=\n      - name:)/)?.[1];
+    assert.ok(step, name);
+    assert.match(step, /test "\$GITHUB_ACTIONS" = true/);
+    assert.match(step, /test "\$RUNNER_ENVIRONMENT" = github-hosted/);
+    assert.match(step, /sudo -n install -m 755 "\$\(command -v node\)" \/usr\/bin\/node/);
+    assert.doesNotMatch(step, /ssh|curl|wget|npm install|apt|dnf|\|\| true/);
+  }
+});
