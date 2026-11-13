@@ -37,6 +37,18 @@ test('package permits reviewed test-script changes, never dependency, build or l
   {...original,scripts:{...original.scripts,postinstall:'node mutate.mjs'}},{...original,overrides:{next:'17'}}])
   assert.throws(()=>assertApplicationReleasePackage(original,changed));
 });
+test('the exact authentication build verifier is classified and byte-bound without admitting neighboring scripts',()=>{
+ const file='scripts/check-auth-middleware-build.mjs';
+ assert.equal(applicationReleaseRole(file),'verification');
+ for(const neighbor of ['scripts/check-auth-middleware-http.mjs','scripts/check-auth-middleware-build.js','scripts/check-auth-middleware-build.mjs.bak','scripts/check-auth-middleware-extra.mjs'])
+  assert.throws(()=>applicationReleaseRole(neighbor),/unclassified_path/);
+ const scoped={...input(),baselineRows:[...before,row(file)],targetRows:[...after,row(file,next)]};
+ const manifest=createApplicationReleaseManifest(scoped);
+ assert.deepEqual(manifest.changes.find(change=>change.file===file),{file,role:'verification',before:['100644',oid],after:['100644',next]});
+ assert.equal(assertApplicationReleaseManifest(manifest,scoped).changedPaths,3);
+ assert.throws(()=>assertApplicationReleaseManifest(manifest,{...scoped,targetRows:[...after,row(file,'d'.repeat(40))]}),/scope_changed/);
+ assert.throws(()=>createApplicationReleaseManifest({...scoped,focusedTests:[file]}),/focused_test_missing/);
+});
 test('missing, non-test, duplicate and untracked focused tests fail closed',()=>{
  for(const focusedTests of [[],['src/example.ts'],['missing.test.ts'],['src/example.test.ts','src/example.test.ts']])
   assert.throws(()=>createApplicationReleaseManifest({...input(),focusedTests}));
