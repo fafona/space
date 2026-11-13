@@ -87,12 +87,11 @@ function collectMissingAndApplyText(
   }
 
   const translated = translateDomText(source, locale);
-  if (translated !== source) {
-    if ((node.nodeValue ?? "") !== translated) {
-      guard?.markTextMutation(node);
-      node.nodeValue = translated;
-    }
-    return;
+  // A cached identity result is still a result. Restore the authored source
+  // while a cold language loads instead of retaining the previous language.
+  if ((node.nodeValue ?? "") !== translated) {
+    guard?.markTextMutation(node);
+    node.nodeValue = translated;
   }
 
   if (hasTranslatableText(source, locale) && !isDomTranslationCached(source, locale)) {
@@ -134,12 +133,9 @@ function collectMissingAndApplyAttrs(
     }
 
     const translated = translateDomText(source, locale);
-    if (translated !== source) {
-      if ((current ?? "") !== translated) {
-        guard?.markAttrMutation(element, attr);
-        element.setAttribute(attr, translated);
-      }
-      return;
+    if ((current ?? "") !== translated) {
+      guard?.markAttrMutation(element, attr);
+      element.setAttribute(attr, translated);
     }
 
     if (hasTranslatableText(source, locale) && !isDomTranslationCached(source, locale)) {
@@ -170,11 +166,8 @@ function collectMissingAndApplyAttrs(
     }
 
     const translated = translateDomText(source, locale);
-    if (translated !== source) {
-      if (input.value !== translated) {
-        input.value = translated;
-      }
-      return;
+    if (input.value !== translated) {
+      input.value = translated;
     }
 
     if (hasTranslatableText(source, locale) && !isDomTranslationCached(source, locale)) {
@@ -301,9 +294,35 @@ export default function ClientDomTranslator() {
     let scheduled = false;
     let scheduledBlock = shouldBlockFirstPaint;
     const dirtyRoots = new Set<Node>();
+    const progressRoots = new Set<Node>();
+    let progressFrame: number | null = null;
+    const requests = new AbortController();
     const mutationGuard = mutationGuardRef.current;
     const currentVersion = applyVersionRef.current + 1;
     applyVersionRef.current = currentVersion;
+
+    const paintAvailable = (roots: Iterable<Node>) => {
+      if (disposed || applyVersionRef.current !== currentVersion) return;
+      applying = true;
+      try {
+        for (const root of roots) {
+          if (root.isConnected || root === document.body) {
+            traverseAndApply(root, normalizedLocale, new Set<string>(), false, mutationGuard ?? undefined, sourceRecoveryLocale);
+          }
+        }
+      } finally { applying = false; }
+    };
+    const queueProgress = (roots: Node[]) => {
+      if (disposed) return;
+      roots.forEach(root => progressRoots.add(root));
+      if (progressFrame !== null) return;
+      progressFrame = window.requestAnimationFrame(() => {
+        progressFrame = null;
+        const ready = [...progressRoots];
+        progressRoots.clear();
+        paintAvailable(ready);
+      });
+    };
 
     const runApply = async (roots: Node[], block: boolean) => {
       if (disposed) return;
@@ -340,28 +359,14 @@ export default function ClientDomTranslator() {
         document.documentElement.setAttribute("data-i18n-pending", "1");
       }
 
-      await ensureDomTranslations(missing, normalizedLocale);
+      await ensureDomTranslations(missing, normalizedLocale, undefined, {
+        signal: requests.signal,
+        onProgress: () => queueProgress(effectiveRoots),
+      });
 
       if (disposed || applyVersionRef.current !== currentVersion) return;
 
-      applying = true;
-      try {
-        effectiveRoots.forEach((root) => {
-          if (root.isConnected || root === document.body) {
-            const noMissing = new Set<string>();
-            traverseAndApply(
-              root,
-              normalizedLocale,
-              noMissing,
-              false,
-              mutationGuard ?? undefined,
-              sourceRecoveryLocale,
-            );
-          }
-        });
-      } finally {
-        applying = false;
-      }
+      paintAvailable(effectiveRoots);
 
       if (block) {
         document.documentElement.removeAttribute("data-i18n-pending");
@@ -428,6 +433,9 @@ export default function ClientDomTranslator() {
 
     return () => {
       disposed = true;
+      requests.abort();
+      if (progressFrame !== null) window.cancelAnimationFrame(progressFrame);
+      progressRoots.clear();
       observer.disconnect();
     };
   }, [locale, pathname, searchParams]);

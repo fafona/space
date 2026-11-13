@@ -11,7 +11,17 @@ const DEFAULT_CONCURRENCY = 6;
 const localeCacheStore = new Map<string, Map<string, string>>();
 const reverseLocaleCacheStore = new Map<string, Map<string, string>>();
 const loadedLocaleCache = new Set<string>();
-const inFlightByLocale = new Map<string, Map<string, Promise<string>>>();
+type TranslationRequest = {
+  promise: Promise<string>;
+  controller: AbortController;
+  consumers: Set<symbol>;
+  settled: boolean;
+};
+export type DomTranslationOptions = {
+  signal?: AbortSignal;
+  onProgress?: () => void;
+};
+const inFlightByLocale = new Map<string, Map<string, TranslationRequest>>();
 const dirtyLocales = new Set<string>();
 
 let persistTimer: number | null = null;
@@ -226,7 +236,8 @@ function parseTranslateResponse(json: unknown, fallback: string) {
   return translated || fallback;
 }
 
-async function requestTranslation(source: string, locale: string) {
+async function requestTranslation(source: string, locale: string, signal?: AbortSignal) {
+  if (signal?.aborted) return null;
   const target = toApiTarget(locale);
 
   const query = new URLSearchParams({
@@ -238,6 +249,8 @@ async function requestTranslation(source: string, locale: string) {
   });
 
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
   const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
@@ -251,15 +264,18 @@ async function requestTranslation(source: string, locale: string) {
     });
     if (!response.ok) return null;
     const json = await response.json();
+    if (controller.signal.aborted) return null;
     return parseTranslateResponse(json, source);
   } catch {
     return null;
   } finally {
     window.clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
   }
 }
 
-async function getOrRequestTranslation(source: string, locale: string) {
+async function getOrRequestTranslation(source: string, locale: string, signal?: AbortSignal) {
+  if (signal?.aborted) return source;
   const normalized = normalizeDomLocale(locale);
   const cache = getLocaleCache(normalized);
   const cached = cache.get(source);
@@ -267,25 +283,49 @@ async function getOrRequestTranslation(source: string, locale: string) {
 
   let localeInflight = inFlightByLocale.get(normalized);
   if (!localeInflight) {
-    localeInflight = new Map<string, Promise<string>>();
+    localeInflight = new Map<string, TranslationRequest>();
     inFlightByLocale.set(normalized, localeInflight);
   }
 
-  const inflight = localeInflight.get(source);
-  if (inflight) return inflight;
+  let request = localeInflight.get(source);
+  if (!request) {
+    const created: TranslationRequest = { promise: Promise.resolve(source), controller: new AbortController(), consumers: new Set(), settled: false };
+    request = created;
+    localeInflight.set(source, created);
+    created.promise = requestTranslation(source, normalized, created.controller.signal)
+      .then((translated) => {
+        // Failed, timed-out or abandoned requests are never successful cache entries.
+        if (translated !== null && !created.controller.signal.aborted) setCachedTranslation(normalized, source, translated || source);
+        return translated || source;
+      })
+      .finally(() => {
+        created.settled = true;
+        if (localeInflight?.get(source) === created) localeInflight.delete(source);
+      });
+  }
 
-  const promise = requestTranslation(source, normalized)
-    .then((translated) => {
-      // An unavailable translator must not permanently cache the original as a successful translation.
-      if (translated !== null) setCachedTranslation(normalized, source, translated || source);
-      return translated || source;
-    })
-    .finally(() => {
-      localeInflight?.delete(source);
-    });
-
-  localeInflight.set(source, promise);
-  return promise;
+  // A locale change releases only this caller. Another live consumer (for
+  // example editor defaults) can still share the original HTTP request.
+  const selected = request, consumer = Symbol();
+  selected.consumers.add(consumer);
+  return new Promise<string>((resolve) => {
+    let released = false;
+    const release = (translated: string) => {
+      if (released) return;
+      released = true;
+      signal?.removeEventListener("abort", abort);
+      selected.consumers.delete(consumer);
+      if (!selected.settled && selected.consumers.size === 0) {
+        if (localeInflight?.get(source) === selected) localeInflight.delete(source);
+        selected.controller.abort();
+      }
+      resolve(translated);
+    };
+    const abort = () => release(source);
+    signal?.addEventListener("abort", abort, { once: true });
+    void selected.promise.then(release, () => release(source));
+    if (signal?.aborted) abort();
+  });
 }
 
 export function hasTranslatableText(input: string, locale: string) {
@@ -334,7 +374,8 @@ export function reverseTranslateDomText(input: string, locale: string) {
   return `${leading}${manualSource}${trailing}`;
 }
 
-export async function ensureDomTranslations(texts: Iterable<string>, locale: string, concurrency = DEFAULT_CONCURRENCY) {
+export async function ensureDomTranslations(texts: Iterable<string>, locale: string, concurrency = DEFAULT_CONCURRENCY, options: DomTranslationOptions = {}) {
+  if (options.signal?.aborted) return;
   const normalized = normalizeDomLocale(locale);
 
   const unique = new Set<string>();
@@ -354,10 +395,11 @@ export async function ensureDomTranslations(texts: Iterable<string>, locale: str
 
   await Promise.all(
     Array.from({ length: workerCount }).map(async () => {
-      while (queue.length > 0) {
+      while (!options.signal?.aborted && queue.length > 0) {
         const next = queue.shift();
         if (!next) break;
-        await getOrRequestTranslation(next, normalized);
+        await getOrRequestTranslation(next, normalized, options.signal);
+        if (!options.signal?.aborted && getLocaleCache(normalized).has(next)) options.onProgress?.();
       }
     }),
   );
