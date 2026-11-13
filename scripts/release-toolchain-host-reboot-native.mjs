@@ -9,6 +9,7 @@ import {captureProcessFact} from './check-production-runtime-supervision.mjs';
 import {withOwnedCiPm2ProcessWitness} from './release-toolchain-proc-witness.mjs';
 import {inspectResurrectedPm2Registry,captureResurrectedPm2DumpTarget,persistResurrectedPm2Dump,verifyResurrectedPm2Dump} from './release-toolchain-resurrection-pm2-adapter.mjs';
 import {assertCompletePm2DumpSet} from './release-toolchain-pm2-transition.mjs';
+import {observeCiProcessAlive} from './release-toolchain-ci-process-exit.mjs';
 const need=(v,c)=>{if(!v)throw Error('host_reboot_native_'+c);},pause=ms=>new Promise(r=>setTimeout(r,ms));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 export async function acceptRealPm2Resurrection(root){
@@ -22,7 +23,7 @@ export async function acceptRealPm2Resurrection(root){
  const env={PATH:'/usr/bin:/bin',HOME:root,PM2_HOME:home,NODE_OPTIONS:'',NODE_PATH:'',PM2_NODE_OPTIONS:'',LANG:'C.UTF-8',LC_ALL:'C.UTF-8'};
  const run=args=>{const r=spawnSync('/usr/bin/node',[pm2,...args],{cwd:app,env,encoding:'utf8',timeout:20000,maxBuffer:2097152});need(r.status===0&&!r.signal&&!r.error,'command');return r.stdout;};
  const boot=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();let daemon;const children=new Map();
- const live=f=>{try{const current=captureProcessFact(f.pid);return['pid','startTicks','uid','executable','cwd'].every(k=>current[k]===f[k]);}catch(e){if(['ENOENT','ESRCH'].includes(e.code))return false;throw e;}};
+ const live=f=>observeCiProcessAlive(f,{readStat:pid=>fs.readFileSync('/proc/'+pid+'/stat','utf8'),capture:captureProcessFact});
  const rows=()=>{need(live(daemon),'daemon');const parsed=JSON.parse(run(['jlist']));need(live(daemon)&&parsed.length===2,'cohort');for(const p of parsed.filter(p=>p.pid>0)){const f=captureProcessFact(p.pid);need(f.uid===0&&f.parentPid===daemon.pid&&f.cwd===app,'child');children.set(f.pid,f);}return parsed;};
  const stop=async()=>{if(!daemon)return;need(live(daemon),'daemon');process.kill(daemon.pid,'SIGINT');for(let i=0;i<200&&live(daemon);i++)await pause(25);need(!live(daemon),'daemon_exit');for(const f of children.values()){for(let i=0;i<200&&live(f);i++)await pause(25);need(!live(f),'child_exit');}daemon=null;};
  let report;
