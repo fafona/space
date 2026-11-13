@@ -7,6 +7,7 @@ export * from './application-release-policy.mjs';
 export {assertRecordedSchemaDatabase} from './application-release-template-database.mjs';
 import {TEMPLATE_SCHEMA,templateNeed,templateGitBlob,assertTemplateSql} from './application-release-template-contract.mjs';
 import {readFileSync} from 'node:fs';
+import {createVerificationApplicationManifest,assertVerificationApplicationManifest} from './application-release-verification.mjs';
 
 export const RECORDED_APPLICATION_SCHEMA=Object.freeze({
  kind:'already-applied-booking-safeupdate-v1',version:'202611050213',
@@ -82,13 +83,13 @@ function templateChanges(input,base){
  if(a)templateNeed(isDeepStrictEqual(a,b),'historical_source_changed');
  return [...base.changes,...(a?[]:[{file:TEMPLATE_SCHEMA.file,role:'already-applied-template-schema',before:null,after:[b.mode,b.oid]}])].sort((a,b)=>a.file<b.file?-1:a.file>b.file?1:0);
 }
-export function createApplicationReleaseManifest(input){
+function createSchemaApplicationManifest(input){
  if(!templateArtifact(input.targetRows))return createRecordedApplicationManifest(input);
  const base=createRecordedApplicationManifest({...input,baselineRows:withoutTemplate(input.baselineRows),targetRows:withoutTemplate(input.targetRows)});
  const value={...base,schemaVersion:3,baseSchemaVersion:base.schemaVersion,templateSchema:{...TEMPLATE_SCHEMA},changes:templateChanges(input,base)};
- assertApplicationReleaseManifest(value,input);return value;
+ assertSchemaApplicationManifest(value,input);return value;
 }
-export function assertApplicationReleaseManifest(value,input){
+function assertSchemaApplicationManifest(value,input){
  if(value?.schemaVersion!==3&&value?.templateSchema===undefined)return assertRecordedApplicationManifest(value,input);
  templateNeed(value?.schemaVersion===3&&[1,2].includes(value.baseSchemaVersion)&&isDeepStrictEqual(value.templateSchema,TEMPLATE_SCHEMA),'descriptor');
  const plain={...value,schemaVersion:value.baseSchemaVersion};delete plain.templateSchema;delete plain.baseSchemaVersion;
@@ -100,4 +101,12 @@ export function assertApplicationReleaseManifest(value,input){
  templateNeed(isDeepStrictEqual(value.changes,templateChanges(input,base)),'scope_changed');
  const proof=assertRecordedApplicationManifest({...plain,changes:base.changes},projected);
  return {...proof,manifestSha256:applicationReleaseHash(value),changedPaths:value.changes.length,templateSchemaVerified:true};
+}
+// Website-only verification classification stays outside the byte-pinned policy
+// loaded by the immutable booking worker. All previous schema guards still run.
+export function createApplicationReleaseManifest(input){
+ return createVerificationApplicationManifest(input,createSchemaApplicationManifest,assertSchemaApplicationManifest);
+}
+export function assertApplicationReleaseManifest(value,input){
+ return assertVerificationApplicationManifest(value,input,createSchemaApplicationManifest,assertSchemaApplicationManifest);
 }

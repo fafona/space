@@ -26,6 +26,8 @@ node scripts/application-release-manifest.mjs <实际在线40位SHA> HEAD "明�
 
 初次启用需要先发布纯工具提交，并使用 `application-release-worker-entry.mjs publish` 对当前预约工作进程执行一次有审计的源码更新。保留其原网站、应用、数据库、门禁、环境及其他全部进程。官方 CI 的真实 PM2 / TypeScript 应用验收、进程身份、单次重启、持久配置、保留凭证和自然周期均须通过。后续普通网站发布无需重启该任务；任务仅认可连续、已认证的兼容网站后继及其明确保留的回退边。
 
+工作进程共用的 `application-release-policy.mjs` 必须保持其已认证原字节。仅用于网站发布的登录构建校验文件分类由独立 `application-release-verification.mjs` 适配：只接受现有 `scripts/check-auth-middleware-build.mjs` 普通文件的修改，清单 v4 仍逐项绑定旧/新 blob，并完整执行原 v1/v2/v3 守卫；不允许新增、删除、执行模式变化或相邻脚本，不新增执行、数据库或后台任务控制权限。不要为此重启预约任务，也不要绕过工作进程的原字节校验。
+
 ## 常规发布入口
 
 在已安装源码目录运行：
