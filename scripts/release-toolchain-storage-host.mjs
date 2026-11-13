@@ -12,7 +12,7 @@ import {captureWebpackCache, applyWebpackCacheCleanup} from './online-release-ca
 import {assertNoRetiredArtifactReferences} from './online-release-artifact-cleanup.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {retentionHash} from './online-release-retention-policy.mjs';
-import {withOnlineToolPreparationLocks} from './prepare-online-release-tool.mjs';
+import {withStorageDeploymentLock} from './release-toolchain-storage-lock.mjs';
 import {STORAGE_ROOT, storageDigest, storageEvent, storagePressure, planStorageCaches, executeStorageEvent} from './release-toolchain-storage-policy.mjs';
 
 const APP = '/www/wwwroot/merchant-space', ONLINE = '/var/lib/faolla-online-release';
@@ -158,18 +158,21 @@ export function pollStorage(revision) {
     return {status: 'already-completed', key: current.event.key};
   }
   let acquired = false;
-  try {return withOnlineToolPreparationLocks({deployLock: APP + '.deploy.lock', maintenance: MAINTENANCE}, () => {
+  try {return withStorageDeploymentLock(held => {
     acquired = true;
+    held();
     assertNoIncomplete();
     same(currentStorageEvent(), current, 'publication_changed');
     return executeStorageEvent(current.event, {
       status: () => fs.existsSync(location) ? 'attempted' : 'absent',
       plan: () => plan(revision, current),
       preflight: p => {
+        held();
         same(snapshot(revision, current), p.observation, 'observation_changed');
         for (const c of p.caches) referenceGuard(c.releaseDirectory, p.observation);
       },
       prepare: p => {
+        held();
         need(!fs.existsSync(location), 'event_already_exists');
         storageDirectory(location);
         storageWrite(location + '/plan.json', p);
@@ -177,25 +180,24 @@ export function pollStorage(revision) {
           beforeAvailableBytes: availableBytes(), automaticRetryAllowed: false});
       },
       apply: p => executeCacheCleanup(p, {
-        observe: () => snapshot(revision, current), capture: captureWebpackCache,
-        apply: c => {referenceGuard(c.releaseDirectory, p.observation); return applyWebpackCacheCleanup(c);},
+        observe: () => {held(); return snapshot(revision, current);}, capture: captureWebpackCache,
+        apply: c => {held(); referenceGuard(c.releaseDirectory, p.observation); return applyWebpackCacheCleanup(c);},
         begin: () => storageWrite(location + '/cleanup-started.json', {at: new Date().toISOString()}),
         record: (n, r) => storageWrite(location + '/removed-' + n + '.json', r),
         finish: () => {}, failed: () => {},
       }),
-      verify: p => same(snapshot(revision, current), p.observation, 'protected_state_changed'),
-      complete: result => storageWrite(location + '/completed.json', {kind: 'storage-lifecycle-event-completed',
+      verify: p => {held(); same(snapshot(revision, current), p.observation, 'protected_state_changed');},
+      complete: result => {held(); storageWrite(location + '/completed.json', {kind: 'storage-lifecycle-event-completed',
         event: current.event, at: new Date().toISOString(), result, afterAvailableBytes: availableBytes(),
         removedLogicalBytes: result.reduce((s, r) => s + r.removedBytes, 0), processControlPerformed: false,
-        businessDataWritten: false, savedConfigurationWritten: false}),
+        businessDataWritten: false, savedConfigurationWritten: false});},
       fail: () => storageWrite(location + '/failed.json', {kind: 'storage-lifecycle-review-required',
         event: current.event, automaticRetryAllowed: false, at: new Date().toISOString()}),
     });
   });} catch (error) {
     // Lock acquisition may lose a race after the read-only check above. Only
     // these exact pre-intent acquisition failures may defer automatically.
-    if (!acquired && (error?.message === 'online_tool_deploy_lock_busy' || (error?.code === 'EEXIST'
-      && error.path === MAINTENANCE + '/operation.lock' && error.syscall === 'mkdir')))
+    if (!acquired && error?.message === 'storage_lifecycle_publication_busy')
       return {status: 'deferred-publication-busy', deletionsPerformed: false};
     throw error;
   }

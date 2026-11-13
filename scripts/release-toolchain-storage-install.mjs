@@ -5,7 +5,7 @@ import {pathToFileURL} from 'node:url';
 import {isDeepStrictEqual} from 'node:util';
 import {collectRemoteReleaseReview, assertReviewFresh, sourceGit, parseSourceTree,
   assertUnchangedApplicationSource, ownedReleasePath} from './release-toolchain-source.mjs';
-import {withOnlineToolPreparationLocks} from './prepare-online-release-tool.mjs';
+import {withStorageDeploymentLock} from './release-toolchain-storage-lock.mjs';
 import {STORAGE_ROOT, STORAGE_BASELINE, STORAGE_UNITS, storageUnitFiles, storageDigest} from './release-toolchain-storage-policy.mjs';
 import {inspectStorageSource, storageCommand, storageDirectory, storageWrite, storageRead,
   currentStorageEvent, inspectStorageCandidates, dailyStorage, storageFailure} from './release-toolchain-storage-host.mjs';
@@ -23,7 +23,8 @@ export async function installStorageLifecycle() {
   assertUnchangedApplicationSource(STORAGE_BASELINE,
     parseSourceTree(sourceGit(APP, ['ls-tree', '-r', '-z', STORAGE_BASELINE])), source.rows);
   need(sourceGit(APP, ['rev-parse', 'origin/main']).toString().trim() === revision, 'main_changed');
-  return withOnlineToolPreparationLocks({deployLock: APP + '.deploy.lock', maintenance: '/var/lib/faolla-maintenance/merchant-space'}, () => {
+  return withStorageDeploymentLock(held => {
+    held();
     assertReviewFresh(review, revision);
     inspectStorageSource({installed: false});
     const original = protectedPins(), current = currentStorageEvent();
@@ -41,8 +42,10 @@ export async function installStorageLifecycle() {
       const units = storageUnitFiles(revision);
       for (const [name, text] of Object.entries(units)) storageWrite(STORAGE_ROOT + '/units/' + name, Buffer.from(text));
       storageCommand('/usr/bin/systemd-analyze', ['verify', ...STORAGE_UNITS.map(n => STORAGE_ROOT + '/units/' + n)]);
+      held();
       need(isDeepStrictEqual(protectedPins(), original) && isDeepStrictEqual(currentStorageEvent(), current), 'protected_state_changed');
       for (const [name, text] of Object.entries(units)) {
+        held();
         const file = '/etc/systemd/system/' + name;
         const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644);
         try {fs.writeFileSync(fd, text); fs.fsyncSync(fd);} finally {fs.closeSync(fd);}
@@ -57,12 +60,14 @@ export async function installStorageLifecycle() {
         inventorySha256: source.inventorySha256, applicationUnchanged: true, review, units: Object.fromEntries(
           Object.entries(units).map(([name, text]) => [name, storageDigest(text)])), at: new Date().toISOString()});
       storageCommand('/usr/bin/systemctl', ['daemon-reload']);
+      held();
       storageCommand('/usr/bin/systemctl', ['enable', '--now', 'faolla-storage-daily.timer', 'faolla-storage-post-release.timer']);
       for (const timer of ['faolla-storage-daily.timer', 'faolla-storage-post-release.timer']) {
         need(storageCommand('/usr/bin/systemctl', ['is-enabled', timer]).trim() === 'enabled'
           && storageCommand('/usr/bin/systemctl', ['is-active', timer]).trim() === 'active', 'timer_not_active');
       }
       need(isDeepStrictEqual(protectedPins(), original) && isDeepStrictEqual(currentStorageEvent(), current), 'protected_state_changed');
+      held();
       const result = {kind: 'storage-lifecycle-scheduled', revision, timersEnabled: true, initialAvailableBytes: initial.availableBytes,
         initialEligibleCaches: inspection.candidates.length, processControlPerformed: false, applicationPublished: false,
         businessDataWritten: false, mailEnabled: false, at: new Date().toISOString()};

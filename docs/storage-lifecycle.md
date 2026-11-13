@@ -13,10 +13,14 @@ modify user data, or send mail. A scheduler failure is an operations warning.
   after full retention history, current/rollback, process/FD/environment/maps,
   saved primary and backup PM2 dumps, pending states, static/Nginx, mounts,
   schedulers, containers, and cross-release dependency links have been checked.
-- Acquire the unchanged deployment/operation locks before qualification and
+- Acquire a crash-released lease on the **existing deployment flock** before qualification and
   deletion. Revalidate every candidate and all protected state. Preserve durable
   intent, per-cache receipts, completed/failed evidence. Never automatically
   retry an event with an incomplete destructive attempt.
+- Existing publication `operation.lock` entries also block housekeeping. This
+  independent task never creates/removes that directory: kernel termination,
+  a memory/time limit or reboot releases its flock automatically, without
+  leaving a new filesystem fence that could strand the next publication.
 - Do not stop historical online processes, alter saved dumps, delete dependency
   trees/source/static assets, clean Docker, or expire database/recovery backups.
   Those require separate lifecycle qualification. A release that keeps previous
