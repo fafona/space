@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { readServiceWebsiteLoginReturn } from "@/lib/merchantServiceLogin";
 import { useI18n } from "@/components/I18nProvider";
 import PasswordField, { getPasswordToggleLabels } from "@/components/PasswordField";
 import LoadingProgressScreen from "@/components/LoadingProgressScreen";
@@ -1016,6 +1017,8 @@ function LoginPageInner() {
       const accountType = session?.accountType === "personal" ? "personal" : "merchant";
       const nativeAppRuntime = isNativeAppRuntime();
       if (accountType === "personal") {
+        const websiteReturn = !nativeAppRuntime ? readServiceWebsiteLoginReturn(loginFromUrl) : "";
+        if (websiteReturn) { window.location.href = websiteReturn; return; }
         if (loginFromUrl) {
           window.location.href = buildBackendFaollaHref("/me", loginFromUrl);
           return;

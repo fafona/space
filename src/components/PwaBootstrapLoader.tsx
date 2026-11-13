@@ -33,6 +33,7 @@ export default function PwaBootstrapLoader() {
   const [mode, setMode] = useState<"pending" | "service-worker-only" | "full">("pending");
 
   useEffect(() => {
+    if (window.location.pathname === "/service-center") return;
     let cancelled = false;
     let timeoutId: number | undefined;
     let idleId: number | undefined;

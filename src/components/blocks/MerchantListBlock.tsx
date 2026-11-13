@@ -38,6 +38,7 @@ import { toRichHtml } from "./richText";
 
 type MerchantListBlockProps = BackgroundEditableProps &
   TypographyEditableProps & {
+  searchEventName?: string;
   heading?: string;
   text?: string;
   maxItems?: number;
@@ -495,11 +496,12 @@ export default function MerchantListBlock(props: MerchantListBlockProps) {
       const detail = (event as CustomEvent<PortalSearchDetail>).detail;
       setSearchFilter(normalizeSearchFilter(locationOptionsApi, detail));
     };
-    window.addEventListener("portal-search", onPortalSearch as EventListener);
+    const searchEvent = props.searchEventName || "portal-search";
+    window.addEventListener(searchEvent, onPortalSearch as EventListener);
     return () => {
-      window.removeEventListener("portal-search", onPortalSearch as EventListener);
+      window.removeEventListener(searchEvent, onPortalSearch as EventListener);
     };
-  }, [locationOptionsApi]);
+  }, [locationOptionsApi, props.searchEventName]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setSortNowMs(Date.now()), 60_000);

@@ -14,11 +14,14 @@ test("build guard rejects missing middleware and expanded routes", () => {
     assert.throws(() => assertAuthMiddlewareBuild(dir), /build_missing/);
     const manifest = { functions: { "/_middleware": {
       runtime: "nodejs",
-      matchers: [{ regexp: "^/(login|reset-password|enterprise|api/auth)(/.*)?$" }],
+      matchers: [{ regexp: "^/(login|reset-password|enterprise|api/auth)(/.*)?$" }, { regexp: "^/service-center$" }],
     } } };
     writeFileSync(join(dir, "server/middleware.js"), "// fixture");
     write(manifest);
     assert.equal(assertAuthMiddlewareBuild(dir), true);
+    manifest.functions["/_middleware"].matchers.pop();
+    write(manifest);
+    assert.throws(() => assertAuthMiddlewareBuild(dir), /route_missing/, "the service document must retain its frame-origin guard");
     manifest.functions["/_middleware"].matchers = [{ regexp: "^/.*" }];
     write(manifest);
     assert.throws(() => assertAuthMiddlewareBuild(dir), /scope_expanded/);

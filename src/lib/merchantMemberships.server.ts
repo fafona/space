@@ -56,6 +56,7 @@ import {
 import { appendMutationOperationMarker, buildMutationOperationMarker } from "@/lib/mutationOperationId";
 import { readPersonalCustomerProfileFromSession } from "@/lib/personalCustomerProfile";
 import type { PersonalAccountSession } from "@/lib/personalAccountSession.server";
+import { projectMembershipFavorite, type PersonalFavoriteSite } from "@/lib/personalFavorites";
 
 function requireMembershipsStoreClient() {
   const supabase = createServerSupabaseServiceClient();
@@ -197,7 +198,8 @@ export function readPersonalMembershipProfileFromSession(session: PersonalAccoun
   });
 }
 
-async function writePersonalMembershipToMetadata(session: PersonalAccountSession, membership: PersonalMembershipRecordLike) {
+async function writePersonalMembershipToMetadata(session: PersonalAccountSession, membership: PersonalMembershipRecordLike,
+  favoriteChange?: { favorite?: PersonalFavoriteSite; remove?: boolean; previousId?: string }) {
   const card = {
     id: membership.id,
     siteId: membership.siteId,
@@ -208,7 +210,8 @@ async function writePersonalMembershipToMetadata(session: PersonalAccountSession
     joinedAt: membership.joinedAt,
     leftAt: membership.leftAt,
   } satisfies PersonalMembershipCard;
-  const nextMetadata = writePersonalMembershipCardToUserMetadata(session.user.user_metadata ?? {}, card);
+  const cardMetadata = writePersonalMembershipCardToUserMetadata(session.user.user_metadata ?? {}, card);
+  const nextMetadata = favoriteChange ? projectMembershipFavorite(cardMetadata, { siteId: membership.siteId, ...favoriteChange }) : cardMetadata;
   const { error } = await session.adminSupabase.auth.admin.updateUserById(session.userId, { user_metadata: nextMetadata });
   if (error) throw error;
 }
@@ -1915,23 +1918,32 @@ export async function applyMerchantMembershipPointDeduction(
   );
 }
 
+const membershipLifecycleDependencies = {
+  client: requireMembershipsStoreClient,
+  settings: getMerchantMembershipSettings as (siteId: string) => Promise<MerchantMembershipSettings | null>,
+  load: loadStoredMerchantMemberships,
+  save: saveStoredMerchantMemberships,
+};
+
 export async function joinMerchantMembership(input: {
   siteId: string;
   siteName: string;
   session: PersonalAccountSession;
   profile?: unknown;
-}): Promise<MerchantMembershipRecord> {
-  const supabase = requireMembershipsStoreClient();
+  favorite?: PersonalFavoriteSite;
+  previousFavoriteId?: string;
+}, dependencies = membershipLifecycleDependencies): Promise<MerchantMembershipRecord> {
+  const supabase = dependencies.client();
   const siteId = trimText(input.siteId, 64);
   if (!siteId) throw new Error("invalid_site_id");
   const siteName = trimText(input.siteName, 120) || siteId;
-  const settings = await getMerchantMembershipSettings(siteId).catch(() => null);
+  const settings = await dependencies.settings(siteId).catch(() => null);
   const profile = normalizeMerchantMembershipProfileDraft(input.profile, readPersonalMembershipProfileFromSession(input.session));
   const profileValidationError = getMerchantMembershipProfileValidationError(profile);
   if (profileValidationError) throw new Error(profileValidationError);
   const nextMembership = await withMerchantMembershipMutationLock(siteId, async () => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const stored = await loadStoredMerchantMemberships(supabase, siteId);
+      const stored = await dependencies.load(supabase, siteId);
       const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
       const existingIndex = current.findIndex(
         (membership) =>
@@ -1995,7 +2007,7 @@ export async function joinMerchantMembership(input: {
       }
       const nextMemberships = existingIndex >= 0 ? [...current] : [membership, ...current];
       if (existingIndex >= 0) nextMemberships[existingIndex] = membership;
-      const saved = await saveStoredMerchantMemberships(supabase, {
+      const saved = await dependencies.save(supabase, {
         siteId,
         memberships: nextMemberships,
         updatedAt: now,
@@ -2006,20 +2018,22 @@ export async function joinMerchantMembership(input: {
     }
     throw new Error("merchant_memberships_conflict");
   });
-  await writePersonalMembershipToMetadata(input.session, nextMembership);
+  await writePersonalMembershipToMetadata(input.session, nextMembership, input.favorite ? { favorite: input.favorite, previousId: input.previousFavoriteId } : undefined);
   return nextMembership;
 }
 
 export async function leaveMerchantMembership(input: {
   siteId: string;
   session: PersonalAccountSession;
-}): Promise<MerchantMembershipRecord> {
-  const supabase = requireMembershipsStoreClient();
+  removeFavorite?: boolean;
+  previousFavoriteId?: string;
+}, dependencies = membershipLifecycleDependencies): Promise<MerchantMembershipRecord> {
+  const supabase = dependencies.client();
   const siteId = trimText(input.siteId, 64);
   if (!siteId) throw new Error("invalid_site_id");
   const nextMembership = await withMerchantMembershipMutationLock(siteId, async () => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const stored = await loadStoredMerchantMemberships(supabase, siteId);
+      const stored = await dependencies.load(supabase, siteId);
       const current = normalizeMerchantMembershipRecords(stored?.memberships ?? []);
       const index = current.findIndex(
         (membership) =>
@@ -2037,7 +2051,7 @@ export async function leaveMerchantMembership(input: {
       };
       const nextMemberships = [...current];
       nextMemberships[index] = membership;
-      const saved = await saveStoredMerchantMemberships(supabase, {
+      const saved = await dependencies.save(supabase, {
         siteId,
         memberships: nextMemberships,
         updatedAt: now,
@@ -2048,6 +2062,7 @@ export async function leaveMerchantMembership(input: {
     }
     throw new Error("merchant_memberships_conflict");
   });
-  await writePersonalMembershipToMetadata(input.session, toPersonalMembershipCard(nextMembership));
+  await writePersonalMembershipToMetadata(input.session, toPersonalMembershipCard(nextMembership), input.removeFavorite
+    ? { remove: true, previousId: input.previousFavoriteId } : undefined);
   return nextMembership;
 }

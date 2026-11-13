@@ -13,6 +13,7 @@ import {
 } from "@/lib/merchantSeo";
 import { fetchPublishedSitePayloadFromSupabase } from "@/lib/publishedSiteData";
 import SitePageClient from "./SitePageClient";
+import { resolveCanonicalPortalOrigin } from "@/lib/canonicalPortalRequest";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -134,7 +135,7 @@ export default async function SitePage({ params, searchParams }: SitePageProps) 
   const resolvedSearchParams = await searchParams;
   const initialIsMobileViewport = false;
   if (isContactCardFastEntry(resolvedSearchParams)) {
-    return <SitePageClient forcedSiteId={siteId} initialIsMobileViewport={initialIsMobileViewport} />;
+    return <SitePageClient forcedSiteId={siteId} initialIsMobileViewport={initialIsMobileViewport} serviceOrigin={resolveCanonicalPortalOrigin()} />;
   }
   const publishedSite = await fetchPublishedSitePayloadForRequestFast(siteId, SITE_PAGE_PAYLOAD_TIMEOUT_MS);
   if (publishedSite?.serviceState?.maintenance) {
@@ -162,6 +163,7 @@ export default async function SitePage({ params, searchParams }: SitePageProps) 
         />
       ) : null}
       <SitePageClient
+        serviceOrigin={resolveCanonicalPortalOrigin()}
         forcedSiteId={siteId}
         initialIsMobileViewport={initialIsMobileViewport}
         initialPublishedBlocks={publishedSite?.blocks}

@@ -53,6 +53,9 @@ async function assets() {
 async function mount(browser, width, { locale = "zh-CN", permissions } = {}) {
   const context = await browser.newContext({ viewport: { width, height: 1200 } });
   const page = await context.newPage(), errors = [], unexpected = [], mutations = [];
+  // Layout fixtures have fixed dates. Employee mode intentionally ignores saved
+  // preferences, so keep its real default seven-day filter inside that window.
+  await page.clock.setFixedTime(new Date("2026-11-05T12:00:00Z"));
   let bookings = fixtureBookings(), pendingMutation = null;
   page.setDefaultTimeout(10_000);
   page.on("pageerror", error => errors.push(error.message));

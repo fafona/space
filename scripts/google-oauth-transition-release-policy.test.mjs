@@ -10,8 +10,9 @@ import {loginProtectedEnvironment,assertLoginEnvironment,loginCandidateOverrides
 import {onlinePublicationLane} from './online-traffic-publication-policy.mjs';
 import {onlineReleaseLane,onlineReleaseStageStatus,onlineReleaseActivationStatus,assertOnlineReleaseDatabaseAllowed,onlineReleaseMigrationTarget,assertPendingOnlineReleaseMigrations} from './online-traffic-release-policy.mjs';
 import {attendanceOnlineBuildPlan,ATTENDANCE_BUILD_LIMITS} from './attendance-online-build.mjs';
+import {readReviewedApplicationFixture} from './test-support/reviewed-application-fixture.mjs';
 const files=[...app,...tooling],target='a'.repeat(40),root=new URL('../',import.meta.url);
-const readBlob=file=>readFileSync(new URL(file,root),'utf8').replace(/\r\n/g,'\n');
+const readBlob=readReviewedApplicationFixture;
 test('the complete three-file Google loading UI repair has a distinct no-database lane',()=>{
  for(const list of [app,files,[...files].reverse()]){assert.equal(onlinePublicationLane(list),lane);assert.equal(onlineReleaseLane(list),lane);}
  assert.equal(onlineReleaseStageStatus(lane),'ready-no-database');assert.equal(onlineReleaseActivationStatus(lane),'ready-no-database');

@@ -48,7 +48,7 @@ const script=(await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents
   upsertPersonalGuestOrder({...dates,id:'O99990001202611010001',siteId:'99990001',siteName:'Synthetic venue',status:'pending',customer:{name:'Synthetic visitor',phone:'000',email:'guest@example.invalid',note:''},items:[{productId:'p1',code:'TEST-1',name:'Synthetic product',description:'',imageUrl:'',tag:'',quantity:1,unitPrice:9,unitPriceText:'€9.00'}],pricePrefix:'€'});
  }
  const p=location.pathname;
- createRoot(document.getElementById('root')).render(p==='/me'?<MePage/>:p==='/directory'?<MerchantListBlock publishedMerchantSnapshot={[${JSON.stringify(merchant)}]}/>:<SitePageClient forcedSiteId="99990001" initialPublishedBlocks={${JSON.stringify(blocks)}} initialIsMobileViewport={innerWidth<768}/>);
+ createRoot(document.getElementById('root')).render(p==='/me'?<MePage/>:p==='/directory'?<MerchantListBlock publishedMerchantSnapshot={[${JSON.stringify(merchant)}]}/>:<SitePageClient forcedSiteId="99990001" serviceOrigin="${origin}" initialPublishedBlocks={${JSON.stringify(blocks)}} initialIsMobileViewport={innerWidth<768}/>);
  `},bundle:true,platform:'browser',format:'iife',write:false,jsx:'automatic',plugins:[fixturePlugin],define:{'process.env':'{}','process.env.NODE_ENV':'"production"'},logLevel:'silent'})).outputFiles[0].text;
 const css=(await postcss([tailwind()]).process('@import "tailwindcss" source(none);\n@source "./src/app/me/page.tsx";\n@source "./src/app/site/[siteId]/SitePageClient.tsx";\n@source "./src/components/PublicWebsiteActions.tsx";\n@source "./src/components/blocks/MerchantListBlock.tsx";', {from:path.resolve('direct-web-acceptance.css')})).css;
 
@@ -74,7 +74,7 @@ async function setup(browser,width,{touch=false}={}){
   async close(){await context.close();if(errors.length||writes.length||unexpected.length)console.error({errors,writes,unexpected});assert.deepEqual(errors,[]);assert.deepEqual(writes,[]);assert.deepEqual(unexpected,[]);}};
 }
 
-test('standalone merchant paints before optional membership identity resolves, without a redirect or iframe',{timeout:60000},async()=>{
+test('standalone merchant paints without a login bootstrap, join entry, redirect or iframe',{timeout:60000},async()=>{
  const browser=await chromium.launch({headless:true});
  try{for(const width of [320,390,1440]){
   const f=await setup(browser,width,{touch:width<768});
@@ -82,20 +82,11 @@ test('standalone merchant paints before optional membership identity resolves, w
    await f.open('/site/99990001?page=page-2&uiLocale=es-ES');
    await f.page.getByRole('heading',{name:'Published merchant content'}).waitFor();
    assert.equal(await f.page.locator('iframe').count(),0);
-   await f.page.waitForFunction(()=>window.__authCalls===1);
    assert.equal(new URL(f.page.url()).pathname,'/site/99990001');
-   const mine=f.page.getByRole('button',{name:'我的',exact:true});await mine.click();
-   const orders=f.page.getByRole('link',{name:'我的订单与预约',exact:true});await orders.waitFor();
-   const href=new URL(await orders.getAttribute('href'),origin);
-   assert.equal(href.searchParams.get('personalSection'),'consumption');
-   assert.equal(href.searchParams.get('returnTo'),f.page.url());
-   assert.equal(await orders.getAttribute('target'),'_top');
-   assert.equal(await f.page.getByRole('link',{name:'会话咨询',exact:true}).getAttribute('href').then(h=>new URL(h,origin).searchParams.get('peerMerchantId')),'99990001');
-   await f.page.keyboard.press('Escape');assert.equal(await orders.count(),0);
-   await mine.click();await f.page.mouse.click(8,400);assert.equal(await orders.count(),0);
-   const star=f.page.getByRole('link',{name:'在个人中心收藏本店',exact:true});
-   assert.equal(new URL(await star.getAttribute('href'),origin).searchParams.get('section'),'faolla');
-   assert.equal(await f.page.evaluate(()=>window.__authCalls),1,'navigation actions never start a second auth bootstrap');
+   assert.equal(await f.page.getByRole('button',{name:'服务中心',exact:true}).count(),1);
+   assert.equal(await f.page.getByRole('button',{name:'加入',exact:true}).count(),0);
+   assert.equal(await f.page.getByRole('link',{name:'在个人中心收藏本店',exact:true}).count(),0);
+   assert.equal(await f.page.evaluate(()=>window.__authCalls),0,'standalone actions never launch cookie recovery on the merchant origin');
    assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   }finally{await f.close();}
  }}finally{await browser.close();}

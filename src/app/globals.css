@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+.faolla-service-sheet { height: min(82dvh, 920px); max-height: 82dvh; padding-bottom: env(safe-area-inset-bottom); }
+.faolla-service-sheet::backdrop { background: rgb(2 6 23 / .32); }
+[data-service-directory] section { width: 100% !important; max-width: 100%; margin: 0 0 1rem !important; padding: 0 !important; transform: none !important; }
+[data-service-directory] section > div:first-child { width: 100% !important; max-width: 100%; padding: 16px; }
+.faolla-service-sheet[open] { animation: faolla-service-rise .2s ease-out; }
+@keyframes faolla-service-rise { from { transform: translateY(40px); opacity: .5; } to { transform: translateY(0); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .faolla-service-sheet[open] { animation: none; } }
+
 :root {
   --background: #ffffff;
   --foreground: #171717;

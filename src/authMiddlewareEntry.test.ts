@@ -7,7 +7,7 @@ test("Next-discovered auth entry preserves OAuth return and portal isolation", a
   const previous = process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN;
   process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = "https://launch.faolla.com";
   try {
-    assert.deepEqual(config.matcher, ["/login/:path*", "/reset-password/:path*", "/enterprise/:path*", "/api/auth/:path*"]);
+    assert.deepEqual(config.matcher, ["/login/:path*", "/reset-password/:path*", "/enterprise/:path*", "/api/auth/:path*", "/service-center"]);
     const paths = [
       "/login?oauth=google&accountType=merchant&code=fixture-code&state=fixture-state&redirect=%2F10000000",
       "/login?oauth=google&accountType=personal&loginFrom=https%3A%2F%2Fwww.faolla.com%2F",

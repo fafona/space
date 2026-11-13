@@ -17,7 +17,7 @@ export function assertAuthMiddlewareBuild(buildDir = ".next") {
   const matchers = entry.matchers?.map((matcher) => new RegExp(matcher.regexp));
   if (!matchers?.length) throw new Error("auth_middleware_matchers_missing");
   const matches = (path) => matchers.some((matcher) => matcher.test(path));
-  for (const path of ["/login", "/reset-password", "/enterprise", "/enterprise/10000000", "/api/auth/merchant-session"]) {
+  for (const path of ["/login", "/reset-password", "/enterprise", "/enterprise/10000000", "/api/auth/merchant-session", "/service-center"]) {
     if (!matches(path)) throw new Error("auth_middleware_route_missing");
   }
   for (const path of ["/", "/site/10000000", "/10000000", "/auth/v1/callback", "/_next/static/test.js"]) {

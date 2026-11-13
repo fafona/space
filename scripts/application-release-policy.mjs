@@ -20,6 +20,8 @@ export function applicationReleaseRole(file) {
   need(typeof file === 'string' && file.length < 400 && !/[\x00-\x20\\]/.test(file) &&
     !file.startsWith('/') && !file.split('/').some(part => !part || part === '.' || part === '..'), 'path');
   need(!forbiddenPath(file), 'code_only_scope');
+  // Reviewed build verification only; do not admit adjacent scripts or add execution authority.
+  if (file === 'scripts/check-auth-middleware-build.mjs') return 'verification';
   if (testPath(file) || /^scripts\/[a-z0-9-]+-browser-acceptance\.mjs$/.test(file) || file.startsWith('docs/') || file.startsWith('.github/')) return 'verification';
   if (toolOnlySourcePath(file) || /^scripts\/application-release[\w-]*\.mjs$/.test(file)) return 'release-tool';
   if (file === 'package.json') return 'test-scripts-only';
