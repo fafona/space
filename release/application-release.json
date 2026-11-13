@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "fca0817b32269781537f8866b6a89052366cd733",
-  "purpose": "Improve Spanish language switching with progressive translation paint, correct identity restoration and cancellation of obsolete locale requests; preserve private inputs and shared consumers.",
+  "purpose": "Improve progressive language switching and restore Spanish immediately; admit the observed AWS CI kernel and handle exited owned CI processes without changing production identity validation.",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -18,7 +18,19 @@
       ],
       "after": [
         "100644",
-        "e23f1cf933b061634209f20f5a371fbdc3ce37fe"
+        "8e0439041c0085d8a7b0eadd2ef72739e7dfad06"
+      ]
+    },
+    {
+      "file": "scripts/ci-workflow-contract.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "9f88cfbfa7d34f8f4a40b7c64e314b4a613ea02a"
+      ],
+      "after": [
+        "100644",
+        "683bef3e8434b64ceb7eda4028e6a3dc8e9ad83f"
       ]
     },
     {
@@ -28,6 +40,60 @@
       "after": [
         "100644",
         "446fda946e6878f9ce982f70210b39dfd78683db"
+      ]
+    },
+    {
+      "file": "scripts/production-maintenance-ingress-acceptance.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "3680291922ad6d42afeae371cd5d42076762854a"
+      ],
+      "after": [
+        "100644",
+        "3b20dbf048f636663f029491ee2215cefdb08985"
+      ]
+    },
+    {
+      "file": "scripts/production-maintenance-ingress-acceptance.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "f7546fa92eb29379d9741889c253773dd119907f"
+      ],
+      "after": [
+        "100644",
+        "ec38c31875a08bd302b8b363fa04399f8e2b2e34"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-ci-process-exit.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c881cf4da7af208098faf18c3126b65e94891254"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-ci-process-exit.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "73f5b3c3d162bcd74172b663b75af71a6c3181a2"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-host-reboot-native.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "9e555572fb39cc2ae9c934ecadcef7e7b0148f2a"
+      ],
+      "after": [
+        "100644",
+        "65c0d8a96e45a0a4f497e781400cac3d09304192"
       ]
     },
     {
