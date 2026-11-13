@@ -88,7 +88,10 @@ finally:
  release()
  os.waitpid(pid,0)
 `;
-  const parent = spawn('/usr/bin/python3', ['-I', '-S', '-B', '-c', python], {stdio: ['pipe', 'pipe', 'pipe'], env: {PATH: '/usr/bin:/bin', LANG: 'C.UTF-8'}});
+  // The unchanged strict observer rejects literal newlines in argv. Encode the
+  // synthetic program so its process satisfies that same production contract.
+  const command = "import base64;exec(base64.b64decode('" + Buffer.from(python).toString('base64') + "'))";
+  const parent = spawn('/usr/bin/python3', ['-I', '-S', '-B', '-c', command], {stdio: ['pipe', 'pipe', 'pipe'], env: {PATH: '/usr/bin:/bin', LANG: 'C.UTF-8'}});
   let stderr = ''; parent.stderr.setEncoding('utf8'); parent.stderr.on('data', data => {stderr += data;});
   const exited = once(parent, 'exit');
   try {
