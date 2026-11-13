@@ -157,7 +157,9 @@ export function pollStorage(revision) {
     same(receipt.event, current.event, 'completion_binding');
     return {status: 'already-completed', key: current.event.key};
   }
+  let acquired = false;
   try {return withOnlineToolPreparationLocks({deployLock: APP + '.deploy.lock', maintenance: MAINTENANCE}, () => {
+    acquired = true;
     assertNoIncomplete();
     same(currentStorageEvent(), current, 'publication_changed');
     return executeStorageEvent(current.event, {
@@ -192,8 +194,8 @@ export function pollStorage(revision) {
   });} catch (error) {
     // Lock acquisition may lose a race after the read-only check above. Only
     // these exact pre-intent acquisition failures may defer automatically.
-    if (error?.message === 'online_tool_deploy_lock_busy' || (error?.code === 'EEXIST'
-      && error.path === MAINTENANCE + '/operation.lock' && error.syscall === 'mkdir'))
+    if (!acquired && (error?.message === 'online_tool_deploy_lock_busy' || (error?.code === 'EEXIST'
+      && error.path === MAINTENANCE + '/operation.lock' && error.syscall === 'mkdir')))
       return {status: 'deferred-publication-busy', deletionsPerformed: false};
     throw error;
   }

@@ -113,7 +113,7 @@ test('daily report cannot call cleanup; runtime cannot stop processes or delete 
   for (const name of ['policy', 'host', 'install']) assert.equal(toolOnlySourcePath('scripts/release-toolchain-storage-' + name + '.mjs'), true);
 });
 
-function actualPoll({entries = [], existing = false, completed = false, failed = false, busy = false, lockFailure = null} = {}) {
+function actualPoll({entries = [], existing = false, completed = false, failed = false, busy = false, lockFailure = null, executeFailure = null} = {}) {
   const source = fs.readFileSync(new URL('./release-toolchain-storage-host.mjs', import.meta.url), 'utf8');
   const body = source.match(/export function pollStorage\(revision\) \{[\s\S]*?\n\}/)[0].replace('export ', '');
   const event = storageEvent(eventInput()), current = {event}, root = '/var/lib/faolla-storage-lifecycle';
@@ -125,7 +125,7 @@ function actualPoll({entries = [], existing = false, completed = false, failed =
       existsSync: file => file.endsWith('/operation.lock') ? busy : file.endsWith('/failed.json') ? failed : file.endsWith('/completed.json') ? completed : existing},
     storageRead: () => JSON.stringify({kind: 'storage-lifecycle-event-completed', event}),
     withOnlineToolPreparationLocks: (options, fn) => {events.push('lock'); if (lockFailure) throw lockFailure; return fn();},
-    executeStorageEvent: (e, operations) => {events.push('execute'); return operations.status(e.key);},
+    executeStorageEvent: (e, operations) => {events.push('execute'); if (executeFailure) throw executeFailure; return operations.status(e.key);},
   };
   const poll = vm.runInNewContext(body + '\npollStorage;', context);
   return {run: () => poll(target), events, event, location};
@@ -150,6 +150,8 @@ test('routine publication lock and exact acquisition races defer before destruct
   }
   for (const lockFailure of [Error('storage_lifecycle_previous_attempt_requires_review'), Object.assign(Error('other'),
     {code: 'EEXIST', syscall: 'mkdir', path: '/unrelated'})]) assert.throws(actualPoll({lockFailure}).run);
+  assert.throws(actualPoll({executeFailure: Error('online_tool_deploy_lock_busy')}).run, /deploy_lock_busy/,
+    'an error after acquiring the fence cannot masquerade as harmless pre-intent deferral');
 });
 if (process.platform === 'linux') test('real Linux systemd parser accepts exact generated services and timers', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'faolla-storage-units-'));
