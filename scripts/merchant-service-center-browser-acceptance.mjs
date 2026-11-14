@@ -40,11 +40,11 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900}={}){
  const context=await browser.newContext({viewport:{width,height},isMobile:width<768,hasTouch:width<768,serviceWorkers:'block'});
  if(logged)await context.addCookies([{name:'__Host-faolla-merchant-auth-v2',value:'synthetic-cookie',url:portalOrigin,secure:true,httpOnly:true,sameSite:'Lax'}]);
  await context.addInitScript(value=>{window.__seedGuest=value;window.__messages=[];window.addEventListener('message',event=>{if(event.data?.type==='faolla:merchant-service')window.__messages.push(event.data);});},seedGuest);
- const state={favorite:false,logged,sessionStatus:200,member:'none',contacts:[],threads:[],requests:[],writes:[],unexpected:[],errors:[],history:[{points:80,order:'ORIGINAL',balance:25}]};
+ const state={favorite:false,logged,sessionStatus:200,member:'none',profile:{...profile},contacts:[],threads:[],requests:[],writes:[],unexpected:[],errors:[],history:[{points:80,order:'ORIGINAL',balance:25}]};
  const originalHistory=structuredClone(state.history);
  const favorite=()=>({id:siteId,url:`https://faolla.com/site/${siteId}`,name:'Synthetic venue',subtitle:'',addedAt:'2026-11-01'});
  const membership=()=>({id:'synthetic-member',siteId,siteName:'Synthetic venue',memberNo:'99990001000001',qrValue:'SYNTHETIC-QR',status:state.member==='left'?'left':'active',joinedAt:'2026-11-01',leftAt:state.member==='left'?'2026-11-13':null});
- const identity=()=>({ok:true,authenticated:state.logged,accountId:state.logged?'50010105':'',profile,memberships:state.member==='none'?[]:[membership()],favoriteSites:state.favorite?[favorite()]:[]});
+ const identity=()=>({ok:true,authenticated:state.logged,accountId:state.logged?'50010105':'',profile:state.profile,memberships:state.member==='none'?[]:[membership()],favoriteSites:state.favorite?[favorite()]:[]});
  const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',e=>state.errors.push(e.message));
  await context.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url());state.requests.push({url:request.url(),method:request.method(),origin:request.headers().origin||'',cookie:request.headers().cookie||''});
@@ -94,7 +94,9 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900}={}){
   }
   if(url.pathname==='/api/auth/merchant-session')return route.fulfill({status:state.sessionStatus,json:{authenticated:state.logged,accountType:state.logged?'personal':undefined}});
   if(url.pathname==='/api/personal-favorites')return route.fulfill({json:identity()});
-  if(url.pathname==='/api/personal-profile')return route.fulfill({json:{ok:true,profile,businessCards:[]}});
+  if(url.pathname==='/synthetic-avatar.svg')return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="#ede9fe"/><circle cx="40" cy="29" r="12" fill="#8b5cf6"/><path d="M16 76v-8a24 24 0 0 1 48 0v8" fill="#8b5cf6"/></svg>'});
+  if(url.pathname==='/api/personal-profile')return route.fulfill({json:{ok:true,profile:{...state.profile,displayName:state.profile.nickname,birthday:'2000-01-01'},businessCards:[]}});
+  if(url.pathname==='/api/personal-coupons')return route.fulfill({json:{ok:true,coupons:[]}});
   if(url.pathname==='/api/orders')return route.fulfill({json:{ok:true,orders:[{id:'OSYNTHETIC',siteId,siteName:'Synthetic venue',createdAt:'2026-11-01T10:00:00Z',updatedAt:'2026-11-01T10:00:00Z',status:'pending',customer:{name:'Visitor',phone:'000',email:'visitor@example.invalid',note:''},items:[{name:'Synthetic account product',quantity:2,unitPriceText:'€10',subtotal:20}],pricePrefix:'€',totalAmount:20,totalQuantity:2}]}});
   if(url.pathname==='/api/bookings')return route.fulfill({json:{ok:true,bookings:[]}});
   if(url.pathname==='/api/merchant-peer-messages'||url.pathname==='/api/support-messages')return route.fulfill({json:{ok:true,threads:url.pathname==='/api/merchant-peer-messages'?state.threads:[],contacts:state.contacts,thread:null}});
@@ -107,6 +109,47 @@ const serviceFrame=page=>page.frameLocator('iframe[data-isolated-service-frame]'
 async function menu(page){await page.getByRole('button',{name:'服务中心',exact:true}).click();await page.getByRole('dialog').waitFor();}
 async function choose(page,label){const ids={'订单':'orders','会话':'conversations','我的':'account','Faolla':'directory'};await page.getByRole('dialog').locator(`[data-service-section="${ids[label]}"]`).click();}
 async function openThread(surface,id=siteId){await surface.locator(`[data-conversation-id="${id}"]`).click();}
+
+test('My dashboard gives guests and accounts a responsive identity card and six working shortcuts without eager reads or writes',{timeout:90000},async()=>{
+ const browser=await chromium.launch({headless:true});try{for(const width of [320,390,1440]){for(const logged of [false,true]){
+  const f=await setup(browser,width,{logged,seedGuest:!logged});try{
+   if(logged){f.state.favorite=true;f.state.member='active';f.state.profile.avatarUrl=portalOrigin+'/synthetic-avatar.svg';}
+   const savedProfile=structuredClone(f.state.profile);
+   await f.open();await f.page.waitForResponse(r=>r.url().includes('/api/merchant-service/status'));
+   await f.page.getByRole('button',{name:'Switch Chinese',exact:true}).click();
+   await f.page.getByRole('heading',{name:'你的下一场游戏从这里开始。',exact:true}).waitFor();
+   await menu(f.page);await choose(f.page,'我的');const surface=logged?serviceFrame(f.page):f.page;
+   const account=surface.locator('[data-service-account]');await account.getByRole('heading',{name:logged?'Synthetic visitor':'游客身份',exact:true}).waitFor();
+   assert.equal(await account.locator('[data-account-section]').count(),6);
+   assert.equal(new Set(await account.locator('[data-account-section] svg').evaluateAll(elements=>elements.map(svg=>getComputedStyle(svg).color))).size,6);
+   assert.equal(f.state.requests.filter(r=>r.url.includes('/api/personal-profile')||r.url.includes('/api/personal-coupons')).length,0,'opening My does not eagerly fetch unopened features');
+   if(logged){
+    await account.locator('img').evaluate(image=>image.decode());
+    await account.getByText('已登录',{exact:true}).waitFor();
+    assert.match(await account.getByLabel('身份信息').textContent(),/收藏商户\s*1.*有效会员卡\s*1/s);
+   }else{
+    const login=account.getByRole('link',{name:'用户登录 / 注册',exact:true});await login.waitFor();
+    assert.equal(await login.getAttribute('target'),'_top');assert.match(await login.getAttribute('href'),/^\/login\?/);
+    await account.getByText('临时资料和记录保存在本设备',{exact:true}).waitFor();
+   }
+   assert.equal(await account.evaluate(element=>element.scrollWidth<=element.clientWidth),true);
+   if(process.env.FAOLLA_SERVICE_QA_DIR)await f.page.screenshot({path:path.join(process.env.FAOLLA_SERVICE_QA_DIR,`service-account-${logged?'member':'guest'}-${width}.png`)});
+   for(const id of ['profile','favorites','memberships','coupons','cards','more']){
+    await account.locator(`[data-account-section="${id}"]`).click();
+    if(id==='profile')await account.getByText('姓名 / 昵称',{exact:true}).waitFor();
+    if(id==='favorites')await account.getByText(logged?'取消收藏':'尚未收藏商户。',{exact:true}).waitFor();
+    if(id==='memberships')await account.getByText(logged?'有效会员':'暂无会员卡。',{exact:true}).waitFor();
+    if(id==='coupons')await account.getByText('暂无已领取优惠券。',{exact:true}).waitFor();
+    if(id==='cards')await account.getByText(logged?'Synthetic card manager boundary':'请登录后使用名片夹。',{exact:true}).waitFor();
+    if(id==='more')await account.getByRole('link',{name:'隐私政策',exact:true}).waitFor();
+    assert.equal(await account.evaluate(element=>element.scrollWidth<=element.clientWidth),true,'subpage '+id+' fits at '+width);
+    await account.getByRole('button',{name:'← 返回我的',exact:true}).click();
+   }
+   assert.deepEqual(f.state.profile,savedProfile);assert.deepEqual(f.state.writes,[]);
+   assert.equal(new URL(f.page.url()).origin,merchantOrigin);
+  }finally{await f.close();}
+ }}}finally{await browser.close();}
+});
 
 test('file-picker cancellation is not a request to dismiss the service dialog',{timeout:60000},async()=>{
  const browser=await chromium.launch({headless:true});try{for(const width of [390,1440]){for(const logged of [false,true]){
