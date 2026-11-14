@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "aa5810a7c5bd459d61dda758e03a1f99a70696d0",
-  "purpose": "Polish the web service center and conversations, restore My feature parity, improve personal profile controls, and preserve the Faolla brand across language switching; retain already reviewed storage lifecycle tooling without changing database, dependencies, workers or mail.",
+  "purpose": "Polish the web service center and conversations, restore My feature parity, improve personal profile controls, and preserve the Faolla brand across language switching; retain already reviewed storage lifecycle tooling without changing database, dependencies, workers or mail. Pin only the quality CI build old-space heap to the existing 3072 MiB production budget after the documented default-heap OOM; keep all checks.",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -18,7 +18,7 @@
       ],
       "after": [
         "100644",
-        "5098b71e05c7b2c26a915dfe0e21056dc2976347"
+        "99595ac9b5bf9c85b038be8429dc36b63852c6f6"
       ]
     },
     {
@@ -40,6 +40,18 @@
       "after": [
         "100644",
         "718c39e188f4b3bf01e1cc57375c9f14a3fc3115"
+      ]
+    },
+    {
+      "file": "scripts/ci-workflow-contract.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "683bef3e8434b64ceb7eda4028e6a3dc8e9ad83f"
+      ],
+      "after": [
+        "100644",
+        "6bd323757553f5547869afebaa97b4d121e67d40"
       ]
     },
     {
@@ -445,7 +457,8 @@
     "src/lib/supportMessageAttachments.test.ts",
     "scripts/application-release-policy.test.mjs",
     "scripts/application-release-compatibility.test.mjs",
-    "scripts/application-release-verification.test.mjs"
+    "scripts/application-release-verification.test.mjs",
+    "scripts/ci-workflow-contract.test.mjs"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
