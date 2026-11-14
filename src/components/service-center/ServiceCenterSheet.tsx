@@ -3,6 +3,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/components/I18nProvider";
+import { resolveSupportedLocale } from "@/lib/i18n";
 import { normalizeMerchantMembershipProfileDraft } from "@/lib/merchantMemberships";
 import { buildServiceFrameUrl, isServiceFrameMessage, isServiceSection, SERVICE_FRAME_EVENT, servicePortalOrigin, type ServiceSection } from "@/lib/merchantServiceFrame";
 import { serviceButton, type ServiceIdentity } from "./serviceCenterClient";
@@ -24,9 +25,10 @@ const sections = [{ id: "conversations", title: "会话", description: "联系�
 export default function ServiceCenterSheet(props: { siteId: string; siteName: string; serviceOrigin: string;
   authenticated: boolean | null; refreshStatus: () => Promise<void>; onFavoriteChange: (value: boolean) => void;
   open: boolean; onClose: () => void; favoriteRequested: boolean;
+  onSignedOut?: () => void;
 }) {
   const { open, onClose, siteId } = props;
-  const { locale } = useI18n();
+  const { locale, setLocale } = useI18n();
   const dialog = useRef<HTMLDialogElement>(null), frame = useRef<HTMLIFrameElement>(null);
   const [section, setSection] = useState<Section>(props.favoriteRequested ? "favorite" : "menu");
   const [local, setLocal] = useState(false);
@@ -68,6 +70,8 @@ export default function ServiceCenterSheet(props: { siteId: string; siteName: st
       if (event.data.event === "ready") { setReady(true); setSlow(false); sendState(); }
       if (event.data.event === "favorite" && typeof event.data.favorited === "boolean") props.onFavoriteChange(event.data.favorited);
       if (event.data.event === "done") { setSection("menu"); void props.refreshStatus(); }
+      if (event.data.event === "locale" && typeof event.data.locale === "string" && resolveSupportedLocale(event.data.locale) === event.data.locale) setLocale(event.data.locale);
+      if (event.data.event === "signed-out") { props.onSignedOut?.(); setSection("menu"); void props.refreshStatus(); }
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
@@ -113,6 +117,7 @@ export default function ServiceCenterSheet(props: { siteId: string; siteName: st
       {visibleFrame && slow ? <div className="flex gap-2 p-3"><button className={serviceButton} onClick={() => { setSlow(false); setReady(false); setRetry(value => value + 1); }}>重新打开服务</button></div> : null}
       {frameUrl ? <iframe key={retry} ref={frame} src={frameUrl} title="Faolla 个人服务" data-isolated-service-frame hidden={!visibleFrame}
         className={`min-h-0 w-full flex-1 border-0 ${visibleFrame ? "block" : "!hidden"}`} referrerPolicy="no-referrer"
+        allow="camera; clipboard-write; web-share"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-top-navigation-by-user-activation" onLoad={sendState} /> : null}
       {section === "orders" && props.authenticated !== false ? <button type="button" className={serviceButton + " m-2 shrink-0"} onClick={() => { setLocalVisited(current => new Set([...current, "orders"])); setLocal(value => !value); }}>{local ? "查看账号订单与预约" : "查看本设备游客记录"}</button> : null}
     </div>

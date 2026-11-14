@@ -11,6 +11,9 @@ import { serviceButton, serviceCard, serviceRequest, SERVICE_IDENTITY_CHANGED, t
 import ServiceProfileForm from "./ServiceProfileForm";
 
 const CardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), { ssr: false, loading: () => <p role="status">正在打开名片夹…</p> });
+const Settings = dynamic(() => import("./ServiceAccountSettings"));
+const PersonalQr = dynamic(() => import("./ServicePersonalQr"));
+const SessionActions = dynamic(() => import("./ServiceAccountSessionActions"));
 type ProfilePayload = { profile: Partial<PersonalGuestProfile>; businessCards: MerchantBusinessCardAsset[];
   personalServiceConfig?: ReturnType<typeof readPersonalAccountServiceConfigFromMetadata>; user?: Parameters<typeof readPersonalAccountServiceConfigFromMetadata>[0] };
 
@@ -27,13 +30,16 @@ const tabs = [
   { id: "memberships", label: "会员卡", description: "会员卡与会员二维码", tone: "bg-sky-100 text-sky-700", hover: "hover:border-sky-200 hover:bg-sky-50/40", path: "M4 5h16v14H4V5ZM4 10h16M8 15h3M15 15h1" },
   { id: "coupons", label: "优惠券", description: "已领取优惠与核销信息", tone: "bg-amber-100 text-amber-800", hover: "hover:border-amber-200 hover:bg-amber-50/40", path: "M4 5h16v4a3 3 0 0 0 0 6v4H4v-4a3 3 0 0 0 0-6V5ZM14 5v3M14 11v2M14 16v3" },
   { id: "cards", label: "名片夹", description: "制作与管理数字名片", tone: "bg-teal-100 text-teal-700", hover: "hover:border-teal-200 hover:bg-teal-50/40", path: "M3 6h18v14H3V6ZM7 3h10M10 11a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM5 17a3 3 0 0 1 6 0M14 10h4M14 14h4" },
-  { id: "more", label: "工具与设置", description: "小工具、隐私与账号", tone: "bg-slate-100 text-slate-700", hover: "hover:border-slate-300 hover:bg-slate-50", path: "M4 7h4M12 7h8M4 17h8M16 17h4M12 7a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM16 17a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" },
+  { id: "qr", label: "个人二维码", description: "展示、分享与扫描二维码", tone: "bg-lime-100 text-lime-800", hover: "hover:border-lime-200 hover:bg-lime-50/40", path: "M3 3h6v6H3ZM15 3h6v6h-6ZM3 15h6v6H3ZM15 15h3v3h3M15 21h3M21 15v3" },
+  { id: "tools", label: "小工具", description: "常用计分与辅助工具", tone: "bg-blue-100 text-blue-700", hover: "hover:border-blue-200 hover:bg-blue-50/40", path: "M4 8h16v12H4ZM8 8V4h8v4M4 13h16M10 11v4h4v-4" },
+  { id: "games", label: "游戏大厅", description: "坦克大战与不服再战", tone: "bg-fuchsia-100 text-fuchsia-700", hover: "hover:border-fuchsia-200 hover:bg-fuchsia-50/40", path: "M7 7h10l4 12-4 1-4-4h-2l-4 4-4-1L7 7ZM8 10v5M5.5 12.5h5M16 11h.1M18 14h.1" },
+  { id: "more", label: "工具与设置", description: "语言、隐私与账号", tone: "bg-slate-100 text-slate-700", hover: "hover:border-slate-300 hover:bg-slate-50", path: "M4 7h4M12 7h8M4 17h8M16 17h4M12 7a2 2 0 1 1-4 0 2 2 0 0 1 4 0ZM16 17a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z" },
 ] as const;
 function AccountIcon({ path, className = "h-5 w-5" }: { path: string; className?: string }) {
   return <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={path} /></svg>;
 }
 
-export default function ServiceAccount({ active, identity, refreshIdentity }: ServicePanelProps) {
+export default function ServiceAccount({ active, identity, refreshIdentity, onLocaleChange, onSignedOut }: ServicePanelProps & { onLocaleChange?: (locale: string) => void; onSignedOut?: () => void }) {
   const [tab, setTab] = useState<string>("home");
   const [profile, setProfile] = useState<PersonalGuestProfile>(() => readPersonalGuestProfile());
   const [cards, setCards] = useState<MerchantBusinessCardAsset[]>([]);
@@ -128,6 +134,7 @@ export default function ServiceAccount({ active, identity, refreshIdentity }: Se
           <span className="font-semibold text-slate-900">{item.label}</span><span className="mt-1.5 text-xs leading-5 text-slate-500">{item.description}</span>
         </button>)}</div>
       </section>
+      {identity.authenticated ? <SessionActions onRefresh={refreshIdentity} onSignedOut={() => { if (onSignedOut) onSignedOut(); else void refreshIdentity(); }} /> : null}
     </> : <div className={serviceCard + " flex flex-wrap items-center justify-between gap-3 !rounded-2xl"}><div className="flex min-w-0 items-center gap-3"><button type="button" className={serviceButton + " !px-3 !text-xs"} onClick={() => select("home")}>← 返回我的</button>{activeTab ? <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${activeTab.tone}`}><AccountIcon path={activeTab.path} /></span> : null}<h3 className="font-semibold">{activeTab?.label}</h3></div><button type="button" className={serviceButton + " !px-3 !text-xs"} disabled={busy} onClick={() => { setLoadedFor(""); setRefresh(value => value + 1); void refreshIdentity(); }}>刷新</button></div>}
     {error ? <p role="alert" className="text-sm text-rose-700">{error}</p> : null}
     {message ? <p role="status" className="text-sm text-emerald-700">{message}</p> : null}
@@ -141,20 +148,21 @@ export default function ServiceAccount({ active, identity, refreshIdentity }: Se
       </div>)}
     </div> : null}
     {tab === "memberships" ? <div className="grid gap-3 sm:grid-cols-2">{identity.memberships.map(member => <div key={member.id} className={serviceCard}>
-      <div className="flex justify-between gap-3"><h4 className="font-semibold">{member.siteName}</h4><span className="text-xs text-slate-500">{member.status === "active" ? "有效会员" : "已退会"}</span></div><p className="mt-2 break-all text-sm">会员卡号：{member.memberNo}</p>
+      <div className="rounded-xl bg-gradient-to-br from-slate-900 to-sky-900 p-4 text-white"><div className="flex justify-between gap-3"><h4 className="font-semibold" data-no-translate="1">{member.siteName}</h4><span className="text-xs text-sky-100">{member.status === "active" ? "有效会员" : "已退会"}</span></div><p className="mt-4 break-all text-sm">会员卡号：<span data-no-translate="1" className="font-mono">{member.memberNo}</span></p></div>
+      <p className="mt-3 text-xs text-slate-500">加入时间：<span data-no-translate="1">{member.joinedAt.replace("T", " ").slice(0, 19)}</span></p>{member.leftAt ? <p className="mt-2 text-xs text-slate-500">退会时间：<span data-no-translate="1">{member.leftAt.replace("T", " ").slice(0, 19)}</span></p> : null}
+      <p className="mt-3 break-all text-xs text-slate-600">会员二维码内容：<span data-no-translate="1">{member.qrValue || member.memberNo}</span></p>
       {member.status === "active" ? <details className="mt-3"><summary className="cursor-pointer text-sm">显示会员二维码</summary><Qr value={member.qrValue || member.memberNo} /></details> : null}
-      <button className={serviceButton + " mt-3"} type="button" onClick={() => select("favorites")}>到收藏管理</button></div>)}{!identity.memberships.length ? <p className={serviceCard}>暂无会员卡。</p> : null}</div> : null}
-    {tab === "coupons" ? <div className="grid gap-3 sm:grid-cols-2">{coupons.map(coupon => <div key={coupon.id} className={serviceCard}><h4 className="font-semibold">{coupon.couponTitle}</h4><p className="mt-1 text-sm">{coupon.siteName} · {coupon.discountLabel}</p><p className="mt-2 text-xs text-slate-500">{coupon.couponDescription}</p><p className="mt-2 break-all text-sm">核销码：{coupon.settlementCode}</p><details className="mt-2"><summary className="cursor-pointer text-sm">显示核销码</summary><Qr value={coupon.settlementCode} /></details><p className="mt-2 text-xs text-slate-500">有效期：{coupon.validUntil || "以商户规则为准"}</p></div>)}{!coupons.length ? <p className={serviceCard}>暂无已领取优惠券。</p> : null}</div> : null}
+      <div className="mt-3 flex flex-wrap gap-2"><a className={serviceButton} href={`/site/${encodeURIComponent(member.siteId)}`} target="_top">商户首页</a><button className={serviceButton} type="button" onClick={() => select("favorites")}>到收藏管理</button></div></div>)}{!identity.memberships.length ? <p className={serviceCard}>暂无会员卡。</p> : null}</div> : null}
+    {tab === "coupons" ? <div className="grid gap-3 sm:grid-cols-2">{coupons.map(coupon => <div key={coupon.id} className={serviceCard}><h4 className="font-semibold">{coupon.couponTitle}</h4><p className="mt-1 text-sm"><span data-no-translate="1">{coupon.siteName}</span> · {coupon.discountLabel}</p><p className="mt-2 text-xs text-slate-500">{coupon.couponDescription}</p><p className="mt-2 break-all text-sm">{coupon.settlementType === "barcode" ? "核销条形码" : "核销二维码"}：<span data-no-translate="1">{coupon.settlementCode}</span></p>{coupon.settlementType !== "barcode" ? <details className="mt-2"><summary className="cursor-pointer text-sm">显示核销码</summary><Qr value={coupon.settlementCode} /></details> : null}<p className="mt-2 text-xs text-slate-500">领取时间：<span data-no-translate="1">{coupon.claimedAt.replace("T", " ").slice(0, 19)}</span></p><p className="mt-2 text-xs text-slate-500">有效期：<span data-no-translate="1">{coupon.validUntil || "长期有效"}</span></p><a className={serviceButton + " mt-3 inline-flex"} target="_top" href={`/coupon/claim/${encodeURIComponent(coupon.claimEventId)}?siteId=${encodeURIComponent(coupon.siteId)}&couponId=${encodeURIComponent(coupon.couponId)}`}>查看核销码</a></div>)}{!coupons.length ? <p className={serviceCard}>暂无已领取优惠券。</p> : null}</div> : null}
     {tab === "cards" && identity.authenticated && loadedFor === identity.accountId ? <CardManager merchantId={identity.accountId} siteBaseDomain={window.location.host}
       folderViewMode="page" cards={cards} targetUrlOverride={`https://faolla.com/u/${identity.accountId}`} profile={{ merchantName: profile.displayName, contactName: profile.displayName, contactPhone: profile.phone, contactEmail: profile.email, contactAddress: profile.address, location: { country: profile.country, province: profile.province, city: profile.city } }}
       cardLimit={permissions.businessCardLimit} allowLinkMode={permissions.allowBusinessCardLinkMode} allowIntroVideo={permissions.allowBusinessCardIntroVideo}
       backgroundImageLimitKb={permissions.businessCardBackgroundImageLimitKb} contactPageImageLimitKb={permissions.businessCardContactImageLimitKb} exportImageLimitKb={permissions.businessCardExportImageLimitKb} introVideoLimitMb={permissions.businessCardIntroVideoLimitMb}
       onCardsChange={async next => { try { const result = await serviceRequest<ProfilePayload>("/api/personal-profile", { method: "POST", body: JSON.stringify({ businessCards: next }) }); setCards(result.businessCards); } catch (error) { setError(error instanceof Error ? error.message : "名片保存失败。"); throw error; } }} /> : null}
     {tab === "cards" && !identity.authenticated ? <p className={serviceCard}>请登录后使用名片夹。</p> : null}
-    {tab === "more" ? <div className={serviceCard + " flex flex-wrap gap-3"}>
-      <a className={serviceButton} href="/me/tools/shuangkoujifen" target="_blank" rel="noreferrer">双扣计分</a><a className={serviceButton} href="/me/games/tank-battle" target="_blank" rel="noreferrer">坦克大战</a><a className={serviceButton} href="/me/games/bufuzai" target="_blank" rel="noreferrer">不服再战</a>
-      <a className={serviceButton} href="/legal/privacy" target="_blank" rel="noreferrer">隐私政策</a>
-      <a className={serviceButton} target="_top" href={buildServiceLoginHref(window.location.href) + "&loggedOut=1"}>{identity.authenticated ? "退出 / 切换账号" : "用户登录"}</a>
-    </div> : null}
+    {tab === "qr" ? <PersonalQr active={active} identity={identity} onBack={() => select("home")} /> : null}
+    {tab === "tools" ? <section className={serviceCard}><h4 className="mb-3 text-sm font-semibold">常用小工具</h4><a className={serviceButton + " inline-flex"} href="/me/tools/shuangkoujifen" target="_blank" rel="noreferrer">双扣计分</a></section> : null}
+    {tab === "games" ? <section className={serviceCard}><h4 className="mb-3 text-sm font-semibold">游戏大厅</h4><div className="flex flex-wrap gap-3"><a className={serviceButton} href="/me/games/tank-battle" target="_blank" rel="noreferrer">坦克大战</a><a className={serviceButton} href="/me/games/bufuzai" target="_blank" rel="noreferrer">不服再战</a></div></section> : null}
+    {tab === "more" ? <><Settings onLocaleChange={onLocaleChange} />{identity.authenticated ? <SessionActions onRefresh={refreshIdentity} onSignedOut={() => { if (onSignedOut) onSignedOut(); else void refreshIdentity(); }} /> : null}</> : null}
   </div>;
 }

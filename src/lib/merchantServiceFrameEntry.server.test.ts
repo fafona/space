@@ -20,6 +20,7 @@ test("only the canonical, site-bound document receives the exact frame policy an
     assert.equal(valid.headers.get("content-security-policy"), `frame-ancestors 'self' ${parent}; object-src 'none'; base-uri 'self'; form-action 'self'`);
     assert.match(valid.headers.get("cache-control") ?? "", /private, no-store/);
     assert.equal(valid.headers.get("referrer-policy"), "no-referrer");
+    assert.equal(valid.headers.get("permissions-policy"), "camera=(), microphone=(), payment=()", "restoring My features must not relax the existing frame permission policy");
     assert.equal(valid.headers.get("set-cookie"), null, "frame admission never reads or renews credentials");
     assert.equal(await valid.text(), "");
     assert.equal((await handleMerchantServiceFrameEntry(request({ host: "synthetic.faolla.com" }), authorize)).status, 421);

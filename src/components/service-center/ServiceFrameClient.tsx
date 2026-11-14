@@ -22,9 +22,9 @@ export default function ServiceFrameClient({ siteId, siteName, parentOrigin, non
   const { setLocale } = useI18n();
   const localeSetter = useRef(setLocale);
   useEffect(() => { localeSetter.current = setLocale; }, [setLocale]);
-  const notify = useCallback((event: "ready" | "favorite" | "done", favorited?: boolean) => {
+  const notify = useCallback((event: "ready" | "favorite" | "done" | "locale" | "signed-out", favorited?: boolean, locale?: string) => {
     window.parent.postMessage({ type: SERVICE_FRAME_EVENT, nonce, siteId, event,
-      ...(typeof favorited === "boolean" ? { favorited } : {}) }, parentOrigin);
+      ...(typeof favorited === "boolean" ? { favorited } : {}), ...(locale ? { locale } : {}) }, parentOrigin);
   }, [nonce, siteId, parentOrigin]);
   const refreshIdentity = useCallback(async () => {
     const current = ++version.current;
@@ -66,7 +66,9 @@ export default function ServiceFrameClient({ siteId, siteName, parentOrigin, non
     {!identity && !error ? <p role="status">正在读取账号…</p> : null}
     {identity && visited.has("conversations") ? <div className="min-h-0 flex-1" key={identity.accountId + ":conversations"} hidden={section !== "conversations"}><Conversations {...props} active={active && section === "conversations"} /></div> : null}
     {identity && visited.has("orders") ? <div key={identity.accountId + ":orders"} hidden={section !== "orders"}><Orders {...props} active={active && section === "orders"} /></div> : null}
-    {identity && visited.has("account") ? <div key={identity.accountId + ":account"} hidden={section !== "account"}><Account {...props} active={active && section === "account"} /></div> : null}
+    {identity && visited.has("account") ? <div key={identity.accountId + ":account"} hidden={section !== "account"}><Account {...props} active={active && section === "account"} onLocaleChange={locale => notify("locale", undefined, locale)} onSignedOut={() => {
+      ++version.current; setIdentity({ authenticated: false, accountId: "", profile: {} as ServiceIdentity["profile"], favoriteSites: [], memberships: [] }); notify("signed-out");
+    }} /></div> : null}
     {identity && visited.has("favorite") ? <div key={identity.accountId + ":favorite"} hidden={section !== "favorite"}><Favorite {...props} active={active && section === "favorite"} onDone={() => notify("done")} /></div> : null}
   </main>;
 }

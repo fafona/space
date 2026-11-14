@@ -7,6 +7,7 @@ import {build} from 'esbuild';
 import {chromium} from 'playwright';
 import postcss from 'postcss';
 import tailwind from '@tailwindcss/postcss';
+import QRCode from 'qrcode';
 
 const merchantOrigin='https://synthetic.faolla.com',portalOrigin='https://launch.faolla.com',siteId='99990001';
 const html='<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div>';
@@ -14,7 +15,7 @@ const fixtures={
  'next/dynamic':`import React from 'react';export default function dynamic(load,options={}){return function Deferred(props){const[C,setC]=React.useState(null);React.useEffect(()=>{let active=true;load().then(m=>{if(active)setC(()=>m.default||m)});return()=>{active=false}},[]);return C?React.createElement(C,props):options.loading?React.createElement(options.loading):null}}`,
  'next/link':`import React from'react';export default function Link({prefetch,...props}){return <a {...props}/>}`,
  'next/navigation':`export const usePathname=()=>location.pathname;export const useSearchParams=()=>new URLSearchParams(location.search);export const useParams=()=>({});`,
- '@/lib/supabase':`export const isSupabaseEnabled=false;export const supabase=null;export const getResolvedSupabaseUrl=()=>'';export const resolvedSupabaseAnonKey='';`,
+ '@/lib/supabase':`export const isSupabaseEnabled=false;export const supabase=null;export const getResolvedSupabaseUrl=()=>'';export const resolvedSupabaseAnonKey='';export const legacySupabaseAuthStorageKey='synthetic-legacy-key';export const resolvedSupabaseAuthStorageKey='synthetic-auth-key';`,
  '@/components/blocks/BlockRenderer':`import React from'react';export default function Blocks(){return <a href="https://other.faolla.com/" target="_top">Synthetic directory merchant</a>}`,
  '@/components/admin/MerchantBusinessCardManager':`import React from'react';export default function Cards(){return <p>Synthetic card manager boundary</p>}`,
 };
@@ -36,11 +37,11 @@ const script=(await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents
 const utilityCss=(await postcss([tailwind()]).process('@import "tailwindcss" source(none);\n@source "./src/components/service-center";\n@source "./src/components/PublicWebsiteActions.tsx";', {from:path.resolve('service-center-acceptance.css')})).css;
 const css=utilityCss+'\n.faolla-service-sheet{height:82dvh;max-height:82dvh;padding-bottom:env(safe-area-inset-bottom)}.faolla-service-sheet::backdrop{background:#02061755}body{margin:0}';
 const profile={nickname:'Synthetic visitor',name:'Synthetic visitor',email:'visitor@example.invalid',phone:'000',birthday:'01-01',birthdayMonthDayOnly:true};
-async function setup(browser,width,{logged=true,seedGuest=false,height=900}={}){
+async function setup(browser,width,{logged=true,seedGuest=false,height=900,cameraDenied=false}={}){
  const context=await browser.newContext({viewport:{width,height},isMobile:width<768,hasTouch:width<768,serviceWorkers:'block'});
  if(logged)await context.addCookies([{name:'__Host-faolla-merchant-auth-v2',value:'synthetic-cookie',url:portalOrigin,secure:true,httpOnly:true,sameSite:'Lax'}]);
  await context.addInitScript(value=>{window.__seedGuest=value;window.__messages=[];window.addEventListener('message',event=>{if(event.data?.type==='faolla:merchant-service')window.__messages.push(event.data);});},seedGuest);
- const state={favorite:false,logged,sessionStatus:200,member:'none',profile:{...profile},profileDraft:{},businessCards:[],uploadFails:false,contacts:[],threads:[],requests:[],writes:[],unexpected:[],errors:[],history:[{points:80,order:'ORIGINAL',balance:25}]};
+ const state={favorite:false,logged,sessionStatus:200,member:'none',profile:{...profile},profileDraft:{},businessCards:[],coupons:[],uploadFails:false,logoutFails:false,qrToken:'synthetic-qr-token-original',contacts:[],threads:[],requests:[],writes:[],unexpected:[],errors:[],history:[{points:80,order:'ORIGINAL',balance:25}]};
  const originalHistory=structuredClone(state.history);
  const favorite=()=>({id:siteId,url:`https://faolla.com/site/${siteId}`,name:'Synthetic venue',subtitle:'',addedAt:'2026-11-01'});
  const membership=()=>({id:'synthetic-member',siteId,siteName:'Synthetic venue',memberNo:'99990001000001',qrValue:'SYNTHETIC-QR',status:state.member==='left'?'left':'active',joinedAt:'2026-11-01',leftAt:state.member==='left'?'2026-11-13':null});
@@ -56,10 +57,10 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900}={}){
   if(request.isNavigationRequest()){
    if(url.pathname==='/service-center'){
     assert.equal(url.origin,portalOrigin);assert.equal(url.searchParams.get('parentOrigin'),merchantOrigin);
-    const headers={'content-security-policy':`frame-ancestors ${merchantOrigin}`};
+    const headers={'content-security-policy':`frame-ancestors ${merchantOrigin}`,...(cameraDenied?{'permissions-policy':'camera=(), microphone=(), payment=()'}:{})};
     return route.fulfill({contentType:'text/html',headers,body:html+`<style>${css}</style><script>${script.replaceAll('</script>','<\\/script>')}</script>`});
    }
-   return route.fulfill({contentType:'text/html',body:html+`<style>${css}</style><script>${script.replaceAll('</script>','<\\/script>')}</script>`});
+   return route.fulfill({contentType:'text/html',headers:cameraDenied?{'permissions-policy':'camera=(), microphone=(), payment=()'}:{},body:html+`<style>${css}</style><script>${script.replaceAll('</script>','<\\/script>')}</script>`});
   }
   if(url.pathname==='/api/merchant-service/status'){
    assert.equal(url.origin,portalOrigin);assert.equal(request.headers().origin,merchantOrigin);
@@ -70,7 +71,14 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900}={}){
    if(logged)assert.match(request.headers().cookie||'',/__Host-faolla-merchant-auth-v2=synthetic-cookie/);
   }
   if(request.method()==='POST'){
-   state.writes.push({path:url.pathname,body:request.postDataJSON(),origin:request.headers().origin||url.origin});
+   state.writes.push({path:url.pathname,body:request.postData()?request.postDataJSON():null,origin:request.headers().origin||url.origin});
+   if(url.pathname==='/api/auth/merchant-logout'){
+    if(state.logoutFails)return route.fulfill({status:503,json:{ok:false}});
+    state.logged=false;state.sessionStatus=401;return route.fulfill({json:{ok:true}});
+   }
+   if(url.pathname==='/api/faolla-qr-token'){
+    assert.deepEqual(request.postDataJSON(),{action:'reset',type:'personal',id:'50010105'});state.qrToken='synthetic-qr-token-reset';return route.fulfill({json:{ok:true,token:state.qrToken}});
+   }
    if(url.pathname==='/api/assets/upload'){
     const body=request.postDataJSON();assert.equal(logged,true);assert.equal(body.merchantHint,'50010105');assert.ok(['support-image','generic-image'].includes(body.usage));
     if(state.uploadFails)return route.fulfill({status:503,json:{ok:false,message:'Synthetic upload rejected'}});
@@ -100,9 +108,13 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900}={}){
   if(url.pathname==='/api/auth/merchant-session')return route.fulfill({status:state.sessionStatus,json:{authenticated:state.logged,accountType:state.logged?'personal':undefined}});
   if(url.pathname==='/api/personal-favorites')return route.fulfill({json:identity()});
   if(url.pathname==='/synthetic-avatar.svg')return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="#ede9fe"/><circle cx="40" cy="29" r="12" fill="#8b5cf6"/><path d="M16 76v-8a24 24 0 0 1 48 0v8" fill="#8b5cf6"/></svg>'});
+  if(url.pathname==='/api/faolla-qr-token'){assert.equal(state.logged,true);assert.equal(url.searchParams.get('type'),'personal');assert.equal(url.searchParams.get('id'),'50010105');return route.fulfill({json:{ok:true,token:state.qrToken}});}
+  if(url.pathname==='/api/app-web-version')return route.fulfill({json:{ok:true,buildId:'synthetic-build'}});
+  if(url.pathname==='/downloads/faolla-android-version.json')return route.fulfill({json:{version:'1.0',build:33,apkUrl:'/downloads/faolla-android.apk'}});
+  if(url.pathname==='/faolla-app-icon-192.png')return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="#0f172a"/><text x="26" y="55" font-size="42" fill="white">F</text></svg>'});
   if(url.pathname==='/synthetic-upload.png')return route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64')});
   if(url.pathname==='/api/personal-profile')return route.fulfill({json:{ok:true,profile:{...state.profile,displayName:state.profile.nickname,birthday:'2000-01-01',...state.profileDraft},businessCards:state.businessCards}});
-  if(url.pathname==='/api/personal-coupons')return route.fulfill({json:{ok:true,coupons:[]}});
+  if(url.pathname==='/api/personal-coupons')return route.fulfill({json:{ok:true,coupons:state.coupons}});
   if(url.pathname==='/api/orders')return route.fulfill({json:{ok:true,orders:[{id:'OSYNTHETIC',siteId,siteName:'Synthetic venue',createdAt:'2026-11-01T10:00:00Z',updatedAt:'2026-11-01T10:00:00Z',status:'pending',customer:{name:'Visitor',phone:'000',email:'visitor@example.invalid',note:''},items:[{name:'Synthetic account product',quantity:2,unitPriceText:'€10',subtotal:20}],pricePrefix:'€',totalAmount:20,totalQuantity:2}]}});
   if(url.pathname==='/api/bookings')return route.fulfill({json:{ok:true,bookings:[]}});
   if(url.pathname==='/api/merchant-peer-messages'||url.pathname==='/api/support-messages')return route.fulfill({json:{ok:true,threads:url.pathname==='/api/merchant-peer-messages'?state.threads:[],contacts:state.contacts,thread:null}});
@@ -115,6 +127,82 @@ const serviceFrame=page=>page.frameLocator('iframe[data-isolated-service-frame]'
 async function menu(page){await page.getByRole('button',{name:'服务中心',exact:true}).click();await page.getByRole('dialog').waitFor();}
 async function choose(page,label){const ids={'订单':'orders','会话':'conversations','我的':'account','Faolla':'directory'};await page.getByRole('dialog').locator(`[data-service-section="${ids[label]}"]`).click();}
 async function openThread(surface,id=siteId){await surface.locator(`[data-conversation-id="${id}"]`).click();}
+
+test('My retains QR generation/share/reset/scan, tools, games, complete settings and host-synchronized language without bringing back an app shell',{timeout:90000},async()=>{
+ const browser=await chromium.launch({headless:true});try{for(const width of [390,1440]){
+  const f=await setup(browser,width);try{
+   await f.open();await f.page.waitForResponse(r=>r.url().includes('/api/merchant-service/status'));await f.page.getByRole('button',{name:'Switch Chinese',exact:true}).click();
+   await menu(f.page);await choose(f.page,'我的');const surface=serviceFrame(f.page),account=surface.locator('[data-service-account]');
+   await account.locator('[data-account-section="qr"]').waitFor();assert.equal(f.state.requests.filter(request=>request.url.includes('/api/faolla-qr-token')||request.url.includes('/api/app-web-version')||request.url.includes('/downloads/faolla-android-version')).length,0);
+   const src=await f.page.locator('iframe').getAttribute('src');await account.locator('[data-account-section="qr"]').click();const qr=account.locator('[data-service-personal-qr]');
+   await qr.getByRole('img',{name:'Faolla 二维码',exact:true}).evaluate(image=>image.decode());const before=await qr.getByRole('img',{name:'Faolla 二维码',exact:true}).getAttribute('src');
+   await qr.evaluate(()=>{window.__cameraRequests=0;Object.defineProperty(navigator,'share',{configurable:true,value:async payload=>{window.__syntheticShare=payload}});Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>{window.__cameraRequests++;throw new DOMException('Synthetic camera refusal','NotAllowedError')}}})});
+   await qr.getByRole('button',{name:'分享二维码',exact:true}).click();let shared=await qr.evaluate(()=>window.__syntheticShare);assert.equal(new URL(shared.url).searchParams.get('token'),'synthetic-qr-token-original');
+   await qr.getByRole('button',{name:'重置二维码',exact:true}).click();await qr.getByText('二维码已重置',{exact:true}).waitFor();
+   await qr.getByRole('img',{name:'Faolla 二维码',exact:true}).evaluate((image,old)=>new Promise((resolve,reject)=>{const end=Date.now()+5000;const timer=setInterval(()=>{if(image.src!==old){clearInterval(timer);resolve(true)}else if(Date.now()>end){clearInterval(timer);reject(Error('QR did not change'))}},10)}),before);
+   await qr.getByRole('button',{name:'分享二维码',exact:true}).click();shared=await qr.evaluate(()=>window.__syntheticShare);assert.equal(new URL(shared.url).searchParams.get('token'),'synthetic-qr-token-reset');
+   assert.equal(await qr.evaluate(()=>window.__cameraRequests),0,'the camera is not requested until Scan is clicked');await qr.getByRole('button',{name:'扫描',exact:true}).click();await qr.getByText('无法打开摄像头，请检查浏览器权限',{exact:true}).waitFor();assert.equal(await qr.evaluate(()=>window.__cameraRequests),1);
+   await qr.evaluate(()=>{window.__stoppedCameraTracks=0;window.__fakeCameraOpened=false;HTMLMediaElement.prototype.play=async()=>{};navigator.mediaDevices.getUserMedia=async()=>{window.__cameraRequests++;const stream=new MediaStream();Object.defineProperty(stream,'getTracks',{value:()=>[{stop:()=>window.__stoppedCameraTracks++}]});window.__fakeCameraOpened=true;return stream}});
+   const qrFrame=f.page.frames().find(frame=>new URL(frame.url()).pathname==='/service-center');
+   await qr.getByRole('button',{name:'扫描',exact:true}).click();await qrFrame.waitForFunction(()=>window.__fakeCameraOpened&&document.querySelector('video')?.srcObject);
+   await f.page.getByRole('button',{name:'关闭服务中心',exact:true}).click();await qrFrame.waitForFunction(()=>window.__stoppedCameraTracks>0,null,{polling:25});await menu(f.page);await choose(f.page,'我的');await qr.getByRole('img',{name:'Faolla 二维码',exact:true}).waitFor();
+   await account.getByRole('button',{name:'← 返回我的',exact:true}).click();await account.locator('[data-account-section="tools"]').click();assert.equal(await account.getByRole('link',{name:'双扣计分',exact:true}).getAttribute('href'),'/me/tools/shuangkoujifen');
+   await account.getByRole('button',{name:'← 返回我的',exact:true}).click();await account.locator('[data-account-section="games"]').click();assert.equal(await account.getByRole('link',{name:'坦克大战',exact:true}).getAttribute('href'),'/me/games/tank-battle');assert.equal(await account.getByRole('link',{name:'不服再战',exact:true}).getAttribute('href'),'/me/games/bufuzai');
+   await account.getByRole('button',{name:'← 返回我的',exact:true}).click();await account.locator('[data-account-section="more"]').click();
+   const settings=account.locator('[data-service-account-settings]');await settings.getByRole('button',{name:'通知 系统通知、提示音和震动设置',exact:true}).click();await settings.getByRole('switch',{name:'系统消息通知',exact:true}).waitFor();assert.equal(await settings.getByRole('switch',{name:'系统消息通知',exact:true}).isDisabled(),true);
+   await settings.getByRole('button',{name:'← 返回设置上级',exact:true}).click();await settings.getByRole('button',{name:/关于 Faolla/}).click();await settings.getByText('Faolla',{exact:true}).waitFor();
+   await settings.getByRole('button',{name:/版本更新/}).click();await settings.getByRole('button',{name:'仅 Android App 支持',exact:true}).waitFor();assert.equal(await settings.getByRole('button',{name:'仅 Android App 支持',exact:true}).isDisabled(),true);
+   await settings.getByRole('button',{name:'← 返回设置上级',exact:true}).click();await settings.getByRole('button',{name:/法律 服务条款/}).click();
+   for(const title of ['服务条款','隐私政策','Cookie 使用政策','法律声明']){await settings.getByRole('button',{name:new RegExp('^'+title)}).click();await settings.getByRole('heading',{name:title,exact:true}).waitFor();await settings.getByRole('button',{name:'← 返回设置上级',exact:true}).click();}
+   await account.getByRole('button',{name:'← 返回我的',exact:true}).click();await account.locator('[data-account-section="more"]').click();await settings.locator('#service-account-language').selectOption('es-ES');await f.page.waitForURL(url=>url.searchParams.get('uiLocale')==='es-ES');assert.equal(await f.page.locator('iframe').getAttribute('src'),src);
+   await settings.locator('#service-account-language').selectOption('zh-CN');await f.page.waitForURL(url=>url.searchParams.get('uiLocale')==='zh-CN');assert.equal(await f.page.locator('iframe').count(),1);
+   assert.deepEqual(f.state.writes.map(write=>write.path),['/api/faolla-qr-token']);assert.equal(new URL(f.page.url()).origin,merchantOrigin);
+   const messages=await f.page.evaluate(()=>window.__messages);assert.doesNotMatch(JSON.stringify(messages),/synthetic-qr-token|visitor@example|Synthetic visitor/);for(const message of messages)assert.deepEqual(Object.keys(message).filter(key=>!['type','nonce','siteId','event','favorited','locale'].includes(key)),[]);
+   if(process.env.FAOLLA_SERVICE_QA_DIR)await f.page.screenshot({path:path.join(process.env.FAOLLA_SERVICE_QA_DIR,`service-retained-settings-${width}.png`)});
+  }finally{await f.close();}
+ }}finally{await browser.close();}
+});
+
+test('the existing camera-deny policy stays enforced; local QR image recognition and picker cancel still work without uploads or navigation',{timeout:60000},async()=>{
+ const browser=await chromium.launch({headless:true});try{for(const width of [390,1440]){
+  const f=await setup(browser,width,{cameraDenied:true});try{
+   await f.open();await menu(f.page);await choose(f.page,'我的');const account=serviceFrame(f.page).locator('[data-service-account]');await account.locator('[data-account-section="qr"]').click();const qr=account.locator('[data-service-personal-qr]');
+   await qr.getByRole('img',{name:'Faolla 二维码',exact:true}).waitFor();await qr.evaluate(()=>{window.__cameraRequests=0;Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>{window.__cameraRequests++;throw Error('camera must remain denied')}}})});
+   assert.equal(await qr.evaluate(()=>(document.permissionsPolicy??document.featurePolicy).allowsFeature('camera')),false);await qr.getByRole('button',{name:'扫描',exact:true}).click();await qr.getByText('当前网页未开放摄像头，请选择二维码图片识别。',{exact:true}).waitFor();assert.equal(await qr.evaluate(()=>window.__cameraRequests),0);
+   const input=qr.getByLabel('选择二维码图片',{exact:true});await input.dispatchEvent('cancel');assert.equal(await f.page.getByRole('dialog').isVisible(),true);
+   const result=portalOrigin+'/connect?type=personal&id=50010105';await input.setInputFiles({name:'synthetic-qr.png',mimeType:'image/png',buffer:await QRCode.toBuffer(result,{width:400})});await qr.getByText(result,{exact:true}).waitFor();assert.equal(await qr.getByRole('link',{name:'确认打开识别结果',exact:true}).getAttribute('href'),result);assert.equal(await qr.getByRole('link',{name:'确认打开识别结果',exact:true}).getAttribute('target'),'_top');
+   await input.setInputFiles({name:'synthetic-unsafe-qr.png',mimeType:'image/png',buffer:await QRCode.toBuffer('javascript:alert(1)',{width:400})});await qr.getByText('此内容不是可直接打开的安全链接。',{exact:true}).waitFor();assert.equal(await qr.getByRole('link',{name:'确认打开识别结果',exact:true}).count(),0);
+   await input.setInputFiles({name:'invalid.png',mimeType:'image/png',buffer:Buffer.from('not an image')});await qr.getByText('图片无法读取，请重新选择。',{exact:true}).waitFor();assert.equal(await f.page.getByRole('dialog').isVisible(),true);assert.equal(await qr.evaluate(()=>window.__cameraRequests),0);assert.deepEqual(f.state.writes,[]);assert.equal(new URL(f.page.url()).origin,merchantOrigin);
+  }finally{await f.close();}
+ }}finally{await browser.close();}
+});
+
+test('switch/logout are explicit confirmed operations, never retire memberships or erase history, and a failed logout leaves private state intact',{timeout:60000},async()=>{
+ const browser=await chromium.launch({headless:true});try{for(const fail of [true,false]){
+  const f=await setup(browser,390);try{
+   f.state.logoutFails=fail;f.state.favorite=true;f.state.member='active';await f.open();await f.page.waitForResponse(r=>r.url().includes('/api/merchant-service/status'));await menu(f.page);await choose(f.page,'我的');const surface=serviceFrame(f.page),account=surface.locator('[data-service-account]');
+   await account.getByRole('button',{name:'切换账号',exact:true}).click();assert.equal(f.state.writes.length,0);await account.getByRole('button',{name:'取消',exact:true}).click();assert.equal(f.state.writes.length,0);
+   await account.getByRole('button',{name:'退出登录',exact:true}).click();await account.getByRole('button',{name:'确认退出当前账号',exact:true}).click();
+   if(fail){await account.getByRole('alert').waitFor();await account.getByRole('button',{name:'重新读取账号状态',exact:true}).click();assert.equal(await account.getByText('Synthetic visitor',{exact:true}).count(),1);assert.equal(f.state.logged,true);}
+   else {await f.page.getByRole('button',{name:'返回服务中心',exact:true}).waitFor({state:'hidden'});await choose(f.page,'我的');await f.page.getByRole('link',{name:'用户登录 / 注册',exact:true}).waitFor();assert.equal(await serviceFrame(f.page).getByText('Synthetic visitor',{exact:true}).count(),0);assert.equal(f.state.logged,false);}
+   assert.equal(f.state.member,'active');assert.equal(f.state.favorite,true);assert.deepEqual(f.state.writes.map(write=>write.path),['/api/auth/merchant-logout']);
+  }finally{await f.close();}
+ }}finally{await browser.close();}
+});
+
+test('membership dates, original member QR, merchant homepage, QR coupons and barcode redemption detail links remain available',{timeout:60000},async()=>{
+ const browser=await chromium.launch({headless:true});const f=await setup(browser,390);try{
+  f.state.member='active';f.state.favorite=true;f.state.coupons=['qr','barcode'].map(kind=>({id:kind,siteId,siteName:'Synthetic venue',couponId:'coupon-'+kind,couponTitle:'Synthetic '+kind+' coupon',couponDescription:'Synthetic offer',discountLabel:'10%',claimEventId:'claim-'+kind,claimedAt:'2026-11-01T12:00:00Z',validUntil:null,settlementType:kind,settlementCode:'SYNTHETIC-CODE-'+kind}));
+  await f.open();await f.page.waitForResponse(r=>r.url().includes('/api/merchant-service/status'));await f.page.getByRole('button',{name:'Switch Chinese',exact:true}).click();await menu(f.page);await choose(f.page,'我的');const surface=serviceFrame(f.page),account=surface.locator('[data-service-account]');
+  await account.locator('[data-account-section="memberships"]').click();await account.getByText('2026-11-01',{exact:true}).waitFor();await account.getByText('SYNTHETIC-QR',{exact:true}).waitFor();assert.equal(await account.getByRole('link',{name:'商户首页',exact:true}).getAttribute('target'),'_top');assert.equal(await account.getByRole('link',{name:'商户首页',exact:true}).getAttribute('href'),'/site/'+siteId);
+  await account.getByText('显示会员二维码',{exact:true}).click();await account.getByRole('img',{name:'会员或优惠券二维码',exact:true}).evaluate(image=>image.decode());
+  await account.getByRole('button',{name:'← 返回我的',exact:true}).click();await account.locator('[data-account-section="coupons"]').click();await account.getByText('Synthetic barcode coupon',{exact:true}).waitFor();
+  assert.equal(await account.getByText('显示核销码',{exact:true}).count(),1,'a barcode is not incorrectly replaced by a QR image');
+  const links=account.getByRole('link',{name:'查看核销码',exact:true});assert.equal(await links.count(),2);for(let i=0;i<2;i++){const href=new URL(await links.nth(i).getAttribute('href'),portalOrigin);assert.match(href.pathname,/^\/coupon\/claim\/claim-(qr|barcode)$/);assert.equal(href.searchParams.get('siteId'),siteId);assert.equal(await links.nth(i).getAttribute('target'),'_top');}
+  assert.equal(await account.getByText('2026-11-01 12:00:00',{exact:true}).count(),2);assert.equal(await account.getByText('长期有效',{exact:true}).count(),2);
+  assert.deepEqual(f.state.writes,[]);assert.equal(f.state.member,'active');assert.equal(f.state.favorite,true);
+ }finally{await f.close();await browser.close();}
+});
 async function pickProfile(surface,label,query,name){await surface.getByRole('combobox',{name:label,exact:true}).fill(query);await surface.getByRole('option',{name,exact:typeof name==='string'}).click();}
 
 test('profile fields support searchable cascading locations, canonical genders, optional saved contact cards and explicit avatar saves',{timeout:90000},async()=>{
@@ -193,7 +281,7 @@ test('opening profile preserves older saved location and contact-card values; an
  }finally{await f.close();await browser.close();}
 });
 
-test('My dashboard gives guests and accounts a responsive identity card and six working shortcuts without eager reads or writes',{timeout:90000},async()=>{
+test('My dashboard gives guests and accounts a responsive identity card and all nine working shortcuts without eager reads or writes',{timeout:90000},async()=>{
  const browser=await chromium.launch({headless:true});try{for(const width of [320,390,1440]){for(const logged of [false,true]){
   const f=await setup(browser,width,{logged,seedGuest:!logged});try{
    if(logged){f.state.favorite=true;f.state.member='active';f.state.profile.avatarUrl=portalOrigin+'/synthetic-avatar.svg';}
@@ -203,8 +291,8 @@ test('My dashboard gives guests and accounts a responsive identity card and six 
    await f.page.getByRole('heading',{name:'你的下一场游戏从这里开始。',exact:true}).waitFor();
    await menu(f.page);await choose(f.page,'我的');const surface=logged?serviceFrame(f.page):f.page;
    const account=surface.locator('[data-service-account]');await account.getByRole('heading',{name:logged?'Synthetic visitor':'游客身份',exact:true}).waitFor();
-   assert.equal(await account.locator('[data-account-section]').count(),6);
-   assert.equal(new Set(await account.locator('[data-account-section] svg').evaluateAll(elements=>elements.map(svg=>getComputedStyle(svg).color))).size,6);
+   assert.equal(await account.locator('[data-account-section]').count(),9);
+   assert.equal(new Set(await account.locator('[data-account-section] svg').evaluateAll(elements=>elements.map(svg=>getComputedStyle(svg).color))).size,9);
    assert.equal(f.state.requests.filter(r=>r.url.includes('/api/personal-profile')||r.url.includes('/api/personal-coupons')).length,0,'opening My does not eagerly fetch unopened features');
    if(logged){
     await account.locator('img').evaluate(image=>image.decode());
@@ -217,14 +305,17 @@ test('My dashboard gives guests and accounts a responsive identity card and six 
    }
    assert.equal(await account.evaluate(element=>element.scrollWidth<=element.clientWidth),true);
    if(process.env.FAOLLA_SERVICE_QA_DIR)await f.page.screenshot({path:path.join(process.env.FAOLLA_SERVICE_QA_DIR,`service-account-${logged?'member':'guest'}-${width}.png`)});
-   for(const id of ['profile','favorites','memberships','coupons','cards','more']){
+   for(const id of ['profile','favorites','memberships','coupons','cards','qr','tools','games','more']){
     await account.locator(`[data-account-section="${id}"]`).click();
     if(id==='profile')await account.getByText('姓名 / 昵称',{exact:true}).waitFor();
     if(id==='favorites')await account.getByText(logged?'取消收藏':'尚未收藏商户。',{exact:true}).waitFor();
     if(id==='memberships')await account.getByText(logged?'有效会员':'暂无会员卡。',{exact:true}).waitFor();
     if(id==='coupons')await account.getByText('暂无已领取优惠券。',{exact:true}).waitFor();
     if(id==='cards')await account.getByText(logged?'Synthetic card manager boundary':'请登录后使用名片夹。',{exact:true}).waitFor();
-    if(id==='more')await account.getByRole('link',{name:'隐私政策',exact:true}).waitFor();
+    if(id==='qr')await (logged?account.getByRole('img',{name:'Faolla 二维码',exact:true}):account.getByText('请登录后使用个人二维码。',{exact:true})).waitFor();
+    if(id==='tools')await account.getByRole('link',{name:'双扣计分',exact:true}).waitFor();
+    if(id==='games')await account.getByRole('link',{name:'坦克大战',exact:true}).waitFor();
+    if(id==='more')await account.getByRole('button',{name:'隐私政策',exact:true}).waitFor();
     assert.equal(await account.evaluate(element=>element.scrollWidth<=element.clientWidth),true,'subpage '+id+' fits at '+width);
     await account.getByRole('button',{name:'← 返回我的',exact:true}).click();
    }
@@ -364,7 +455,7 @@ test('favorite joins, hides its entry, and can only be canceled in My favorites 
   await f.page.waitForFunction(()=>!!document.querySelector('button[aria-label="收藏并加入本店会员"]'));
   assert.equal(f.state.member,'left');assert.equal(f.state.favorite,false);
   assert.deepEqual(f.state.writes.map(row=>row.body.action),['favorite','unfavorite']);
-  const messages=await f.page.evaluate(()=>window.__messages);for(const data of messages){assert.deepEqual(Object.keys(data).filter(key=>!['type','nonce','siteId','event','favorited'].includes(key)),[]);}
+  const messages=await f.page.evaluate(()=>window.__messages);for(const data of messages){assert.deepEqual(Object.keys(data).filter(key=>!['type','nonce','siteId','event','favorited','locale'].includes(key)),[]);}
  }finally{await f.close();await browser.close();}
 });
 

@@ -133,6 +133,13 @@ function splitOuterWhitespace(input: string) {
   };
 }
 
+// Odd entries are exact authored brand tokens. Split before consulting old
+// caches/glossaries or sending text to translation; a poisoned full-sentence
+// cache must not rename the brand. Keep the original 320-character boundary.
+function brandParts(input: string) {
+  return input.length <= 320 && /faolla/i.test(input) ? input.split(/(faolla)/gi) : null;
+}
+
 function hasLetterLikeContent(input: string) {
   return /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF\u3040-\u30FF\uAC00-\uD7AF\u3400-\u9FFF]/.test(input);
 }
@@ -172,6 +179,7 @@ function getLocaleCache(locale: string) {
         Object.entries(parsed).forEach(([source, translated]) => {
           if (!source || typeof source !== "string") return;
           if (!translated || typeof translated !== "string") return;
+          if (/faolla/i.test(source)) return; // Retire only obsolete brand-bearing cache entries, including reverse mappings.
           map.set(source, translated);
         });
       }
@@ -328,12 +336,16 @@ async function getOrRequestTranslation(source: string, locale: string, signal?: 
   });
 }
 
-export function hasTranslatableText(input: string, locale: string) {
+export function hasTranslatableText(input: string, locale: string): boolean {
+  const parts = brandParts(input);
+  if (parts) return parts.some((part, index) => index % 2 === 0 && hasTranslatableText(part, locale));
   const { core } = splitOuterWhitespace(input);
   return shouldTranslateCoreText(core, locale);
 }
 
-export function isDomTranslationCached(input: string, locale: string) {
+export function isDomTranslationCached(input: string, locale: string): boolean {
+  const parts = brandParts(input);
+  if (parts) return parts.every((part, index) => index % 2 === 1 || isDomTranslationCached(part, locale));
   const normalized = normalizeDomLocale(locale);
   const { core } = splitOuterWhitespace(input);
   if (!shouldTranslateCoreText(core, normalized)) return true;
@@ -341,7 +353,9 @@ export function isDomTranslationCached(input: string, locale: string) {
   return getLocaleCache(normalized).has(core);
 }
 
-export function translateDomText(input: string, locale: string) {
+export function translateDomText(input: string, locale: string): string {
+  const parts = brandParts(input);
+  if (parts) return parts.map((part, index) => index % 2 === 1 ? part : translateDomText(part, locale)).join("");
   const normalized = normalizeDomLocale(locale);
 
   const { leading, core, trailing } = splitOuterWhitespace(input);
@@ -358,7 +372,9 @@ export function translateDomText(input: string, locale: string) {
   return `${leading}${translated}${trailing}`;
 }
 
-export function reverseTranslateDomText(input: string, locale: string) {
+export function reverseTranslateDomText(input: string, locale: string): string | null {
+  const parts = brandParts(input);
+  if (parts) { const recovered = parts.map((part, index) => index % 2 === 1 ? part : reverseTranslateDomText(part, locale) ?? part).join(""); return recovered === input ? null : recovered; }
   const normalized = normalizeDomLocale(locale);
   if (toApiTarget(normalized) === "zh-CN") return input;
 
@@ -379,7 +395,8 @@ export async function ensureDomTranslations(texts: Iterable<string>, locale: str
   const normalized = normalizeDomLocale(locale);
 
   const unique = new Set<string>();
-  for (const sourceText of texts) {
+  const segments = function* () { for (const text of texts) { const parts = brandParts(text); if (parts) { for (let index = 0; index < parts.length; index += 2) yield parts[index]; } else yield text; } };
+  for (const sourceText of segments()) {
     const { core } = splitOuterWhitespace(sourceText);
     if (!core) continue;
     if (!shouldTranslateCoreText(core, normalized)) continue;
