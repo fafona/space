@@ -27,7 +27,7 @@ export default function LoadingProgressScreen(props: LoadingProgressScreenProps)
         <div className="faolla-launch-solar-loader" aria-hidden="true">
           <span className="faolla-launch-logo-mark" />
         </div>
-        <div className="mt-7 text-3xl font-black tracking-normal">Faolla</div>
+        <div className="notranslate mt-7 text-3xl font-black tracking-normal" translate="no" data-no-translate="1">Faolla</div>
         <div className="mt-6 text-base font-semibold text-white/90">{title}</div>
         <div className="mt-2 text-sm leading-6 text-white/60">{description}</div>
       </div>

@@ -145,6 +145,10 @@ jobs:
         run: node scripts/run-ci-tests.mjs remaining && npm run check:db-migrations
 
       - name: Build
+        # Match the already reviewed production build heap, instead of Node's
+        # runner-dependent ~2 GiB default. Keep the build and every check intact.
+        env:
+          NODE_OPTIONS: "--max-old-space-size=3072"
         run: npm run build
 
       - name: Authentication Build And HTTP Acceptance

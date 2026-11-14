@@ -270,7 +270,7 @@ export function FaollaMobileSettingsContent({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/faolla-app-icon-192.png" alt="Faolla" className="h-full w-full object-cover" />
           </div>
-          <div className="mt-4 text-xl font-semibold text-slate-950">Faolla</div>
+          <div className="notranslate mt-4 text-xl font-semibold text-slate-950" translate="no" data-no-translate="1">Faolla</div>
           <div className="mt-1 text-sm text-slate-500">版本 {FAOLLA_DISPLAY_VERSION}</div>
         </section>
         <SettingsList>

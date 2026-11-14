@@ -43,6 +43,6 @@ export default function PublicWebsiteActions({ siteId, siteName = "", serviceOri
     <button type="button" className={buttonClass} aria-haspopup="dialog" aria-expanded={open} onClick={() => launch(false)}>服务中心</button>
     {visited ? <ServiceCenter open={open} onClose={() => setOpen(false)} siteId={siteId} siteName={siteName} serviceOrigin={serviceOrigin}
       authenticated={status?.authenticated ?? null} refreshStatus={refreshStatus} favoriteRequested={favoriteRequested}
-      onFavoriteChange={favorited => { setStatus({ authenticated: true, favorited }); }} /> : null}
+      onFavoriteChange={favorited => { setStatus({ authenticated: true, favorited }); }} onSignedOut={() => setStatus({ authenticated: false, favorited: false })} /> : null}
   </div>;
 }

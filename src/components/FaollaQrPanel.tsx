@@ -6,6 +6,7 @@ import QRCode from "qrcode";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 
 type FaollaQrPanelProps = {
+  contained?: boolean;
   profileName: string;
   profileSubtitle: string;
   avatarUrl?: string;
@@ -26,7 +27,40 @@ function getAvatarFallback(value: string) {
   return normalized ? normalized.slice(0, 2).toUpperCase() : "FA";
 }
 
+async function readQrImage(file: File, signal: AbortSignal) {
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 10 * 1024 * 1024) {
+    throw new Error("请选择不超过 10 MB 的 JPG、PNG 或 WebP 二维码图片。");
+  }
+  const url = URL.createObjectURL(file), image = new Image();
+  let abort = () => {};
+  try {
+    await new Promise<void>((resolve, reject) => {
+      abort = () => { image.src = ""; reject(new Error("图片识别已取消。")); };
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("图片无法读取，请重新选择。"));
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort(); else image.src = url;
+    });
+    if (signal.aborted) throw new Error("图片识别已取消。");
+    const scale = Math.min(1, 2400 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("浏览器暂不支持图片识别。");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    const value = trimText(jsQR(pixels.data, canvas.width, canvas.height, { inversionAttempts: "attemptBoth" })?.data);
+    if (!value) throw new Error("未识别到二维码，请选择清晰完整的二维码图片。");
+    return value;
+  } finally {
+    signal.removeEventListener("abort", abort);
+    URL.revokeObjectURL(url);
+  }
+}
+
 export default function FaollaQrPanel({
+  contained = false,
   profileName,
   profileSubtitle,
   avatarUrl,
@@ -43,10 +77,14 @@ export default function FaollaQrPanel({
   const [scannerMessage, setScannerMessage] = useState("");
   const [resettingQr, setResettingQr] = useState(false);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const [readingImage, setReadingImage] = useState(false);
+  const imageReadRef = useRef<AbortController | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanFrameRef = useRef<number | null>(null);
+
+  useEffect(() => () => imageReadRef.current?.abort(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -216,7 +254,7 @@ export default function FaollaQrPanel({
   const showAvatarImage = Boolean(normalizedAvatarUrl && !avatarLoadFailed);
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-slate-50 px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+6.75rem)] pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] text-slate-950">
+    <div className={contained ? "relative flex min-h-0 flex-col rounded-2xl bg-slate-50 px-3 py-4 text-slate-950" : "relative flex h-full min-h-0 flex-col overflow-hidden bg-slate-50 px-4 pb-[calc(var(--faolla-mobile-safe-bottom)+6.75rem)] pt-[calc(var(--faolla-mobile-safe-top)+0.75rem)] text-slate-950"}>
       <div className="flex shrink-0 items-center justify-between">
         <button
           type="button"
@@ -247,7 +285,7 @@ export default function FaollaQrPanel({
 
       <div className="mx-auto flex min-h-0 w-full max-w-[360px] flex-1 flex-col items-center justify-center pt-10">
         <section className="relative w-full rounded-[30px] bg-white px-5 pb-5 pt-12 text-center shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
-          <div className="absolute left-1/2 top-0 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full border-4 border-slate-50 bg-slate-900 text-base font-semibold text-white">
+          <div data-no-translate="1" className="absolute left-1/2 top-0 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden rounded-full border-4 border-slate-50 bg-slate-900 text-base font-semibold text-white">
             {showAvatarImage ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -260,7 +298,7 @@ export default function FaollaQrPanel({
               fallback
             )}
           </div>
-          <div className="truncate text-[22px] font-semibold leading-tight">{profileName || "Faolla"}</div>
+          <div data-no-translate="1" className="truncate text-[22px] font-semibold leading-tight">{profileName || "Faolla"}</div>
           <div className="mt-1 truncate text-sm text-slate-500">{profileSubtitle}</div>
           <div
             className="mx-auto mt-5 flex aspect-square items-center justify-center rounded-[22px] bg-white p-1.5"
@@ -292,14 +330,35 @@ export default function FaollaQrPanel({
         ) : null}
       </div>
 
-      <div className="fixed inset-x-4 bottom-[calc(var(--faolla-mobile-safe-bottom)+5.5rem)] z-30 mx-auto max-w-[360px]">
+      <div className={contained ? "mx-auto mt-5 w-full max-w-[360px]" : "fixed inset-x-4 bottom-[calc(var(--faolla-mobile-safe-bottom)+5.5rem)] z-30 mx-auto max-w-[360px]"}>
         <button
           type="button"
-          className="h-[5.6rem] w-full rounded-full bg-emerald-600 text-xl font-semibold text-white shadow-[0_16px_36px_rgba(16,185,129,0.24)] active:scale-[0.99]"
-          onClick={() => setScannerActive(true)}
+          className={`${contained ? "min-h-12 rounded-2xl text-base" : "h-[5.6rem] rounded-full text-xl"} w-full bg-emerald-600 py-3 font-semibold text-white shadow-[0_16px_36px_rgba(16,185,129,0.24)] active:scale-[0.99]`}
+          onClick={() => {
+            const policy = (document as Document & { permissionsPolicy?: { allowsFeature: (feature: string) => boolean }; featurePolicy?: { allowsFeature: (feature: string) => boolean } });
+            if (contained && (policy.permissionsPolicy ?? policy.featurePolicy)?.allowsFeature("camera") === false) {
+              setScannerMessage("当前网页未开放摄像头，请选择二维码图片识别。");
+              return;
+            }
+            setScannerActive(true);
+          }}
         >
           扫描
         </button>
+        {contained ? <label className="mt-3 flex min-h-12 cursor-pointer items-center justify-center rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-semibold text-emerald-800">
+          {readingImage ? "正在识别图片…" : "识别二维码图片"}
+          <input type="file" accept="image/jpeg,image/png,image/webp" aria-label="选择二维码图片" className="sr-only" disabled={readingImage} onChange={event => {
+            const file = event.target.files?.[0]; event.target.value = "";
+            if (!file) return;
+            imageReadRef.current?.abort();
+            const controller = new AbortController(); imageReadRef.current = controller;
+            setReadingImage(true); setScannerMessage(""); setShareMessage("");
+            void readQrImage(file, controller.signal).then(value => { if (!controller.signal.aborted) onScanResult(value); })
+              .catch(error => { if (!controller.signal.aborted) setScannerMessage(error instanceof Error ? error.message : "图片识别失败，请重试。"); })
+              .finally(() => { if (!controller.signal.aborted) setReadingImage(false); });
+          }} />
+        </label> : null}
+        {contained ? <p className="mt-2 text-center text-xs leading-5 text-slate-500">图片仅在本设备识别，不上传服务器。</p> : null}
       </div>
 
       {scannerActive ? (

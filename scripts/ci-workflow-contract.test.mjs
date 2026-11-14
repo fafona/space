@@ -83,6 +83,21 @@ test("production-build authentication acceptance runs after build in Linux CI", 
   assert.doesNotMatch(quality, /continue-on-error/);
 });
 
+test("the quality build pins only its Node heap to the existing 3072 MiB production budget without bypassing validation", () => {
+  const quality = jobBlock("quality-core"), build = stepBlock(quality, "Build");
+  assert.match(build, /\n        env:\n          NODE_OPTIONS: "--max-old-space-size=3072"\n/);
+  assert.match(build, /\n        run: npm run build\n/);
+  assert.equal((workflow.match(/NODE_OPTIONS:/g) || []).length, 1, "the build budget must not spill into test or native-isolation jobs");
+  assert.doesNotMatch(build, /continue-on-error|\bif:|ignoreBuildErrors|ignoreDuringBuilds|SKIP|DISABLE|\|\|/);
+  const result = spawnSync(process.execPath, ["-e", "process.stdout.write(String(require('node:v8').getHeapStatistics().heap_size_limit))"], {
+    env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=3072" }, encoding: "utf8", timeout: 5000, windowsHide: true,
+  });
+  assert.equal(result.status, 0); assert.equal(result.error, undefined);
+  // V8 reports the whole heap, including its version-dependent young generation,
+  // rather than only the explicitly bounded old-space allocation.
+  assert.ok(Number(result.stdout) >= 3072 * 1024 ** 2 && Number(result.stdout) <= (3072 + 256) * 1024 ** 2, result.stdout);
+});
+
 test("CI keeps quality checks independent from browser system packages", () => {
   const quality = jobBlock("quality-core");
 

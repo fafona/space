@@ -1530,7 +1530,7 @@ export default async function RootLayout({
             <div className="faolla-launch-solar-loader">
               <span className="faolla-launch-logo-mark" />
             </div>
-            <div className="faolla-launch-cover-title">Faolla</div>
+            <div className="faolla-launch-cover-title notranslate" translate="no" data-no-translate="1">Faolla</div>
           </div>
         </div>
         <Script id="faolla-inline-cache-refresh" strategy="beforeInteractive">
