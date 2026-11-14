@@ -12,6 +12,7 @@ import {
   type MerchantPeerThread,
 } from "@/lib/merchantPeerInbox";
 import type { PlatformSupportThread } from "@/lib/platformSupportInbox";
+import { boundedPersonalAvatarDataUrl } from "@/lib/personalAvatarValue";
 
 export const PERSONAL_GUEST_STORAGE_EVENT = "faolla:personal-guest-storage-changed";
 
@@ -174,7 +175,7 @@ export function normalizePersonalGuestProfile(value: unknown): PersonalGuestProf
   const record = readRecord(value) ?? {};
   return {
     displayName: trimText(record.displayName || record.display_name || record.name, 80),
-    avatarUrl: trimText(record.avatarUrl || record.avatar_url, 1200),
+    avatarUrl: boundedPersonalAvatarDataUrl(trimText(record.avatarUrl || record.avatar_url, 90_001)) || trimText(record.avatarUrl || record.avatar_url, 1200),
     signature: trimText(record.signature || record.bio, 160),
     phone: trimText(record.phone || record.contact_phone || record.contactPhone, 64),
     email: trimText(record.email || record.contact_email || record.contactEmail, 160).toLowerCase(),

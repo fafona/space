@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { boundedPersonalAvatarDataUrl } from "@/lib/personalAvatarValue";
 import { getMerchantBusinessCardPermissionViolation } from "@/lib/merchantPermissionGuards";
 import { type MerchantAuthUserSummary } from "@/lib/merchantAuthIdentity";
 import { normalizeMerchantBusinessCards, type MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
@@ -142,7 +143,7 @@ function buildProfileMetadataPatch(user: MerchantAuthUserSummary, patch: Persona
   const nextProfile = {
     ...personalProfile,
     displayName: trimText(patch.displayName, 80),
-    avatarUrl: normalizeStoragePublicUrl(patch.avatarUrl, 1200),
+    avatarUrl: boundedPersonalAvatarDataUrl(typeof patch.avatarUrl === "string" ? patch.avatarUrl.trim() : "") || normalizeStoragePublicUrl(patch.avatarUrl, 1200),
     signature: nextSignature,
     bio: nextSignature,
     phone: trimText(patch.phone, 64),

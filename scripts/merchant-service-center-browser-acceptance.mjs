@@ -40,7 +40,7 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900}={}){
  const context=await browser.newContext({viewport:{width,height},isMobile:width<768,hasTouch:width<768,serviceWorkers:'block'});
  if(logged)await context.addCookies([{name:'__Host-faolla-merchant-auth-v2',value:'synthetic-cookie',url:portalOrigin,secure:true,httpOnly:true,sameSite:'Lax'}]);
  await context.addInitScript(value=>{window.__seedGuest=value;window.__messages=[];window.addEventListener('message',event=>{if(event.data?.type==='faolla:merchant-service')window.__messages.push(event.data);});},seedGuest);
- const state={favorite:false,logged,sessionStatus:200,member:'none',profile:{...profile},contacts:[],threads:[],requests:[],writes:[],unexpected:[],errors:[],history:[{points:80,order:'ORIGINAL',balance:25}]};
+ const state={favorite:false,logged,sessionStatus:200,member:'none',profile:{...profile},profileDraft:{},businessCards:[],uploadFails:false,contacts:[],threads:[],requests:[],writes:[],unexpected:[],errors:[],history:[{points:80,order:'ORIGINAL',balance:25}]};
  const originalHistory=structuredClone(state.history);
  const favorite=()=>({id:siteId,url:`https://faolla.com/site/${siteId}`,name:'Synthetic venue',subtitle:'',addedAt:'2026-11-01'});
  const membership=()=>({id:'synthetic-member',siteId,siteName:'Synthetic venue',memberNo:'99990001000001',qrValue:'SYNTHETIC-QR',status:state.member==='left'?'left':'active',joinedAt:'2026-11-01',leftAt:state.member==='left'?'2026-11-13':null});
@@ -72,8 +72,13 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900}={}){
   if(request.method()==='POST'){
    state.writes.push({path:url.pathname,body:request.postDataJSON(),origin:request.headers().origin||url.origin});
    if(url.pathname==='/api/assets/upload'){
-    const body=request.postDataJSON();assert.equal(logged,true);assert.equal(body.merchantHint,'50010105');assert.equal(body.usage,'support-image');
+    const body=request.postDataJSON();assert.equal(logged,true);assert.equal(body.merchantHint,'50010105');assert.ok(['support-image','generic-image'].includes(body.usage));
+    if(state.uploadFails)return route.fulfill({status:503,json:{ok:false,message:'Synthetic upload rejected'}});
     return route.fulfill({json:{ok:true,url:portalOrigin+'/synthetic-upload.png'}});
+   }
+   if(url.pathname==='/api/personal-profile'){
+    assert.equal(logged,true);const body=request.postDataJSON();assert.deepEqual(Object.keys(body),['profile']);
+    state.profileDraft={...state.profileDraft,...body.profile};return route.fulfill({json:{ok:true,profile:state.profileDraft}});
    }
    if(url.pathname==='/api/personal-favorites'){
     const body=request.postDataJSON();assert.equal(body.siteId,siteId);assert.equal(logged,true);
@@ -95,7 +100,8 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900}={}){
   if(url.pathname==='/api/auth/merchant-session')return route.fulfill({status:state.sessionStatus,json:{authenticated:state.logged,accountType:state.logged?'personal':undefined}});
   if(url.pathname==='/api/personal-favorites')return route.fulfill({json:identity()});
   if(url.pathname==='/synthetic-avatar.svg')return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80"><rect width="80" height="80" fill="#ede9fe"/><circle cx="40" cy="29" r="12" fill="#8b5cf6"/><path d="M16 76v-8a24 24 0 0 1 48 0v8" fill="#8b5cf6"/></svg>'});
-  if(url.pathname==='/api/personal-profile')return route.fulfill({json:{ok:true,profile:{...state.profile,displayName:state.profile.nickname,birthday:'2000-01-01'},businessCards:[]}});
+  if(url.pathname==='/synthetic-upload.png')return route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64')});
+  if(url.pathname==='/api/personal-profile')return route.fulfill({json:{ok:true,profile:{...state.profile,displayName:state.profile.nickname,birthday:'2000-01-01',...state.profileDraft},businessCards:state.businessCards}});
   if(url.pathname==='/api/personal-coupons')return route.fulfill({json:{ok:true,coupons:[]}});
   if(url.pathname==='/api/orders')return route.fulfill({json:{ok:true,orders:[{id:'OSYNTHETIC',siteId,siteName:'Synthetic venue',createdAt:'2026-11-01T10:00:00Z',updatedAt:'2026-11-01T10:00:00Z',status:'pending',customer:{name:'Visitor',phone:'000',email:'visitor@example.invalid',note:''},items:[{name:'Synthetic account product',quantity:2,unitPriceText:'€10',subtotal:20}],pricePrefix:'€',totalAmount:20,totalQuantity:2}]}});
   if(url.pathname==='/api/bookings')return route.fulfill({json:{ok:true,bookings:[]}});
@@ -109,6 +115,83 @@ const serviceFrame=page=>page.frameLocator('iframe[data-isolated-service-frame]'
 async function menu(page){await page.getByRole('button',{name:'服务中心',exact:true}).click();await page.getByRole('dialog').waitFor();}
 async function choose(page,label){const ids={'订单':'orders','会话':'conversations','我的':'account','Faolla':'directory'};await page.getByRole('dialog').locator(`[data-service-section="${ids[label]}"]`).click();}
 async function openThread(surface,id=siteId){await surface.locator(`[data-conversation-id="${id}"]`).click();}
+async function pickProfile(surface,label,query,name){await surface.getByRole('combobox',{name:label,exact:true}).fill(query);await surface.getByRole('option',{name,exact:typeof name==='string'}).click();}
+
+test('profile fields support searchable cascading locations, canonical genders, optional saved contact cards and explicit avatar saves',{timeout:90000},async()=>{
+ const browser=await chromium.launch({headless:true});try{for(const width of [390,1440]){for(const logged of [false,true]){
+  const f=await setup(browser,width,{logged});try{
+   f.state.businessCards=[{id:'contact',mode:'link',name:'Synthetic contact card',shareKey:'synthetic-card-01'},{id:'image',mode:'image',name:'Synthetic image card',shareKey:'synthetic-card-02'},{id:'unsaved',mode:'link',name:'Synthetic unsaved card'}];
+   await f.open();await f.page.waitForResponse(r=>r.url().includes('/api/merchant-service/status'));
+   await f.page.getByRole('button',{name:'Switch Chinese',exact:true}).click();
+   await menu(f.page);await choose(f.page,'我的');const surface=logged?serviceFrame(f.page):f.page;
+   await surface.locator('[data-account-section="profile"]').click();const form=surface.locator('[data-service-profile-form]');
+   await form.getByRole('combobox',{name:'国家',exact:true}).waitFor();
+   const birthday=form.getByLabel('生日',{exact:true});assert.equal(await birthday.getAttribute('type'),'text');assert.equal(await birthday.getAttribute('placeholder'),'YYYY-MM-DD');
+   assert.equal(await form.getByLabel('头像图片地址',{exact:true}).count(),0);
+   await birthday.fill('2023-02-29');assert.equal(await form.getByRole('button',{name:'保存资料',exact:true}).isDisabled(),true);
+   await form.getByRole('alert').getByText('请输入有效日期，格式为 YYYY-MM-DD。',{exact:true}).waitFor();await birthday.fill('');
+   assert.equal(await form.locator('input[type="date"]').count(),0,'no browser-native date hint can render the garbled placeholder');
+   await form.getByRole('button',{name:'选择生日日期',exact:true}).click();
+   await form.getByRole('combobox',{name:'生日年份',exact:true}).selectOption('1990');await form.getByRole('combobox',{name:'生日月份',exact:true}).selectOption('3');
+   await form.getByRole('button',{name:'1990-03-04',exact:true}).click();assert.equal(await birthday.inputValue(),'1990-03-04');
+   await form.getByRole('button',{name:'选择生日日期',exact:true}).click();await f.page.keyboard.press('Escape');assert.equal(await f.page.getByRole('dialog').isVisible(),true);assert.equal(await form.getByRole('region',{name:'生日日期选择器',exact:true}).count(),0);
+   await pickProfile(form,'性别','male','男');assert.equal(await form.getByRole('combobox',{name:'性别',exact:true}).inputValue(),'男');
+   await pickProfile(form,'国家','西班牙',/^Spain/);await pickProfile(form,'省份','SEVI','Sevilla');await pickProfile(form,'城市','sev','Sevilla');
+   await pickProfile(form,'国家','France',/^France/);assert.equal(await form.getByRole('combobox',{name:'省份',exact:true}).inputValue(),'');assert.equal(await form.getByRole('combobox',{name:'城市',exact:true}).inputValue(),'');
+   await pickProfile(form,'国家','espana',/^Spain/);await pickProfile(form,'省份','sevi','Sevilla');await pickProfile(form,'城市','dos herman','Dos Hermanas');
+   await form.getByRole('combobox',{name:'国家',exact:true}).focus();await f.page.keyboard.press('Escape');assert.equal(await f.page.getByRole('dialog').isVisible(),true,'Escape dismisses a combobox, not the service sheet');
+   assert.equal(await form.getByRole('combobox',{name:'联系卡',exact:true}).inputValue(),'');
+   await form.getByRole('combobox',{name:'联系卡',exact:true}).click();assert.equal(await form.getByRole('option',{name:'Synthetic image card',exact:true}).count(),0);assert.equal(await form.getByRole('option',{name:'Synthetic unsaved card',exact:true}).count(),0);
+   if(logged)await form.getByRole('option',{name:'Synthetic contact card',exact:true}).click();else await form.getByRole('option',{name:'不选择（留空）',exact:true}).click();
+   const originalLocal=await f.page.evaluate(()=>localStorage.getItem('faolla:personal-guest-profile:v1'));
+   const png=await form.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=96;canvas.height=96;const ctx=canvas.getContext('2d'),image=ctx.createImageData(96,96);for(let i=0;i<image.data.length;i+=4){image.data[i]=(i*17)%256;image.data[i+1]=Math.floor(i/96)*19%256;image.data[i+2]=(i*31)%256;image.data[i+3]=255}ctx.putImageData(image,0,0);return canvas.toDataURL('image/png').split(',')[1]});
+   await form.getByLabel('上传头像',{exact:true}).setInputFiles({name:'avatar.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
+   await form.getByText('头像已准备好，保存资料后生效。',{exact:true}).waitFor();
+   await form.getByRole('img',{name:'当前头像',exact:true}).evaluate(image=>image.decode());
+   await form.getByLabel('上传头像',{exact:true}).evaluate(element=>element.dispatchEvent(new Event('cancel',{bubbles:true})));
+   assert.equal(await f.page.getByRole('dialog').isVisible(),true,'canceling an avatar picker keeps the profile open');
+   assert.equal(f.state.writes.filter(write=>write.path==='/api/personal-profile').length,0,'changing fields and uploading an image never auto-saves the profile');
+   assert.equal(await f.page.evaluate(()=>localStorage.getItem('faolla:personal-guest-profile:v1')),originalLocal);
+   const avatar=await form.getByRole('img',{name:'当前头像',exact:true}).getAttribute('src');
+   if(logged){assert.equal(avatar,portalOrigin+'/synthetic-upload.png');assert.match(f.state.writes.find(write=>write.path==='/api/assets/upload').body.dataUrl,/^data:image\/jpeg;base64,/);}
+   else {assert.match(avatar,/^data:image\/jpeg;base64,/);assert.ok(avatar.length>1200,'exercise the previous URL-length truncation boundary');}
+   if(process.env.FAOLLA_SERVICE_QA_DIR){await form.evaluate(element=>element.scrollIntoView({block:'start'}));await f.page.screenshot({path:path.join(process.env.FAOLLA_SERVICE_QA_DIR,`service-profile-${logged?'member':'guest'}-${width}-top.png`)});await birthday.scrollIntoViewIfNeeded();await f.page.screenshot({path:path.join(process.env.FAOLLA_SERVICE_QA_DIR,`service-profile-${logged?'member':'guest'}-${width}-fields.png`)});}
+   await form.getByLabel('上传头像',{exact:true}).setInputFiles({name:'not-an-image.txt',mimeType:'text/plain',buffer:Buffer.from('not an image')});
+   await form.getByText('请选择 JPG、PNG 或 WebP 图片。',{exact:true}).waitFor();assert.equal(await form.getByRole('img',{name:'当前头像',exact:true}).getAttribute('src'),avatar);
+   if(process.env.FAOLLA_SERVICE_QA_DIR)await f.page.screenshot({path:path.join(process.env.FAOLLA_SERVICE_QA_DIR,`service-profile-${logged?'member':'guest'}-${width}.png`)});
+   await form.getByRole('button',{name:'保存资料',exact:true}).click();await surface.getByText('资料已保存。',{exact:true}).waitFor();
+   const saved=logged?f.state.profileDraft:JSON.parse(await f.page.evaluate(()=>localStorage.getItem('faolla:personal-guest-profile:v1')));
+   assert.equal(saved.gender,'male');assert.equal(saved.country,'Spain');assert.equal(saved.province,'Sevilla');assert.equal(saved.city,'Dos Hermanas');assert.equal(saved.birthday,'1990-03-04');assert.equal(saved.avatarUrl,avatar);assert.equal(saved.contactCard,logged?'https://faolla.com/card/synthetic-card-01':'');
+   assert.deepEqual(f.state.writes.map(write=>write.path),logged?['/api/assets/upload','/api/personal-profile']:[]);
+   assert.equal(await form.evaluate(element=>element.scrollWidth<=element.clientWidth),true);
+   if(!logged){await f.page.reload();await f.page.waitForResponse(r=>r.url().includes('/api/merchant-service/status'));await menu(f.page);await choose(f.page,'我的');await f.page.locator('[data-account-section="profile"]').click();await f.page.getByRole('img',{name:'当前头像',exact:true}).evaluate(image=>image.decode());assert.equal(await f.page.getByRole('img',{name:'当前头像',exact:true}).getAttribute('src'),avatar);}
+  }finally{await f.close();}
+ }}}finally{await browser.close();}
+});
+
+test('an avatar upload failure preserves the current avatar and profile and never retries or saves automatically',{timeout:60000},async()=>{
+ const browser=await chromium.launch({headless:true});const f=await setup(browser,390);try{
+  f.state.uploadFails=true;f.state.profileDraft={avatarUrl:portalOrigin+'/synthetic-avatar.svg',country:'Spain',province:'Sevilla',city:'Sevilla'};
+  await f.open();await f.page.waitForResponse(r=>r.url().includes('/api/merchant-service/status'));await menu(f.page);await choose(f.page,'我的');const surface=serviceFrame(f.page);await surface.locator('[data-account-section="profile"]').click();const form=surface.locator('[data-service-profile-form]');
+  await form.getByRole('img',{name:'当前头像',exact:true}).evaluate(image=>image.decode());
+  await form.getByLabel('上传头像',{exact:true}).setInputFiles({name:'synthetic.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64')});
+  await form.getByText('Synthetic upload rejected',{exact:true}).waitFor();
+  assert.equal(await form.getByRole('img',{name:'当前头像',exact:true}).getAttribute('src'),portalOrigin+'/synthetic-avatar.svg');
+  assert.equal(await form.getByRole('combobox',{name:'城市',exact:true}).inputValue(),'Sevilla');
+  assert.deepEqual(f.state.writes.map(write=>write.path),['/api/assets/upload']);assert.equal(await f.page.getByRole('dialog').isVisible(),true);
+ }finally{await f.close();await browser.close();}
+});
+
+test('opening profile preserves older saved location and contact-card values; an unrelated explicit save does not choose replacements',{timeout:60000},async()=>{
+ const browser=await chromium.launch({headless:true});const f=await setup(browser,390);try{
+  f.state.profileDraft={country:'Saved custom country',province:'Saved custom province',city:'Saved custom city',contactCard:'https://example.invalid/legacy-contact',gender:'other'};
+  await f.open();await f.page.waitForResponse(r=>r.url().includes('/api/merchant-service/status'));await menu(f.page);await choose(f.page,'我的');const surface=serviceFrame(f.page);await surface.locator('[data-account-section="profile"]').click();const form=surface.locator('[data-service-profile-form]');
+  await form.getByRole('combobox',{name:'城市',exact:true}).waitFor();await form.getByLabel('姓名 / 昵称',{exact:true}).fill('Updated display name');
+  await form.getByRole('button',{name:'保存资料',exact:true}).click();await surface.getByText('资料已保存。',{exact:true}).waitFor();
+  assert.equal(f.state.profileDraft.country,'Saved custom country');assert.equal(f.state.profileDraft.province,'Saved custom province');assert.equal(f.state.profileDraft.city,'Saved custom city');assert.equal(f.state.profileDraft.contactCard,'https://example.invalid/legacy-contact');
+  assert.equal(f.state.writes.length,1);
+ }finally{await f.close();await browser.close();}
+});
 
 test('My dashboard gives guests and accounts a responsive identity card and six working shortcuts without eager reads or writes',{timeout:90000},async()=>{
  const browser=await chromium.launch({headless:true});try{for(const width of [320,390,1440]){for(const logged of [false,true]){

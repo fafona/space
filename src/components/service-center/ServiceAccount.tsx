@@ -7,7 +7,8 @@ import { readPersonalGuestProfile, savePersonalGuestProfile, type PersonalGuestP
 import { readPersonalAccountServiceConfigFromMetadata, buildPersonalAccountPermissionConfig } from "@/lib/personalAccountServiceConfig";
 import type { PersonalClaimedCoupon } from "@/lib/personalCoupons";
 import type { MerchantBusinessCardAsset } from "@/lib/merchantBusinessCards";
-import { serviceButton, serviceInput, serviceCard, serviceRequest, SERVICE_IDENTITY_CHANGED, type ServicePanelProps } from "./serviceCenterClient";
+import { serviceButton, serviceCard, serviceRequest, SERVICE_IDENTITY_CHANGED, type ServicePanelProps } from "./serviceCenterClient";
+import ServiceProfileForm from "./ServiceProfileForm";
 
 const CardManager = dynamic(() => import("@/components/admin/MerchantBusinessCardManager"), { ssr: false, loading: () => <p role="status">正在打开名片夹…</p> });
 type ProfilePayload = { profile: Partial<PersonalGuestProfile>; businessCards: MerchantBusinessCardAsset[];
@@ -130,11 +131,8 @@ export default function ServiceAccount({ active, identity, refreshIdentity }: Se
     </> : <div className={serviceCard + " flex flex-wrap items-center justify-between gap-3 !rounded-2xl"}><div className="flex min-w-0 items-center gap-3"><button type="button" className={serviceButton + " !px-3 !text-xs"} onClick={() => select("home")}>← 返回我的</button>{activeTab ? <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${activeTab.tone}`}><AccountIcon path={activeTab.path} /></span> : null}<h3 className="font-semibold">{activeTab?.label}</h3></div><button type="button" className={serviceButton + " !px-3 !text-xs"} disabled={busy} onClick={() => { setLoadedFor(""); setRefresh(value => value + 1); void refreshIdentity(); }}>刷新</button></div>}
     {error ? <p role="alert" className="text-sm text-rose-700">{error}</p> : null}
     {message ? <p role="status" className="text-sm text-emerald-700">{message}</p> : null}
-    {tab === "profile" ? <form className={serviceCard + " grid gap-4 sm:grid-cols-2"} onSubmit={event => { event.preventDefault(); void saveProfile(); }}>
-      {([['displayName', '姓名 / 昵称'], ['phone', '电话'], ['email', '联系邮箱'], ['birthday', '生日'], ['gender', '性别'], ['country', '国家'], ['province', '省份'], ['city', '城市'], ['address', '地址'], ['signature', '个人签名'], ['avatarUrl', '头像图片地址'], ['contactCard', '联系卡']] as const).map(([key, label]) =>
-        <label className="text-sm" key={key}>{label}<input type={key === "email" ? "email" : key === "birthday" ? "date" : "text"} className={serviceInput} value={profile[key]} onChange={event => setProfile(current => ({ ...current, [key]: event.target.value }))} /></label>)}
-      <button type="submit" className={serviceButton + " sm:col-span-2 !bg-slate-950 !text-white"} disabled={busy || (identity.authenticated && loadedFor !== identity.accountId)}>{busy ? "保存中…" : "保存资料"}</button>
-    </form> : null}
+    {tab === "profile" ? <ServiceProfileForm profile={profile} cards={cards} authenticated={identity.authenticated} accountId={identity.accountId} busy={busy} loading={identity.authenticated && loadedFor !== identity.accountId}
+      onChange={(key, value) => setProfile(current => ({ ...current, [key]: value }))} onSave={() => void saveProfile()} /> : null}
     {tab === "favorites" ? <div className="space-y-3">
       {!manageable.length ? <p className={serviceCard + " text-sm text-slate-500"}>尚未收藏商户。</p> : null}
       {manageable.map(site => <div key={site.id} className={serviceCard}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><a href={site.url} target="_top" className="break-words font-semibold underline">{site.name || "商户网站"}</a><p className="mt-1 break-words text-xs text-slate-500">{site.subtitle}</p></div>
