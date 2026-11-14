@@ -18,6 +18,8 @@ import type { ButtonJumpBlock } from "@/lib/buttonBlock";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
 import type { MerchantBookingRuleViewport } from "@/lib/merchantBookingRules";
 import { usePublicCatalogBlocks } from "@/lib/usePublicCatalogBlocks";
+import LeisurePageLayout from "./LeisurePageLayout";
+import { getLeisureBlockStyle, getLeisurePresentation, getLeisureRole } from "@/lib/leisurePresentation";
 
 const GalleryBlock = dynamic(() => import("./GalleryBlock"), { ssr: false, loading: () => null });
 const ChartBlock = dynamic(() => import("./ChartBlock"), { ssr: false, loading: () => null });
@@ -103,6 +105,7 @@ export default function BlockRenderer({
   bookingViewport?: MerchantBookingRuleViewport;
 }) {
   const safeBlocks = useMemo(() => (Array.isArray(blocks) ? blocks : []), [blocks]);
+  const leisurePresentation = getLeisurePresentation(safeBlocks);
   const [openedBlockId, setOpenedBlockId] = useState<string | null>(null);
   const [openedProductCartOpen, setOpenedProductCartOpen] = useState(false);
   const [openedProductCartCloseSignal, setOpenedProductCartCloseSignal] = useState(0);
@@ -473,7 +476,7 @@ export default function BlockRenderer({
   ) : null;
 
   return (
-    <div className={forceMobileViewport ? "relative min-h-[780px]" : "contents"}>
+    <LeisurePageLayout blocks={safeBlocks} defaultClassName={forceMobileViewport ? "relative min-h-[780px]" : "contents"}>
       {safeBlocks.map((b, index) => {
         if (isButtonOpenedBlock(b)) return null;
         const publicBlockId = buildPublicBlockId(currentPageIndex, index);
@@ -487,7 +490,8 @@ export default function BlockRenderer({
             data-block-id={b.id}
             data-jump-target={publicBlockId}
             data-block-public-id={publicBlockId}
-            style={{ zIndex: getBlockRenderStackOrder(b, index, blocks.length) }}
+            data-leisure-role={leisurePresentation ? getLeisureRole(b) : undefined}
+            style={{ ...(leisurePresentation ? getLeisureBlockStyle(b, index) : undefined), zIndex: getBlockRenderStackOrder(b, index, blocks.length) }}
           >
             <BlockRuntimeBoundary blockId={b.id}>
               {content}
@@ -500,6 +504,6 @@ export default function BlockRenderer({
           ? openedBlockOverlay
           : createPortal(openedBlockOverlay, openedPortalHost)
         : null}
-    </div>
+    </LeisurePageLayout>
   );
 }

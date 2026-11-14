@@ -29,6 +29,8 @@ export type BlockOpenMode = "inline" | "button";
 
 export type BackgroundEditableProps = {
   schemaVersion?: number;
+  pagePresentation?: "leisure-home-v1" | "leisure-games-v1" | "leisure-visit-v1";
+  leisureRole?: string;
   bgImageUrl?: string;
   bgFillMode?: ImageFillMode;
   bgPosition?: string;
@@ -292,6 +294,12 @@ type GalleryProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading: string;
     galleryFrameWidth?: number;
+    galleryControls?: "hero";
+    galleryMoreLabel?: string;
+    galleryPreviousLabel?: string;
+    galleryNextLabel?: string;
+    galleryPauseLabel?: string;
+    galleryPlayLabel?: string;
     galleryFrameHeight?: number;
     galleryLayoutPreset?: GalleryLayoutPreset;
     galleryCustomLayout?: CustomGalleryLayout;
