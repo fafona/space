@@ -130,7 +130,13 @@ export function extractMerchantPrefixFromHost(currentHost: string | null | undef
 export function buildMerchantFrontendHref(siteId: string, domainPrefix?: string | null, baseDomain?: string | null) {
   const prefix = normalizeDomainPrefix(domainPrefix);
   if (prefix && !isReservedInternalPrefix(prefix) && !isReservedPlatformSubdomain(prefix)) {
-    const resolvedBase = resolveRuntimePortalBaseDomain(baseDomain ?? process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
+    const runtimeBase = resolveRuntimePortalBaseDomain(baseDomain ?? process.env.NEXT_PUBLIC_PORTAL_BASE_DOMAIN ?? "");
+    const { hostname, port } = splitHostAndPort(runtimeBase);
+    // The shared directory also renders inside merchant websites. A Faolla
+    // merchant hostname is not a new platform root: links must be siblings,
+    // never e.g. haoyouduo.cyberspace.faolla.com. Other platforms are unchanged.
+    const resolvedBase = hostname === "faolla.com" || hostname.endsWith(".faolla.com")
+      ? `faolla.com${port ? `:${port}` : ""}` : runtimeBase;
     const subdomainHref = buildMerchantDomain(resolvedBase, prefix);
     if (subdomainHref) return subdomainHref;
     return `/${encodeURIComponent(prefix)}`;
