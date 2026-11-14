@@ -16,7 +16,7 @@ const text=(id,role)=>b(id,'text',role,{heading:'Synthetic '+id,text:'Synthetic 
 const button=(id,role)=>b(id,'button',role,{buttonLabel:'Synthetic action',buttonJumpTarget:'page:visit',blockHeight:54,bgColor:'#ff8b70',fontSize:14});
 const gallery=b('hero','gallery','hero',{heading:'Synthetic\nleisure page',autoplayMs:1000,galleryControls:'hero',galleryFrameHeight:630,images:[1,2,3].map(n=>({id:'image-'+n,url:image(n),featured:true,fitToFrame:true})),galleryPreviousLabel:'Previous image',galleryNextLabel:'Next image',galleryPauseLabel:'Pause images',galleryPlayLabel:'Play images'});
 const fixture=[b('header','nav','header',{heading:'Synthetic leisure',navItems:[{id:'home',label:'Home',pageId:'home'},{id:'visit',label:'Visit',pageId:'visit'}]}),gallery,text('hero-copy','hero-copy'),button('primary','primary'),button('secondary','secondary'),text('intro','intro'),b('photo','common','photo-one',{bgImageUrl:image(1),blockHeight:440,commonTextBoxes:[]}),text('copy','copy-one'),button('copy-link','copy-one-link'),...['one','two','three'].flatMap(n=>[text('panel-'+n,'panel-'+n),button('panel-'+n+'-link','panel-'+n+'-link')]),text('footer','footer'),b('extra','text',undefined,{heading:'New ordinary editor block',text:'Must not disappear.'})];
-const visit=[b('booking','booking','booking',{pagePresentation:'leisure-visit-v1',heading:'Synthetic booking',bookingButtonLabel:'Send synthetic request',bookingStores:['Synthetic store'],bookingItems:['Synthetic activity']})];
+const visit=[b('booking','booking','booking',{pagePresentation:'leisure-visit-v1',heading:'Synthetic booking',bookingButtonLabel:'Send synthetic request',bookingStores:['Synthetic store'],bookingItems:['Synthetic activity']}),b('long-visit','common',undefined,{pagePresentation:'leisure-visit-v1',blockHeight:2400,commonTextBoxes:[]})];
 let assetsPromise;
 async function assets(){return assetsPromise??=(async()=>{
  const css=(await postcss([tailwind()]).process('@import "tailwindcss" source(none);\n@source "../src/components/blocks";\n@source "../src/components/admin/InlineEditorBlock.tsx";\n'+await readFile('src/components/blocks/leisurePresentation.css','utf8'),{from:path.resolve('scripts/leisure-fixture.css')})).css;
@@ -52,9 +52,10 @@ async function mount(browser,width,query='',options={}){
   if(url.origin===origin&&url.pathname==='/api/bookings/workbench/public'&&request.method()==='GET')return route.fulfill({json:{ok:true,settings:{timeZone:'Europe/Madrid',recurringRules:[],storeColorStyles:{},itemColorStyles:{}}}});
   unexpected.push(request.method()+' '+request.url());return route.abort();
  });
- await page.goto(origin+'/?'+query);await page.evaluate(({fixture,gallery,visit})=>{window.__fixture=fixture;window.__gallery=gallery;window.__visit=visit;},{fixture,gallery,visit});
+ const ordinary=blocks=>blocks.map(b=>{const props={...b.props};delete props.pagePresentation;delete props.leisureRole;return{...b,props};});
+ await page.goto(origin+'/?'+query);await page.evaluate(({fixture,gallery,visit})=>{window.__fixture=fixture;window.__gallery=gallery;window.__visit=visit;},{fixture:options.ordinary?ordinary(fixture):fixture,gallery,visit:options.ordinary?ordinary(visit):visit});
  const{css,script}=await assets();await page.addStyleTag({content:css});await page.addScriptTag({content:script});
- await page.locator(query.includes('legacy')?'img':'[data-leisure-presentation]').waitFor();
+ await page.locator(query.includes('legacy')?'img':options.ordinary?'[data-block-id="intro"]':'[data-leisure-presentation]').waitFor();
  return{page,context,errors,unexpected,async close(){await context.close();assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);}};
 }
 
@@ -73,8 +74,9 @@ test('leisure page genuinely changes desktop composition; phone and narrow edito
     }
     assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await f.page.getByText('New ordinary editor block',{exact:true}).waitFor();
-    await f.page.locator('[data-leisure-role="primary"] button').click();
+    await f.page.locator('[data-leisure-role="panel-three-link"] button').click();
     await f.page.getByText('Synthetic booking',{exact:true}).waitFor();
+    await f.page.waitForFunction(()=>scrollY<5);
     assert.equal(await f.page.locator('[data-block-id="booking"] form').count(),1);
    }finally{await f.close();}
   }
@@ -89,6 +91,12 @@ test('leisure page genuinely changes desktop composition; phone and narrow edito
     const toolbar=f.page.locator('[data-leisure-role="intro"] [data-editor-toolbar]');assert.equal(await toolbar.locator('button').count()>0,true);
    }finally{await f.close();}
   }
+  const ordinary=await mount(browser,1440,'',{ordinary:true});try{
+   await ordinary.page.locator('[data-block-id="panel-three-link"] button').click();
+   await ordinary.page.getByText('Synthetic booking',{exact:true}).waitFor();
+   assert(await ordinary.page.evaluate(()=>scrollY)>100,'ordinary navigation must retain its original scroll behavior');
+   assert.equal(await ordinary.page.locator('.faolla-leisure-shell').count(),0);
+  }finally{await ordinary.close();}
  }finally{await browser.close();}
 });
 

@@ -476,7 +476,7 @@ export default function BlockRenderer({
   ) : null;
 
   return (
-    <LeisurePageLayout blocks={safeBlocks} defaultClassName={forceMobileViewport ? "relative min-h-[780px]" : "contents"}>
+    <LeisurePageLayout blocks={safeBlocks} pageId={currentPageId} defaultClassName={forceMobileViewport ? "relative min-h-[780px]" : "contents"}>
       {safeBlocks.map((b, index) => {
         if (isButtonOpenedBlock(b)) return null;
         const publicBlockId = buildPublicBlockId(currentPageIndex, index);
