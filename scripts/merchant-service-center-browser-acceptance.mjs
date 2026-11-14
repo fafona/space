@@ -16,7 +16,7 @@ const fixtures={
  'next/link':`import React from'react';export default function Link({prefetch,...props}){return <a {...props}/>}`,
  'next/navigation':`export const usePathname=()=>location.pathname;export const useSearchParams=()=>new URLSearchParams(location.search);export const useParams=()=>({});`,
  '@/lib/supabase':`export const isSupabaseEnabled=false;export const supabase=null;export const getResolvedSupabaseUrl=()=>'';export const resolvedSupabaseAnonKey='';export const legacySupabaseAuthStorageKey='synthetic-legacy-key';export const resolvedSupabaseAuthStorageKey='synthetic-auth-key';`,
- '@/components/blocks/BlockRenderer':`import React from'react';export default function Blocks(){return <a href="https://other.faolla.com/" target="_top">Synthetic directory merchant</a>}`,
+ '@/components/blocks/BlockRenderer':`import React from'react';import MerchantListBlock from'./src/components/blocks/MerchantListBlock';export default function Blocks({blocks}){return window.__realDirectory?<>{blocks.filter(block=>block.type==='merchant-list').map(block=><MerchantListBlock key={block.id} {...block.props}/>)}</>:<a href="https://other.faolla.com/" target="_top">Synthetic directory merchant</a>}`,
  '@/components/admin/MerchantBusinessCardManager':`import React from'react';export default function Cards(){return <p>Synthetic card manager boundary</p>}`,
 };
 const plugin={name:'service-fixtures',setup(b){b.onResolve({filter:/^(next\/|@\/)/},a=>Object.hasOwn(fixtures,a.path)?{path:a.path,namespace:'fixture'}:undefined);b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:fixtures[a.path],loader:'tsx',resolveDir:process.cwd()}));}};
@@ -37,10 +37,10 @@ const script=(await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents
 const utilityCss=(await postcss([tailwind()]).process('@import "tailwindcss" source(none);\n@source "./src/components/service-center";\n@source "./src/components/PublicWebsiteActions.tsx";', {from:path.resolve('service-center-acceptance.css')})).css;
 const css=utilityCss+'\n.faolla-service-sheet{height:82dvh;max-height:82dvh;padding-bottom:env(safe-area-inset-bottom)}.faolla-service-sheet::backdrop{background:#02061755}body{margin:0}';
 const profile={nickname:'Synthetic visitor',name:'Synthetic visitor',email:'visitor@example.invalid',phone:'000',birthday:'01-01',birthdayMonthDayOnly:true};
-async function setup(browser,width,{logged=true,seedGuest=false,height=900,cameraDenied=false}={}){
+async function setup(browser,width,{logged=true,seedGuest=false,height=900,cameraDenied=false,realDirectory=false}={}){
  const context=await browser.newContext({viewport:{width,height},isMobile:width<768,hasTouch:width<768,serviceWorkers:'block'});
  if(logged)await context.addCookies([{name:'__Host-faolla-merchant-auth-v2',value:'synthetic-cookie',url:portalOrigin,secure:true,httpOnly:true,sameSite:'Lax'}]);
- await context.addInitScript(value=>{window.__seedGuest=value;window.__messages=[];window.addEventListener('message',event=>{if(event.data?.type==='faolla:merchant-service')window.__messages.push(event.data);});},seedGuest);
+ await context.addInitScript(value=>{window.__seedGuest=value.seedGuest;window.__realDirectory=value.realDirectory;window.__messages=[];window.addEventListener('message',event=>{if(event.data?.type==='faolla:merchant-service')window.__messages.push(event.data);});},{seedGuest,realDirectory});
  const state={favorite:false,logged,sessionStatus:200,member:'none',profile:{...profile},profileDraft:{},businessCards:[],coupons:[],uploadFails:false,logoutFails:false,qrToken:'synthetic-qr-token-original',contacts:[],threads:[],requests:[],writes:[],unexpected:[],errors:[],history:[{points:80,order:'ORIGINAL',balance:25}]};
  const originalHistory=structuredClone(state.history);
  const favorite=()=>({id:siteId,url:`https://faolla.com/site/${siteId}`,name:'Synthetic venue',subtitle:'',addedAt:'2026-11-01'});
@@ -53,6 +53,7 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900,camer
    const q=url.searchParams.get('q')||'',target=url.searchParams.get('tl');assert.doesNotMatch(q,/Synthetic (?:visitor|incoming message|outgoing message)|visitor@example\.invalid/,'private content must not enter automatic translation');const dictionary={'Tu próxima partida empieza aquí.':'你的下一场游戏从这里开始。','Inicio':'首页'};
    return route.fulfill({json:[[[target==='zh-CN'?(dictionary[q]||q):q,q]]]});
   }
+  if(realDirectory&&url.origin==='https://haoyouduo.faolla.com'&&request.isNavigationRequest())return route.fulfill({contentType:'text/html',body:'<!doctype html><meta charset="utf-8"><h1>Synthetic destination merchant</h1>'});
   if(![merchantOrigin,portalOrigin].includes(url.origin)){state.unexpected.push(url.href);return route.abort();}
   if(request.isNavigationRequest()){
    if(url.pathname==='/service-center'){
@@ -118,7 +119,7 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900,camer
   if(url.pathname==='/api/orders')return route.fulfill({json:{ok:true,orders:[{id:'OSYNTHETIC',siteId,siteName:'Synthetic venue',createdAt:'2026-11-01T10:00:00Z',updatedAt:'2026-11-01T10:00:00Z',status:'pending',customer:{name:'Visitor',phone:'000',email:'visitor@example.invalid',note:''},items:[{name:'Synthetic account product',quantity:2,unitPriceText:'€10',subtotal:20}],pricePrefix:'€',totalAmount:20,totalQuantity:2}]}});
   if(url.pathname==='/api/bookings')return route.fulfill({json:{ok:true,bookings:[]}});
   if(url.pathname==='/api/merchant-peer-messages'||url.pathname==='/api/support-messages')return route.fulfill({json:{ok:true,threads:url.pathname==='/api/merchant-peer-messages'?state.threads:[],contacts:state.contacts,thread:null}});
-  if(url.pathname==='/api/platform-published')return route.fulfill({json:{blocks:[{id:'directory',type:'merchant-list',props:{}}]}});
+  if(url.pathname==='/api/platform-published')return route.fulfill({json:{blocks:[{id:'directory',type:'merchant-list',props:realDirectory?{maxItems:6,publishedMerchantSnapshot:[{id:'99990002',name:'Synthetic directory merchant',industry:'娱乐',country:'Spain',province:'Sevilla',city:'Sevilla',status:'online',serviceExpiresAt:'2099-01-01T00:00:00Z',domainPrefix:'haoyouduo',ownerEmail:'directory@example.invalid',registeredAt:'2026-01-01T00:00:00Z'}]}:{}}]}});
   state.unexpected.push(url.href);return route.abort();
  });
  return {context,page,state,async open(){await page.goto(merchantOrigin+'/?uiLocale=es-ES');},async close(){await context.close();assert.deepEqual(state.errors,[]);assert.deepEqual(state.unexpected,[]);assert.deepEqual(state.history,originalHistory);}};
@@ -127,6 +128,19 @@ const serviceFrame=page=>page.frameLocator('iframe[data-isolated-service-frame]'
 async function menu(page){await page.getByRole('button',{name:'服务中心',exact:true}).click();await page.getByRole('dialog').waitFor();}
 async function choose(page,label){const ids={'订单':'orders','会话':'conversations','我的':'account','Faolla':'directory'};await page.getByRole('dialog').locator(`[data-service-section="${ids[label]}"]`).click();}
 async function openThread(surface,id=siteId){await surface.locator(`[data-conversation-id="${id}"]`).click();}
+
+test('service center Faolla real merchant cards navigate to sibling merchants, never a nested merchant subdomain',{timeout:60000},async()=>{
+ const browser=await chromium.launch({headless:true});try{for(const width of [390,1440]){
+  const f=await setup(browser,width,{logged:false,realDirectory:true});try{
+   await f.open();await f.page.waitForResponse(response=>response.url().includes('/api/merchant-service/status'));await menu(f.page);await choose(f.page,'Faolla');
+   const card=f.page.getByRole('dialog').locator('[data-service-directory]').getByRole('link').filter({hasText:'Synthetic directory merchant'});await card.waitFor();
+   assert.equal(await card.getAttribute('href'),'https://haoyouduo.faolla.com?uiLocale=es-ES');assert.equal(await card.getAttribute('target'),'_top');
+   await card.click();await f.page.getByRole('heading',{name:'Synthetic destination merchant',exact:true}).waitFor();
+   const destination=new URL(f.page.url());assert.equal(destination.origin,'https://haoyouduo.faolla.com');assert.deepEqual([...destination.searchParams],[['uiLocale','es-ES']]);
+   assert.equal(f.page.frames().length,1);assert.deepEqual(f.state.writes,[]);
+  }finally{await f.close();}
+ }}finally{await browser.close();}
+});
 
 test('My retains QR generation/share/reset/scan, tools, games, complete settings and host-synchronized language without bringing back an app shell',{timeout:90000},async()=>{
  const browser=await chromium.launch({headless:true});try{for(const width of [390,1440]){

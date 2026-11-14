@@ -12,6 +12,19 @@ test("direct merchant links keep original tenant paths and never carry an app-sh
   assert.equal(buildDirectMerchantWebsiteHref("99990001", "es-ES", "store"), "/store?uiLocale=es-ES");
 });
 
+test("a service directory opened on a merchant domain links to the sibling merchant and retains only the selected language", () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { host: "cyberspace.faolla.com", protocol: "https:" } } });
+  try {
+    const url = new URL(buildDirectMerchantWebsiteHref("99990002", "es-ES", "haoyouduo"));
+    assert.equal(url.origin, "https://haoyouduo.faolla.com");
+    assert.deepEqual([...url.searchParams], [["uiLocale", "es-ES"]]);
+    assert.equal(url.pathname, "/");
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow); else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
 test("public return URLs preserve the page, language and anchor, not shell/build markers", () => {
   assert.equal(cleanPublicWebsiteReturnUrl(source, origin), clean);
   assert.equal(cleanPublicWebsiteReturnUrl("https://shop.faolla.com/?page=2", origin), "https://shop.faolla.com/?page=2");

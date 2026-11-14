@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "aa5810a7c5bd459d61dda758e03a1f99a70696d0",
-  "purpose": "Polish the web service center and conversations, restore My feature parity, improve personal profile controls, and preserve the Faolla brand across language switching; retain already reviewed storage lifecycle tooling without changing database, dependencies, workers or mail. Pin only the quality CI build old-space heap to the existing 3072 MiB production budget after the documented default-heap OOM; keep all checks.",
+  "baseline": "0c097c1e6215730ad0407b4e6fd3a07520eb99c3",
+  "purpose": "Fix service-center Faolla directory merchant links to use sibling Faolla subdomains instead of nesting under the current merchant host; retain locale, top-level navigation, non-Faolla routing, saved data, database, dependencies, worker and mail settings.",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,455 +10,64 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
-      "file": ".github/workflows/ci.yml",
-      "role": "verification",
-      "before": [
-        "100644",
-        "8e0439041c0085d8a7b0eadd2ef72739e7dfad06"
-      ],
-      "after": [
-        "100644",
-        "99595ac9b5bf9c85b038be8429dc36b63852c6f6"
-      ]
-    },
-    {
-      "file": ".github/workflows/release-toolchain.yml",
-      "role": "verification",
-      "before": [
-        "100644",
-        "4bc95eb6dc7b8fb42ddbfc84cae4fbbd41e5cf00"
-      ],
-      "after": [
-        "100644",
-        "a7bd125bee221a3678eab92d0bc69677a4c295b5"
-      ]
-    },
-    {
-      "file": "docs/storage-lifecycle.md",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "718c39e188f4b3bf01e1cc57375c9f14a3fc3115"
-      ]
-    },
-    {
-      "file": "scripts/ci-workflow-contract.test.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "683bef3e8434b64ceb7eda4028e6a3dc8e9ad83f"
-      ],
-      "after": [
-        "100644",
-        "6bd323757553f5547869afebaa97b4d121e67d40"
-      ]
-    },
-    {
-      "file": "scripts/locale-switch-browser-acceptance.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "446fda946e6878f9ce982f70210b39dfd78683db"
-      ],
-      "after": [
-        "100644",
-        "0911b5a964ebf4776302f0bd1e2ea0b82e0c9041"
-      ]
-    },
-    {
       "file": "scripts/merchant-service-center-browser-acceptance.mjs",
       "role": "verification",
       "before": [
         "100644",
-        "972e1ea60966319919c48f26a854fe2746867be7"
-      ],
-      "after": [
-        "100644",
         "9ec0a2ba4652b84690862bf8254542c614d4a6b7"
-      ]
-    },
-    {
-      "file": "scripts/online-release-cache-cleanup.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "d7d4b7ca270edc098eff05252483808ccbf804d0"
       ],
       "after": [
         "100644",
-        "9d5e1c6f6640f18e37513b56aa529a7a2109bda0"
+        "1c49e2b758d44d5c2d42a944b54954b24cb73d6b"
       ]
     },
     {
-      "file": "scripts/online-release-cache-cleanup.test.mjs",
+      "file": "src/lib/publicWebsiteNavigation.test.ts",
       "role": "verification",
       "before": [
         "100644",
-        "4b47b1c1b487c0e7656d524105d106d046f5e4e4"
+        "f35e45579dad7d059dfc51dd7680335bb1366bd2"
       ],
       "after": [
         "100644",
-        "e4627f009d85d099f0fc0b6195e0dccfa853bf80"
+        "dea84a38767bd513b1e2acb701a9290490bc9664"
       ]
     },
     {
-      "file": "scripts/release-toolchain-storage-host.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "098e247b88c44b063df2768bae9d3456890f965e"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-storage-install.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "ae694d20b34a324f979d2dcd01d080ebad4dd5ae"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-storage-lock.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "6d95e0f1a86fddbddf9acceabc942dfd6677431a"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-storage-lock.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "ae317007318ee09ce279d797778074b1d34ad8d8"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-storage-policy.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "183599dc6463628e5962453e9465f8ceb66f8257"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-storage.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "fc381a2649f439f0a0e21c1ffbbbb83fb3429a56"
-      ]
-    },
-    {
-      "file": "src/app/api/personal-profile/route.test.ts",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "9464e0c6091be32395b2781a48409d8b183de808"
-      ]
-    },
-    {
-      "file": "src/app/api/personal-profile/route.ts",
-      "role": "application",
-      "before": [
-        "100644",
-        "c2e7d7a82b864ec9ffd946135c1d80877db67e7c"
-      ],
-      "after": [
-        "100644",
-        "a89d22f160a6ca9b0e9574e993179b99461e96d0"
-      ]
-    },
-    {
-      "file": "src/app/layout.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "f86bf84398b069d8bfef6e0bd551c2615f0822f9"
-      ],
-      "after": [
-        "100644",
-        "80a839d07c36442c67835acbd6c0bf7fe4431516"
-      ]
-    },
-    {
-      "file": "src/components/FaollaMobileSettingsPages.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "0a7ab2b266abc6eeb808cee51dd1d2e4520f672a"
-      ],
-      "after": [
-        "100644",
-        "0a4449ebfd287a0bb2d02868a0cde04d8d9a38d4"
-      ]
-    },
-    {
-      "file": "src/components/FaollaQrPanel.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "96e50927bf567fa4cb5ad1fcd370fb210aad65c5"
-      ],
-      "after": [
-        "100644",
-        "008f382508add14f28d499c371b8b2f7235ccce6"
-      ]
-    },
-    {
-      "file": "src/components/LoadingProgressScreen.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "b682283967ab624ba70c450b64193f00613d2f21"
-      ],
-      "after": [
-        "100644",
-        "05736971508c6a05246fd57023ce390ba7d8ed6d"
-      ]
-    },
-    {
-      "file": "src/components/PublicWebsiteActions.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "52b509b7d80497b56bafc1f929da23c78413c85a"
-      ],
-      "after": [
-        "100644",
-        "3a44ab8b63ea3789338300c4fb2c2957af179316"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceAccount.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "3cad413bc795b88aa9423f6948c5061273d25dad"
-      ],
-      "after": [
-        "100644",
-        "71c9f75f637b79ffbb8b22e842d2ac69c01f3f04"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceAccountSessionActions.tsx",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "442115c5c3452bb5b32580160ea2232342a82209"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceAccountSettings.tsx",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "8c7a92f455bf7cfcebe9948ea61caf1fbdbb11c0"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceCenterSheet.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "5e4e03fb7a8524dc8ecb5aa4ebfd71f31ac6b12c"
-      ],
-      "after": [
-        "100644",
-        "79fb5db606ae76de80fcb3ef4efcf621fdc5842e"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceConversations.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "000ef91ac05c5293a7cd6bee5408a111b64ffa01"
-      ],
-      "after": [
-        "100644",
-        "52af25cac17d4befeb2606a102950675727b85d1"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceFrameClient.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "a492c10678d3207f8973df9755f94e2e343aa02d"
-      ],
-      "after": [
-        "100644",
-        "a778df440b25fc58f5ecf5d1d8aac8a8f4f081f8"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServicePersonalQr.tsx",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "92cc2457615052e5fbac858811b14f712ea35694"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceProfileBirthday.tsx",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "64ab7424b1827f3ff58ef9d09a763b5c21228d3c"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceProfileForm.tsx",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "9838d227df82c179edac8204bacc59931615fab5"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceProfileSelect.tsx",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "4a99e59d775cf8f88941866b9aaf16e323bdd2ab"
-      ]
-    },
-    {
-      "file": "src/components/service-center/serviceProfileAvatar.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "ae595d0d22317199448ea7f99de178ba7d94bab8"
-      ]
-    },
-    {
-      "file": "src/components/service-center/serviceProfileOptions.test.ts",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "b1cd2276863bc6a1dcc04ec82d73380f69a494e8"
-      ]
-    },
-    {
-      "file": "src/components/service-center/serviceProfileOptions.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "91bbf23cd15c292bab0f8bbfa889720fcfd10387"
-      ]
-    },
-    {
-      "file": "src/components/service-center/serviceQrLink.test.ts",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "93a56ef84d4eb809bf4e19c8cde71574dcac21e3"
-      ]
-    },
-    {
-      "file": "src/components/service-center/serviceQrLink.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "c906972b8d3785df9a14af87f0092fd524cbe4fb"
-      ]
-    },
-    {
-      "file": "src/lib/domTranslations.brand.test.ts",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "d9420cacd793b7cebd9ec59b621c7239824e0913"
-      ]
-    },
-    {
-      "file": "src/lib/domTranslations.ts",
-      "role": "application",
-      "before": [
-        "100644",
-        "b7e3f55dbfe3723d885b19db94cf79ba9eda3c69"
-      ],
-      "after": [
-        "100644",
-        "7552ea19260b43700155d42c1ce7bc4f3d287335"
-      ]
-    },
-    {
-      "file": "src/lib/merchantServiceFrameEntry.server.test.ts",
+      "file": "src/lib/siteRouting.test.ts",
       "role": "verification",
       "before": [
         "100644",
-        "50fb8b10be2657b337dacb5ed9773adea1604a7b"
+        "8034a70a7f425fd70aa58f46d89d25f4ce2e9290"
       ],
       "after": [
         "100644",
-        "a23b63aee19ad3a71f7806d2483e4bb91649b948"
+        "18f4f78f24949c5a365576eb331e652d96ffab69"
       ]
     },
     {
-      "file": "src/lib/personalAvatarValue.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "1bf947bd61f6ff83573e06a05b3e8da2ad069cc1"
-      ]
-    },
-    {
-      "file": "src/lib/personalGuestSession.ts",
+      "file": "src/lib/siteRouting.ts",
       "role": "application",
       "before": [
         "100644",
-        "b8840b13a86a2d1063efac77d7c3487e66a7f101"
+        "d36bc2e07d07ecd4754ade2215ade08368b2faff"
       ],
       "after": [
         "100644",
-        "32769ca77cbb4a5fcec7a63cf655596d354c53f0"
+        "80c1c925fecd28a16f1e0b45356db8eb5664727e"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/domTranslations.brand.test.ts",
-    "src/lib/domTranslations.performance.test.ts",
-    "src/lib/i18n.test.ts",
-    "src/components/service-center/serviceQrLink.test.ts",
-    "src/components/service-center/serviceProfileOptions.test.ts",
-    "src/components/service-center/serviceCenterClient.test.ts",
-    "src/app/api/personal-profile/route.test.ts",
-    "src/lib/personalGuestSession.test.ts",
-    "src/lib/personalFavorites.test.ts",
+    "src/lib/siteRouting.test.ts",
+    "src/lib/publicWebsiteNavigation.test.ts",
+    "src/lib/merchantSeo.test.ts",
+    "src/lib/faollaEntry.test.ts",
     "src/lib/merchantServiceFrame.test.ts",
-    "src/lib/merchantServiceFrameEntry.server.test.ts",
-    "src/lib/merchantServiceLocale.test.ts",
-    "src/lib/merchantServiceStatus.test.ts",
     "src/lib/serviceDirectory.test.ts",
-    "src/lib/supportMessageAttachments.test.ts",
     "scripts/application-release-policy.test.mjs",
     "scripts/application-release-compatibility.test.mjs",
-    "scripts/application-release-verification.test.mjs",
-    "scripts/ci-workflow-contract.test.mjs"
+    "scripts/application-release-verification.test.mjs"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
