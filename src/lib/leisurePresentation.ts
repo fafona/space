@@ -16,7 +16,11 @@ const ROLE_TYPES: Readonly<Record<string, readonly Block["type"][]>> = {
 };
 /** An explicit, inert presentation opt-in. Never infer a theme from a merchant ID or hostname. */
 export function getLeisurePresentation(blocks: readonly Block[]): LeisurePresentation | null {
-  const requested = blocks.find(b => b.props && Object.hasOwn(b.props, "pagePresentation"))?.props.pagePresentation;
+  // The editor synchronizes navigation props across pages. A page's own
+  // content, not a copied shared header, must select its presentation.
+  const ownsPresentation = (b: Block) => b.props && Object.hasOwn(b.props, "pagePresentation");
+  const anchor = blocks.find(b => b.type !== "nav" && ownsPresentation(b)) ?? blocks.find(ownsPresentation);
+  const requested = anchor?.props.pagePresentation;
   return LEISURE_PRESENTATIONS.includes(requested as LeisurePresentation) ? requested as LeisurePresentation : null;
 }
 export function getLeisureRole(block: Block): string | undefined {

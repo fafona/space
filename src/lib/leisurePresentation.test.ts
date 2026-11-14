@@ -28,6 +28,13 @@ test("presentation roles are own whitelisted strings with matching native block 
   assert.equal(getLeisureRole(block(Object.create({ leisureRole: "intro" }))), undefined);
 });
 
+test("shared navigation synchronization cannot turn the booking page into the home layout", () => {
+  const sharedHeader = block({ pagePresentation: "leisure-home-v1", leisureRole: "header" }, "nav");
+  const bookingPage = block({ pagePresentation: "leisure-visit-v1", leisureRole: "booking" }, "booking");
+  assert.equal(getLeisurePresentation([sharedHeader, bookingPage]), "leisure-visit-v1");
+  assert.equal(getLeisurePresentation([sharedHeader, block({ heading: "Unassigned" }), bookingPage]), "leisure-visit-v1");
+});
+
 test("unassigned or invalid-role blocks remain visible after the designed sections", () => {
   assert.deepEqual(getLeisureBlockStyle(block(), 7), { gridColumn: "1 / -1", gridRow: 47 });
   assert.deepEqual(getLeisureBlockStyle(block({ leisureRole: "booking" }), 2), { gridColumn: "1 / -1", gridRow: 42 });
