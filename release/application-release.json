@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "0c097c1e6215730ad0407b4e6fd3a07520eb99c3",
-  "purpose": "Fix service-center Faolla directory merchant links to use sibling Faolla subdomains instead of nesting under the current merchant host; retain locale, top-level navigation, non-Faolla routing, saved data, database, dependencies, worker and mail settings.",
+  "baseline": "d246ea6a824c2a657db046da9e927d814db24c80",
+  "purpose": "Introduce an explicit opt-in leisure website layout with native editable blocks and accessible carousel controls; no changes to existing layouts, booking logic, data, dependencies, worker or mail.",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,64 +10,137 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
-      "file": "scripts/merchant-service-center-browser-acceptance.mjs",
+      "file": "scripts/application-release-template-browser-acceptance.mjs",
       "role": "verification",
       "before": [
         "100644",
-        "9ec0a2ba4652b84690862bf8254542c614d4a6b7"
+        "aa418b0fcd2b62c7f526db088c3a5d07bbb2f5a0"
       ],
       "after": [
         "100644",
-        "1c49e2b758d44d5c2d42a944b54954b24cb73d6b"
+        "f1212a08ced377fe651e0d8840da47308efb3522"
       ]
     },
     {
-      "file": "src/lib/publicWebsiteNavigation.test.ts",
+      "file": "scripts/leisure-presentation-browser-acceptance.mjs",
       "role": "verification",
-      "before": [
-        "100644",
-        "f35e45579dad7d059dfc51dd7680335bb1366bd2"
-      ],
+      "before": null,
       "after": [
         "100644",
-        "dea84a38767bd513b1e2acb701a9290490bc9664"
+        "f3631c7d980de2bd12123761d7cd530ede46a805"
       ]
     },
     {
-      "file": "src/lib/siteRouting.test.ts",
-      "role": "verification",
-      "before": [
-        "100644",
-        "8034a70a7f425fd70aa58f46d89d25f4ce2e9290"
-      ],
-      "after": [
-        "100644",
-        "18f4f78f24949c5a365576eb331e652d96ffab69"
-      ]
-    },
-    {
-      "file": "src/lib/siteRouting.ts",
+      "file": "src/app/admin/AdminClient.tsx",
       "role": "application",
       "before": [
         "100644",
-        "d36bc2e07d07ecd4754ade2215ade08368b2faff"
+        "81fe6cbaf70f1485f8451357215409851b9eb66d"
       ],
       "after": [
         "100644",
-        "80c1c925fecd28a16f1e0b45356db8eb5664727e"
+        "e4c125b9b4f44b2d23a8836bd143a9b6a97e02e0"
+      ]
+    },
+    {
+      "file": "src/app/globals.css",
+      "role": "application",
+      "before": [
+        "100644",
+        "79feb97aeaab65a6984a7709f762ff2587a4cf39"
+      ],
+      "after": [
+        "100644",
+        "348644a41e79284def6c055f55b4af2724ed2840"
+      ]
+    },
+    {
+      "file": "src/components/blocks/BlockRenderer.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "47ae34769546a1693c2fff7e4a40e2fac1e70fab"
+      ],
+      "after": [
+        "100644",
+        "2f961b724d1036104af076ae483431f5d5c0b178"
+      ]
+    },
+    {
+      "file": "src/components/blocks/GalleryBlock.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "2fe53bf3b7115def40e50b21edc181c0e142f929"
+      ],
+      "after": [
+        "100644",
+        "34a269811dfac6a9bffba9ae7c85568e47fd0ef8"
+      ]
+    },
+    {
+      "file": "src/components/blocks/LeisurePageLayout.test.tsx",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "ec0ed86d7cb3c1bfee217e4903a48bd7c7d4f1ba"
+      ]
+    },
+    {
+      "file": "src/components/blocks/LeisurePageLayout.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "cba4b924bf4bf5fcc41770fec7e76b4fb86caee4"
+      ]
+    },
+    {
+      "file": "src/components/blocks/leisurePresentation.css",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "fe284a30d4f2b2aee2764c8eee732faa0f7ca855"
+      ]
+    },
+    {
+      "file": "src/data/homeBlocks.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "dee9866739b1807370c0c2ec812d3e2b22f2f7bf"
+      ],
+      "after": [
+        "100644",
+        "5486ab704a97cdbb9bed4a2526ea0a48ec3274ca"
+      ]
+    },
+    {
+      "file": "src/lib/leisurePresentation.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "9ed04e31d0a7dbc2af8b65da472d804e43541da4"
+      ]
+    },
+    {
+      "file": "src/lib/leisurePresentation.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "53a68938080df0cfc2a8a81a683a247443c88f2f"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/siteRouting.test.ts",
-    "src/lib/publicWebsiteNavigation.test.ts",
-    "src/lib/merchantSeo.test.ts",
-    "src/lib/faollaEntry.test.ts",
-    "src/lib/merchantServiceFrame.test.ts",
-    "src/lib/serviceDirectory.test.ts",
-    "scripts/application-release-policy.test.mjs",
-    "scripts/application-release-compatibility.test.mjs",
-    "scripts/application-release-verification.test.mjs"
+    "src/lib/leisurePresentation.test.ts",
+    "src/components/blocks/LeisurePageLayout.test.tsx",
+    "src/lib/websiteTemplateLibrary.test.ts",
+    "src/app/admin/AdminClient.publish.contract.test.ts"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {

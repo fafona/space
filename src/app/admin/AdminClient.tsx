@@ -17,6 +17,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import DeferredFaollaFrame from "@/components/admin/DeferredFaollaFrame";
+import LeisurePageLayout from "@/components/blocks/LeisurePageLayout";
+import { getLeisureBlockStyle, getLeisurePresentation, getLeisureRole } from "@/lib/leisurePresentation";
 import dynamic from "next/dynamic";
 import { installWebsiteTemplate, type WebsiteTemplate } from "@/lib/websiteTemplateLibrary";
 const WebsiteTemplateLibrary = dynamic(() => import("@/components/admin/WebsiteTemplateLibrary"), { ssr: false });
@@ -21366,7 +21368,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 >
                   <div className="absolute inset-0 rounded-[28px] overflow-hidden pointer-events-none" style={pageBackgroundStyle} />
                   <div className="relative z-10 w-full py-4">
-                    <div data-editor-viewport-boundary className="space-y-0">
+                    <LeisurePageLayout blocks={blocks} editorBoundary defaultClassName="space-y-0">
                       {blocks.map((block, index) => {
                         const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;
                         const previewOffsetY = sourceIndex >= 0 && index > sourceIndex ? -resizePreview!.heightDelta : 0;
@@ -21377,7 +21379,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                               ? 999_999
                               : getBlockRenderStackOrder(block, index, blocks.length);
                         return (
-                          <div key={block.id} className="relative" style={{ zIndex: wrapperStackOrder }}>
+                          <div key={block.id} className="relative" data-leisure-role={getLeisurePresentation(blocks) ? getLeisureRole(block) : undefined} style={{ ...(getLeisurePresentation(blocks) ? getLeisureBlockStyle(block,index) : undefined), zIndex: wrapperStackOrder }}>
                             <MemoizedInlineEditorBlock
                               block={block}
                               publicBlockId={buildPublicBlockId(editingPageIndex, index)}
@@ -21422,7 +21424,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                           </div>
                         );
                       })}
-                    </div>
+                    </LeisurePageLayout>
                   </div>
                 </div>
               </div>
@@ -21436,8 +21438,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           className="min-h-screen"
           style={{ ...pageBackgroundStyle, minHeight: `${Math.max(backgroundLayerMinHeight, 0)}px` }}
         >
-          <div className="max-w-6xl mx-auto px-6 py-6">
-            <div data-editor-viewport-boundary className="space-y-0">
+          <div className={getLeisurePresentation(blocks) ? "w-full" : "max-w-6xl mx-auto px-6 py-6"}>
+            <LeisurePageLayout blocks={blocks} editorBoundary defaultClassName="space-y-0">
               {blocks.map((block, index) => {
                 const sourceIndex = resizePreview ? blocks.findIndex((item) => item.id === resizePreview.blockId) : -1;
                 const previewOffsetY = sourceIndex >= 0 && index > sourceIndex ? -resizePreview!.heightDelta : 0;
@@ -21448,7 +21450,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                       ? 999_999
                       : getBlockRenderStackOrder(block, index, blocks.length);
                 return (
-                  <div key={block.id} className="relative" style={{ zIndex: wrapperStackOrder }}>
+                  <div key={block.id} className="relative" data-leisure-role={getLeisurePresentation(blocks) ? getLeisureRole(block) : undefined} style={{ ...(getLeisurePresentation(blocks) ? getLeisureBlockStyle(block,index) : undefined), zIndex: wrapperStackOrder }}>
                     <MemoizedInlineEditorBlock
                       block={block}
                       publicBlockId={buildPublicBlockId(editingPageIndex, index)}
@@ -21493,7 +21495,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   </div>
                 );
               })}
-            </div>
+            </LeisurePageLayout>
           </div>
         </div>
       )}

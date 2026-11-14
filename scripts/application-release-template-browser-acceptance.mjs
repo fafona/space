@@ -1,6 +1,7 @@
 // Actual template UI and copy helper, synthetic network/data only. Runs in the
 // existing mandatory browser CI job; never reads a person's browser or session.
 import test from 'node:test';
+import './leisure-presentation-browser-acceptance.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {build} from 'esbuild';

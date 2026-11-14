@@ -29,6 +29,12 @@ type GalleryImageItem = {
 
 type GalleryBlockProps = BackgroundEditableProps & {
   heading?: string;
+  galleryControls?: "hero";
+  galleryMoreLabel?: string;
+  galleryPreviousLabel?: string;
+  galleryNextLabel?: string;
+  galleryPauseLabel?: string;
+  galleryPlayLabel?: string;
   galleryFrameWidth?: number;
   galleryFrameHeight?: number;
   galleryLayoutPreset?: GalleryLayoutPreset;
@@ -93,6 +99,11 @@ export default function GalleryBlock(props: GalleryBlockProps) {
   const homeItems = featured.length > 0 ? featured : imageItems;
   const [index, setIndex] = useState(0);
   const [showMore, setShowMore] = useState(false);
+  const heroControls = props.galleryControls === "hero";
+  const [paused, setPaused] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(false);
   const intervalMs =
     typeof props.autoplayMs === "number" && Number.isFinite(props.autoplayMs)
       ? Math.max(1000, Math.round(props.autoplayMs))
@@ -100,12 +111,20 @@ export default function GalleryBlock(props: GalleryBlockProps) {
   const safeIndex = homeItems.length > 0 ? index % homeItems.length : 0;
 
   useEffect(() => {
-    if (homeItems.length <= 1) return;
+    if (homeItems.length <= 1 || (heroControls && (paused || hovered || focused || reducedMotion))) return;
     const timer = window.setInterval(() => {
       setIndex((prev) => (prev + 1) % homeItems.length);
     }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [homeItems.length, intervalMs]);
+  }, [homeItems.length, intervalMs, heroControls, paused, hovered, focused, reducedMotion]);
+
+  useEffect(() => {
+    if (!heroControls) return;
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReducedMotion(preference.matches);
+    update(); preference.addEventListener("change", update);
+    return () => preference.removeEventListener("change", update);
+  }, [heroControls]);
 
   const cardStyle = getBackgroundStyle({
     imageUrl: props.bgImageUrl,
@@ -194,7 +213,12 @@ export default function GalleryBlock(props: GalleryBlockProps) {
         {currentImage ? (
           <div className="mt-4 space-y-3">
             <div className="block mx-auto overflow-hidden rounded-lg bg-transparent" style={frameStyle}>
-              <div className="relative w-full h-full overflow-hidden">
+              <div className="relative w-full h-full overflow-hidden"
+                onMouseEnter={heroControls ? () => setHovered(true) : undefined}
+                onMouseLeave={heroControls ? () => setHovered(false) : undefined}
+                onFocusCapture={heroControls ? () => setFocused(true) : undefined}
+                onBlurCapture={heroControls ? event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); } : undefined}
+              >
                 {currentImage.fitToFrame ? (
                   <div
                     className="absolute inset-0"
@@ -226,11 +250,16 @@ export default function GalleryBlock(props: GalleryBlockProps) {
                 <div className="absolute left-2 bottom-2 px-2 py-1 text-xs rounded border bg-white/90 text-gray-700">
                   {safeIndex + 1} / {homeItems.length}
                 </div>
+                {heroControls && homeItems.length > 1 ? <div className="leisure-carousel-controls">
+                  <button type="button" aria-label={props.galleryPreviousLabel || "上一张"} onClick={() => setIndex(prev => (prev - 1 + homeItems.length) % homeItems.length)}><span aria-hidden="true">←</span></button>
+                  <button type="button" aria-label={props.galleryNextLabel || "下一张"} onClick={() => setIndex(prev => (prev + 1) % homeItems.length)}><span aria-hidden="true">→</span></button>
+                  <button type="button" aria-label={paused || reducedMotion ? (props.galleryPlayLabel || "播放轮播") : (props.galleryPauseLabel || "暂停轮播")} aria-pressed={paused || reducedMotion} onClick={() => { setPaused(!(paused || reducedMotion)); setReducedMotion(false); }}><span aria-hidden="true">{paused || reducedMotion ? "▶" : "Ⅱ"}</span></button>
+                </div> : null}
                 <button
                   className="absolute right-2 bottom-2 px-3 py-1 text-xs rounded border bg-white/90 hover:bg-white"
                   onClick={() => setShowMore((prev) => !prev)}
                 >
-                  更多
+                  {props.galleryMoreLabel || "更多"}
                 </button>
               </div>
             </div>
