@@ -83,12 +83,15 @@ test("production-build authentication acceptance runs after build in Linux CI", 
   assert.doesNotMatch(quality, /continue-on-error/);
 });
 
-test("the quality build pins only its Node heap to the existing 3072 MiB production budget without bypassing validation", () => {
-  const quality = jobBlock("quality-core"), build = stepBlock(quality, "Build");
-  assert.match(build, /\n        env:\n          NODE_OPTIONS: "--max-old-space-size=3072"\n/);
-  assert.match(build, /\n        run: npm run build\n/);
-  assert.equal((workflow.match(/NODE_OPTIONS:/g) || []).length, 1, "the build budget must not spill into test or native-isolation jobs");
-  assert.doesNotMatch(build, /continue-on-error|\bif:|ignoreBuildErrors|ignoreDuringBuilds|SKIP|DISABLE|\|\|/);
+test("quality and browser builds pin only their Node heap to the existing 3072 MiB production budget without bypassing validation", () => {
+  for (const jobName of ["quality-core", "browser"]) {
+    const job = jobBlock(jobName), build = stepBlock(job, "Build");
+    assert.match(build, /\n        env:\n          NODE_OPTIONS: "--max-old-space-size=3072"\n/);
+    assert.match(build, /\n        run: npm run build\n/);
+    assert.equal((job.match(/NODE_OPTIONS:/g) || []).length, 1, `${jobName}: heap must remain local to the build step`);
+    assert.doesNotMatch(build, /continue-on-error|\bif:|ignoreBuildErrors|ignoreDuringBuilds|SKIP|DISABLE|\|\|/);
+  }
+  assert.equal((workflow.match(/NODE_OPTIONS:/g) || []).length, 2, "the build budget must not spill into test or native-isolation jobs");
   const result = spawnSync(process.execPath, ["-e", "process.stdout.write(String(require('node:v8').getHeapStatistics().heap_size_limit))"], {
     env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=3072" }, encoding: "utf8", timeout: 5000, windowsHide: true,
   });
