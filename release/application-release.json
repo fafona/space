@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "3bbbe054fab2e6a1634599a90d4fbaa94edec946",
-  "purpose": "Fix opted-in public navigation sticky ancestors on desktop and mobile; align isolated browser CI heap with existing bounded build budget",
+  "baseline": "66645e5c5741179a918cf7488d5c99abc5aa7736",
+  "purpose": "Native background video with responsive poster fallback and independent merchant contact window; preserve reservations and existing account services",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,277 +10,192 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
-      "file": ".github/workflows/ci.yml",
-      "role": "verification",
-      "before": [
-        "100644",
-        "99595ac9b5bf9c85b038be8429dc36b63852c6f6"
-      ],
-      "after": [
-        "100644",
-        "7f99e85c920d7e95ad1f05f99cdad6d291856c8b"
-      ]
-    },
-    {
-      "file": "docs/ordinary-application-release.md",
-      "role": "verification",
-      "before": [
-        "100644",
-        "4fa0e903aa588b211769de5c03d3b4350e52fca8"
-      ],
-      "after": [
-        "100644",
-        "867337b39c65cbccdfd370e713e23e4238003497"
-      ]
-    },
-    {
-      "file": "scripts/application-release-audit.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "0570dcd0a90e4b5ee0b4ac5d4d5d79a95c906096"
-      ],
-      "after": [
-        "100644",
-        "d5581f109a046d56879951d7e2f194ddf50dece7"
-      ]
-    },
-    {
-      "file": "scripts/application-release-authority.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "2ceb489500f54408eb72abed6940a54f467012cc"
-      ],
-      "after": [
-        "100644",
-        "f1c40bd99ec3d6b40a5c9c4165e548b4868f80c3"
-      ]
-    },
-    {
-      "file": "scripts/application-release-cli-lifetime.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "06da134578bd95fb294e900e22e5dabd2f15e15d"
-      ]
-    },
-    {
-      "file": "scripts/application-release-cli-lifetime.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "8a89dc2412e8eceeb9681f880ccf4965f7d26d14"
-      ]
-    },
-    {
-      "file": "scripts/application-release-history-observation.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "a75afc6d3ae741137d3f772e4dddc78343fcdcfd"
-      ]
-    },
-    {
-      "file": "scripts/application-release-history-observation.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "0756f4dedd6831e66a52d5d5582958b00cefda0d"
-      ]
-    },
-    {
-      "file": "scripts/application-release-navigation-continuation.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "6822e7d42722b3cb68b8c67f926510ad64053a77"
-      ]
-    },
-    {
-      "file": "scripts/application-release-navigation-continuation.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "5eaa19dd41baf463a2e4ccc81859da6480b9831a"
-      ]
-    },
-    {
-      "file": "scripts/application-release-navigation-install.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "8a00ddfefb45f853164c1b046e6ab351a2c75c87"
-      ]
-    },
-    {
-      "file": "scripts/application-release-navigation-native.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "6c49048b985a5ad22f4f5f18c01e209959f33967"
-      ]
-    },
-    {
-      "file": "scripts/application-release-navigation-policy.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "d2f44ea979f984047ff54f835b18c3342ed88d39"
-      ]
-    },
-    {
-      "file": "scripts/application-release-navigation-policy.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "26e0330511b4cdec14f76fda8641ab9b899e1a7a"
-      ]
-    },
-    {
-      "file": "scripts/application-release-navigation-source.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "53e68b567ae420e53c77980a1bc8c4df943332d1"
-      ]
-    },
-    {
-      "file": "scripts/application-release-publish.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "b53f27b3ade99bf1ce9bbacadafe39dae9a722f4"
-      ],
-      "after": [
-        "100644",
-        "c936858fd7c59bce38f8ecc304a9eebcd5d9b4b4"
-      ]
-    },
-    {
-      "file": "scripts/ci-workflow-contract.test.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "6bd323757553f5547869afebaa97b4d121e67d40"
-      ],
-      "after": [
-        "100644",
-        "5d0c16525d5c35b4311b4de4d0fdcf4be70b4ffe"
-      ]
-    },
-    {
       "file": "scripts/leisure-presentation-browser-acceptance.mjs",
       "role": "verification",
       "before": [
         "100644",
-        "831421714bb9829a9bf57771101b61e929cca4ef"
-      ],
-      "after": [
-        "100644",
         "b6588a30d4b5e6e976dc21e2802995878fc6a139"
-      ]
-    },
-    {
-      "file": "scripts/online-release-retention-writer.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "64aecaba90b1af4c2a0930725c3e1f59805ae55e"
       ],
       "after": [
         "100644",
-        "31e14c7d0ba6c12fc080f75377f40af778fa66aa"
+        "9bcd239540d776e89c1b69a25db45ac3cc43ff9b"
       ]
     },
     {
-      "file": "scripts/online-traffic-release.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "eb84260460cc9c88f64555bf77eb99bd4f2ce6d0"
-      ],
-      "after": [
-        "100644",
-        "ccfc575351ce07531d7491a7422ff20fc369bd47"
-      ]
-    },
-    {
-      "file": "scripts/online-unpublished-candidate.test.mjs",
+      "file": "scripts/merchant-service-center-browser-acceptance.mjs",
       "role": "verification",
       "before": [
         "100644",
-        "3018cff412c92d68545d447030b48a77c90ace74"
+        "1c49e2b758d44d5c2d42a944b54954b24cb73d6b"
       ],
       "after": [
         "100644",
-        "c0a28b7f825d03feac9780dcf23fe8f7fffcee98"
+        "02ac188c4d1a59f3cd1bb6a7961c816dd5ccf2a0"
       ]
     },
     {
-      "file": "scripts/release-toolchain-active-fixture-ports.test.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "5ddb110d9d598bc27aecced8d208d0d5b8aeb9c4"
-      ],
-      "after": [
-        "100644",
-        "3c83a6d4782c6a00f78e359614e9269d500a3abe"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-active-generation-routing-native.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "e3da379db4a6a5848cf199b41d5ba53ceaca3e89"
-      ],
-      "after": [
-        "100644",
-        "5486943ba339a595989d7cd5bccced9d7f01e705"
-      ]
-    },
-    {
-      "file": "src/components/blocks/siteNavigation.css",
+      "file": "src/app/globals.css",
       "role": "application",
       "before": [
         "100644",
-        "1c8d57a47e9f95b57ac41fda2aec8ca2250516c1"
+        "30a178a590d55076b46e53090430f4b07ab81fa3"
       ],
       "after": [
         "100644",
-        "04e0bf7e824497c69c28c032a631b2b36e387950"
+        "f8d3c9a1d0a833722a5fb84f0ff73646a31f7f7f"
       ]
     },
     {
-      "file": "src/lib/siteNavigation.test.ts",
-      "role": "verification",
+      "file": "src/components/PublicWebsiteActions.tsx",
+      "role": "application",
       "before": [
         "100644",
-        "c7d6da4fd3c0d4bd78afb9a8615c4a710cb3d901"
+        "3a44ab8b63ea3789338300c4fb2c2957af179316"
       ],
       "after": [
         "100644",
-        "975142fa75bf4f6c3d36fb4f09edccfc219163c6"
+        "ae3b03d744bff17d7884dd67920b8bbe25866bfa"
+      ]
+    },
+    {
+      "file": "src/components/admin/GalleryVideoSettings.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "caacc2dd1cdd7550e068cb6fc5e028113278f49b"
+      ]
+    },
+    {
+      "file": "src/components/admin/InlineEditorBlock.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "a5babf628a590ea5ac04bfcb841f83bf4c28091d"
+      ],
+      "after": [
+        "100644",
+        "881441487f2a43ebe135169bc4f212c155db07f6"
+      ]
+    },
+    {
+      "file": "src/components/blocks/GalleryBlock.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "34a269811dfac6a9bffba9ae7c85568e47fd0ef8"
+      ],
+      "after": [
+        "100644",
+        "235a728aafc8f717afaa94f610ee853906e2705e"
+      ]
+    },
+    {
+      "file": "src/components/blocks/GalleryVideo.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "96fa82504e733c5ddbe00ac316eac39c64f6ffbf"
+      ]
+    },
+    {
+      "file": "src/components/blocks/leisurePresentation.css",
+      "role": "application",
+      "before": [
+        "100644",
+        "9331eeba7bfda9fd2407f906c0af1494aabc68f5"
+      ],
+      "after": [
+        "100644",
+        "927c030c38be114aea947604d4cb3b19819b634a"
+      ]
+    },
+    {
+      "file": "src/components/service-center/ServiceCenterSheet.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "79fb5db606ae76de80fcb3ef4efcf621fdc5842e"
+      ],
+      "after": [
+        "100644",
+        "14a56fec85ccab6e00b72745f195348431752316"
+      ]
+    },
+    {
+      "file": "src/components/service-center/ServiceConversations.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "52af25cac17d4befeb2606a102950675727b85d1"
+      ],
+      "after": [
+        "100644",
+        "20cc071e17749e1a10b6802582a98babe248425b"
+      ]
+    },
+    {
+      "file": "src/components/service-center/ServiceFrameClient.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "a778df440b25fc58f5ecf5d1d8aac8a8f4f081f8"
+      ],
+      "after": [
+        "100644",
+        "47347f947aa5d9720d98c0ea5a9e111413138421"
+      ]
+    },
+    {
+      "file": "src/data/homeBlocks.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "02f3d9438db96856023a46fbe044eaaf19020540"
+      ],
+      "after": [
+        "100644",
+        "75e87b97b5b95e4f84f5f215a0d58f3d4ccba8a0"
+      ]
+    },
+    {
+      "file": "src/lib/galleryVideo.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "6adb6b6c8c81f369aab69accf418e32b97142ee6"
+      ]
+    },
+    {
+      "file": "src/lib/galleryVideo.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "050873c42166b5fd44d7c0fe6b845f7e5e115713"
+      ]
+    },
+    {
+      "file": "src/lib/leisurePresentation.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "53a68938080df0cfc2a8a81a683a247443c88f2f"
+      ],
+      "after": [
+        "100644",
+        "512e3491a6581c0cb5e40d8d39188f706f7796b4"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/siteNavigation.test.ts",
+    "src/lib/galleryVideo.test.ts",
     "src/lib/leisurePresentation.test.ts",
-    "src/lib/blocksSanitizer.test.ts"
+    "src/lib/blocksSanitizer.test.ts",
+    "src/lib/merchantServiceFrame.test.ts",
+    "src/components/SitePageClient.behavior.test.ts"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {

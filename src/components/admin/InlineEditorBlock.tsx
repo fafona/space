@@ -16,6 +16,8 @@ import {
 import NextImage from "next/image";
 import BrandedNavigation from "@/components/blocks/BrandedNavigation";
 import SiteNavigationSettings from "./SiteNavigationSettings";
+import GalleryVideoSettings from "./GalleryVideoSettings";
+import { galleryVideoSettings } from "@/lib/galleryVideo";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import {
@@ -5058,6 +5060,7 @@ type GalleryEditorImage = {
   }
 
   if (block.type === "gallery") {
+    const videoSettings = galleryVideoSettings(block.props);
     const galleryImages = getGalleryImages();
     const activePreset = normalizeGalleryLayoutPreset(block.props.galleryLayoutPreset);
     const activeCustomLayout = normalizeCustomGalleryLayout(block.props.galleryCustomLayout);
@@ -5069,7 +5072,9 @@ type GalleryEditorImage = {
     const customDraftRows = buildCustomGalleryRows(customLayoutDraft, customDraftPreviewCount);
     const featuredImages = galleryImages.filter((item) => item.featured);
     const homeImages = featuredImages.length > 0 ? featuredImages : galleryImages;
-    const previewImage = homeImages[0] ?? galleryImages[0] ?? null;
+    const previewImage = videoSettings.media !== "images" && videoSettings.poster
+      ? { id: "video-poster", url: videoSettings.poster, featured: true, fitToFrame: true, offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1 }
+      : homeImages[0] ?? galleryImages[0] ?? null;
     const galleryFrameWidth =
       typeof block.props.galleryFrameWidth === "number" && Number.isFinite(block.props.galleryFrameWidth)
         ? Math.max(220, Math.round(block.props.galleryFrameWidth))
@@ -5353,6 +5358,7 @@ type GalleryEditorImage = {
                   onSelectionChange={updateSelectionRange}
                 />
               </div>
+              <GalleryVideoSettings value={block.props} onChange={onChange} />
               <div className="space-y-2 mt-3 mx-auto" style={galleryHeadingStyle}>
                 <div
                   ref={galleryFrameRef}

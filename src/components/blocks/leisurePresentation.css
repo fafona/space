@@ -30,6 +30,7 @@
 .faolla-leisure-site [data-leisure-role="hero"] .mt-4 { margin: 0; }
 .faolla-leisure-site [data-leisure-role="hero"] .block.mx-auto { width: 100% !important; max-width: none; height: 630px !important; border-radius: 0; }
 .faolla-leisure-site [data-leisure-role="hero"] img { filter: brightness(.62); }
+.faolla-leisure-site [data-leisure-role="hero"] video[data-gallery-video="background"] { filter: brightness(.62); }
 .faolla-leisure-site [data-leisure-role="hero"] .absolute.left-2.bottom-2 { left: auto; right: 94px; bottom: 28px; border: 0; border-radius: 24px; padding: 9px 14px; background: #fff; color: #292b34; }
 .faolla-leisure-site [data-leisure-role="hero"] .absolute.right-2.bottom-2 { right: 24px; bottom: 28px; border: 0; border-radius: 24px; padding: 9px 14px; color: #292b34; }
 .faolla-leisure-site [data-leisure-role="hero"] .space-y-3 > .rounded-lg:not(.block) { position: absolute; right: 24px; bottom: 82px; z-index: 10; width: min(660px,90%); max-height: 320px; overflow: auto; background: white; }
@@ -179,3 +180,9 @@
 }
 .faolla-leisure-site [data-leisure-role="hero"] .space-y-3 > .rounded-lg:not(.block) > .grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
 .faolla-leisure-site [data-leisure-role="hero"] .space-y-3 > .rounded-lg:not(.block) > .grid > button { grid-column: auto; height: 110px !important; }
+
+/* Native video slots must outgrow the legacy 280/230px placeholder buttons. */
+.faolla-leisure-site [data-leisure-role^="video-"]:has([data-gallery-media="video"]) > section > div:not([data-editor-toolbar]) { height: auto !important; padding: 0; background: #080d17 !important; }
+.faolla-leisure-site [data-leisure-role^="video-"] [data-gallery-media="video"] { margin: 0; }
+.faolla-leisure-site [data-leisure-role^="video-"] [data-gallery-media="video"] .block.mx-auto { width: 100% !important; height: clamp(360px,42vw,580px) !important; }
+.faolla-leisure-site [data-leisure-role^="video-"]:has([data-gallery-media="video"]) h2 { padding: 18px 20px; font-size: 20px; color: white; }

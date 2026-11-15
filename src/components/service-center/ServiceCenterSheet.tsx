@@ -24,13 +24,13 @@ const sections = [{ id: "conversations", title: "会话", description: "联系�
 
 export default function ServiceCenterSheet(props: { siteId: string; siteName: string; serviceOrigin: string;
   authenticated: boolean | null; refreshStatus: () => Promise<void>; onFavoriteChange: (value: boolean) => void;
-  open: boolean; onClose: () => void; favoriteRequested: boolean;
+  open: boolean; onClose: () => void; favoriteRequested: boolean; conversationRequested?: boolean;
   onSignedOut?: () => void;
 }) {
   const { open, onClose, siteId } = props;
   const { locale, setLocale } = useI18n();
   const dialog = useRef<HTMLDialogElement>(null), frame = useRef<HTMLIFrameElement>(null);
-  const [section, setSection] = useState<Section>(props.favoriteRequested ? "favorite" : "menu");
+  const [section, setSection] = useState<Section>(props.favoriteRequested ? "favorite" : props.conversationRequested ? "conversations" : "menu");
   const [local, setLocal] = useState(false);
   const [localVisited, setLocalVisited] = useState<Set<Section>>(new Set());
   const [frameInitialSection, setFrameInitialSection] = useState<ServiceSection | null>(null);
@@ -54,10 +54,10 @@ export default function ServiceCenterSheet(props: { siteId: string; siteName: st
     return () => { document.body.style.overflow = previous; };
   }, [open]);
   useEffect(() => {
-    if (open) select(props.favoriteRequested ? "favorite" : "menu");
+    if (open) select(props.favoriteRequested ? "favorite" : props.conversationRequested ? "conversations" : "menu");
     // Reopening chooses the entry requested by the user, not an identity refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, props.favoriteRequested]);
+  }, [open, props.favoriteRequested, props.conversationRequested]);
   useEffect(() => { sendState(); });
   useEffect(() => {
     if (!frameInitialSection || ready) return;
@@ -69,9 +69,9 @@ export default function ServiceCenterSheet(props: { siteId: string; siteName: st
       if (!isServiceFrameMessage(event, { origin: frameOrigin, source: frame.current?.contentWindow ?? null, nonce, siteId })) return;
       if (event.data.event === "ready") { setReady(true); setSlow(false); sendState(); }
       if (event.data.event === "favorite" && typeof event.data.favorited === "boolean") props.onFavoriteChange(event.data.favorited);
-      if (event.data.event === "done") { setSection("menu"); void props.refreshStatus(); }
+      if (event.data.event === "done") { setSection(props.conversationRequested ? "conversations" : "menu"); void props.refreshStatus(); }
       if (event.data.event === "locale" && typeof event.data.locale === "string" && resolveSupportedLocale(event.data.locale) === event.data.locale) setLocale(event.data.locale);
-      if (event.data.event === "signed-out") { props.onSignedOut?.(); setSection("menu"); void props.refreshStatus(); }
+      if (event.data.event === "signed-out") { props.onSignedOut?.(); setSection(props.conversationRequested ? "conversations" : "menu"); void props.refreshStatus(); }
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
@@ -84,9 +84,9 @@ export default function ServiceCenterSheet(props: { siteId: string; siteName: st
   const guestIdentity = useMemo<ServiceIdentity>(() => ({ authenticated: false, accountId: "", profile: normalizeMerchantMembershipProfileDraft({}), favoriteSites: [], memberships: [] }), []);
   const localProps = { siteId, siteName: props.siteName, identity: guestIdentity, refreshIdentity: props.refreshStatus };
   const localFeature = section !== "favorite" && (props.authenticated === false || local);
-  const title = section === "menu" ? "服务中心" : section === "favorite" ? "收藏本店" : sections.find(item => item.id === section)?.title;
+  const title = props.conversationRequested ? "联系商户" : section === "menu" ? "服务中心" : section === "favorite" ? "收藏本店" : sections.find(item => item.id === section)?.title;
   const visibleFrame = isServiceSection(section) && !localFeature;
-  return createPortal(<dialog ref={dialog} aria-labelledby="merchant-service-title" data-service-center
+  return createPortal(<dialog ref={dialog} aria-labelledby="merchant-service-title" data-service-center data-chat-window={props.conversationRequested ? "true" : undefined}
     className="faolla-service-sheet m-0 mt-auto w-full max-w-none overflow-hidden rounded-t-[28px] border-0 bg-slate-50 p-0 text-slate-900 shadow-2xl"
     onCancel={event => {
       // A file input's picker also emits `cancel`; React delegates that event
@@ -95,22 +95,22 @@ export default function ServiceCenterSheet(props: { siteId: string; siteName: st
       event.preventDefault(); onClose();
     }}
     onClick={event => { if (event.target !== event.currentTarget) return;
-      const bounds = event.currentTarget.getBoundingClientRect(); if (event.clientY < bounds.top || event.clientX < bounds.left || event.clientX > bounds.right) onClose(); }}>
+      const bounds = event.currentTarget.getBoundingClientRect(); if (event.clientY < bounds.top || event.clientY > bounds.bottom || event.clientX < bounds.left || event.clientX > bounds.right) onClose(); }}>
     <div className="mx-auto flex h-full max-w-6xl flex-col">
       <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-slate-300" aria-hidden="true" />
       <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
-        <div className="flex min-w-0 items-center gap-3">{section !== "menu" ? <button type="button" className={serviceButton} onClick={() => select("menu")} aria-label="返回服务中心">←</button> : null}
+        <div className="flex min-w-0 items-center gap-3">{section !== "menu" && !props.conversationRequested ? <button type="button" className={serviceButton} onClick={() => select("menu")} aria-label="返回服务中心">←</button> : null}
           <div><h2 id="merchant-service-title" className="text-lg font-semibold">{title}</h2><p className="truncate text-xs text-slate-500">{props.siteName || "商户网站"} · 点击上方网页可返回</p></div></div>
-        <button type="button" className={serviceButton} onClick={onClose} aria-label="关闭服务中心">关闭</button>
+        <button type="button" className={serviceButton} onClick={onClose} aria-label={props.conversationRequested ? "关闭会话" : "关闭服务中心"}>关闭</button>
       </header>
       <div className={`min-h-0 flex-1 overscroll-contain p-3 sm:p-5 ${section === "conversations" ? "overflow-hidden" : "overflow-y-auto"}`} hidden={visibleFrame}>
-        {section === "menu" ? <div className="grid gap-3 sm:grid-cols-2">{sections.map(item => <button key={item.id} type="button"
+        {section === "menu" ? <div className="grid gap-3 sm:grid-cols-3">{sections.filter(item => item.id !== "conversations").map(item => <button key={item.id} type="button"
           data-service-section={item.id} className={`group flex min-h-28 items-center gap-4 rounded-2xl border p-5 text-left transition hover:shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-700 ${item.tone}`} onClick={() => select(item.id)}>
           <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${item.iconTone}`} aria-hidden="true"><svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={item.path} /></svg></span>
           <span><span className="block font-semibold">{item.title}</span><span className="mt-1 block text-xs leading-5 text-slate-600">{item.description}</span></span><span className="ml-auto text-slate-500 transition-transform group-hover:translate-x-1" aria-hidden="true">→</span></button>)}</div> : null}
         {localVisited.has("directory") ? <div hidden={section !== "directory"}><Directory {...localProps} active={open && section === "directory"} /></div> : null}
         {(localVisited.has("orders") || localFeature && section === "orders") ? <div hidden={!localFeature || section !== "orders"}><LocalOrders {...localProps} active={open && localFeature && section === "orders"} /></div> : null}
-        {(localVisited.has("conversations") || localFeature && section === "conversations") ? <div className="h-full min-h-0" hidden={!localFeature || section !== "conversations"}><LocalConversations {...localProps} active={open && localFeature && section === "conversations"} /></div> : null}
+        {(localVisited.has("conversations") || localFeature && section === "conversations") ? <div className="h-full min-h-0" hidden={!localFeature || section !== "conversations"}><LocalConversations {...localProps} compact={props.conversationRequested} active={open && localFeature && section === "conversations"} /></div> : null}
         {(localVisited.has("account") || localFeature && section === "account") ? <div hidden={!localFeature || section !== "account"}><LocalAccount {...localProps} active={open && localFeature && section === "account"} /></div> : null}
       </div>
       {visibleFrame && !ready ? <p role="status" className="p-3 text-sm text-slate-500">{slow ? "服务读取较慢，商户网页仍保留。" : "正在打开服务…"}</p> : null}
