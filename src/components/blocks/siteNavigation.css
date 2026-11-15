@@ -17,6 +17,11 @@ main.faolla-public-site-shell:has([data-site-navigation]) { overflow-x:clip !imp
 .faolla-site-brand { display:flex; align-items:center; gap:16px; min-width:0; text-align:left; font-size:22px !important; font-weight:800 !important; }
 .faolla-site-brand span { overflow-wrap:anywhere; line-height:1.2; }
 .faolla-site-logo { width:64px; height:64px; object-fit:contain; flex-shrink:0; }
+/* Compact is opt-in: about 15% shorter, with a more prominent brand. */
+.faolla-site-navigation[data-density="compact"][data-utility-space] { padding-top:40px; }
+.faolla-site-navigation[data-density="compact"] .faolla-site-navigation-inner { min-height:94px; padding-top:7px; padding-bottom:7px; }
+.faolla-site-navigation[data-density="compact"] .faolla-site-brand { font-size:27px !important; }
+.faolla-site-navigation[data-density="compact"] .faolla-site-logo { width:80px; height:80px; }
 .faolla-site-links { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px 26px; padding:0; margin:0; list-style:none; }
 .faolla-site-menu { min-width:0; }
 .faolla-site-menu-item { position:relative; list-style:none; min-width:0; max-width:100%; }
@@ -39,6 +44,9 @@ main.faolla-public-site-shell:has([data-site-navigation]) { overflow-x:clip !imp
  .faolla-site-navigation-inner { flex-wrap:wrap; gap:0 10px; min-height:90px; padding:14px 22px; }
  .faolla-site-brand { flex:1; gap:12px; font-size:19px !important; }
  .faolla-site-logo { width:50px; height:50px; }
+ .faolla-site-navigation[data-density="compact"] .faolla-site-navigation-inner { min-height:77px; padding:6px 18px; }
+ .faolla-site-navigation[data-density="compact"] .faolla-site-brand { gap:10px; font-size:clamp(20px,5.64cqw,22px) !important; }
+ .faolla-site-navigation[data-density="compact"] .faolla-site-logo { width:60px; height:60px; }
  .faolla-site-menu-toggle { display:grid; place-items:center; }
  .faolla-site-menu { display:none; flex-basis:100%; }
  .faolla-site-menu[data-open] { display:block; max-height:calc(100dvh - 150px); overflow-y:auto; overscroll-behavior:contain; }

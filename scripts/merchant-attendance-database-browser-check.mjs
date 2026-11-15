@@ -126,7 +126,7 @@ async function check(native){
         const openOwner=async(p,negative=false)=>{
           if(!actualMerchantLogin){await p.goto(origin+(fullAdminClient?'/99990001':'/owner'));return;}
           assert.equal((await p.context().cookies(origin)).length,0);
-          await p.goto(origin+'/login');await p.getByRole('button',{name:/商户入口/}).click();
+          await p.goto(origin+'/login');await p.getByRole('button',{name:/^用户登录入口/}).click();
           if(negative){
             const callsBefore=transport.calls.length;
             const anonymous=await p.evaluate(async()=>{const r=await fetch('/api/merchant-enterprise/attendance/admin?siteId=99990001');return r.status;});

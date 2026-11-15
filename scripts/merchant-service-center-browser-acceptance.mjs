@@ -381,6 +381,21 @@ test('file-picker cancellation is not a request to dismiss the service dialog',{
  }}}finally{await browser.close();}
 });
 
+test('contact launcher is icon-only, keeps a named accessible target and opens the original conversation',{timeout:60000},async()=>{
+ const browser=await chromium.launch({headless:true});try{for(const width of [320,390,1440]){
+  const f=await setup(browser,width,{logged:false});try{
+   await f.open();const launcher=f.page.locator('[data-public-chat-launcher]');await launcher.waitFor();
+   assert.equal((await launcher.textContent()).trim(),'');
+   await f.page.getByRole('button',{name:'Switch Spanish',exact:true}).click();await f.page.waitForFunction(()=>document.querySelector('[data-public-chat-launcher]')?.getAttribute('aria-label')==='Contactar con el comercio');
+   await f.page.getByRole('button',{name:'Switch Chinese',exact:true}).click();await f.page.waitForFunction(()=>document.querySelector('[data-public-chat-launcher]')?.getAttribute('aria-label')==='联系商户');
+   assert.equal(await launcher.locator('svg[aria-hidden="true"]').count(),1);
+   const bounds=await launcher.boundingBox();assert.equal(Math.round(bounds.width),52);assert.equal(Math.round(bounds.height),52);
+   await launcher.focus();await launcher.press('Enter');await f.page.locator('dialog[data-chat-window="true"][open]').waitFor();await f.page.getByLabel('输入消息').waitFor();
+   assert.deepEqual(f.state.writes,[]);
+  }finally{await f.close();}
+ }}finally{await browser.close();}
+});
+
 test('independent chat opens the current merchant directly, uses a desktop corner window and a mobile sheet, and preserves contact switching',{timeout:90000},async()=>{
  const browser=await chromium.launch({headless:true});try{for(const width of [390,1440]){
   const f=await setup(browser,width);try{

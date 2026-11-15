@@ -138,12 +138,13 @@ test("slow code exchange holds the loader until the existing server validation a
   h.response.resolve(Response.json(merchant)); await flush();
   assert.deepEqual(h.redirects, ["/99990001"]); assert.equal(h.pending(), true); assert.equal(h.url.searchParams.has("oauth"), false);
 });
-test("URL cleanup and account-entry-switch notice cannot reveal the form before navigation", async () => {
+test("URL cleanup keeps the loader while the actual identity redirects without an obsolete entry-switch delay", async () => {
   const h = harness(); h.runEffect(callbackEffect);
+  assert.equal(h.pending(), true); assert.deepEqual(h.redirects, []);
   h.response.resolve(Response.json({ ...merchant, accountType: "personal", entrySwitched: true })); await flush();
-  assert.equal(h.url.searchParams.has("oauth"), false); assert.equal(h.pending(), true); assert.deepEqual(h.redirects, []);
-  assert.match(String(h.render().props.statusDescription), /个人用户/);
-  const timer = h.timers.find(t => t.delay === 900); assert.ok(timer); timer.callback(); await flush();
+  assert.equal(h.url.searchParams.has("oauth"), false); assert.equal(h.pending(), true);
+  assert.doesNotMatch(String(h.render().props.statusDescription), /已帮您切换入口/);
+  assert.equal(h.timers.some(t => t.delay === 900), false, "a unified entry needs no artificial entry-switch pause");
   assert.deepEqual(h.redirects, ["/me"]); assert.equal(h.pending(), true);
 });
 test("implicit-token callbacks keep the same loader while browser session establishment is pending", async () => {

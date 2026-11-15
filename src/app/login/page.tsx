@@ -816,35 +816,37 @@ function LoginPageInner() {
     if (normalizedLocale.startsWith("zh")) return "使用邮箱完成商家账号注册，注册后可进入商户后台。";
     return "Register a merchant account with your email, then enter the merchant admin.";
   }, [normalizedLocale]);
+  const isRegistrationFlow = authView !== "signin" || Boolean(pendingSignupVerificationEmail);
+  const userEntryLabel = normalizedLocale.startsWith("zh") ? "用户登录入口" : "User Sign-In Entry";
+  const registrationEntryLabel = normalizedLocale.startsWith("zh") ? "用户注册" : "Create Account";
+  const userEntryDescription = normalizedLocale.startsWith("zh")
+    ? "登录后按账号身份自动进入个人中心或商户后台。"
+    : "Your account identity determines whether you enter the personal center or merchant admin.";
   const authSectionLabel = useMemo(() => {
+    if (pendingSignupVerificationEmail) return normalizedLocale.startsWith("zh") ? "用户注册" : "Account Registration";
     if (authView === "signup_personal") return personalSignUpLabel;
     if (authView === "signup_merchant") return merchantSignUpLabel;
-    if (entryAccountType === "personal") return normalizedLocale.startsWith("zh") ? "个人入口" : "Personal Entry";
-    if (entryAccountType === "merchant") return normalizedLocale.startsWith("zh") ? "商户入口" : "Merchant Entry";
+    if (entryAccountType) return normalizedLocale.startsWith("zh") ? "用户登录入口" : "User Sign-In Entry";
     if (normalizedLocale.startsWith("zh-tw")) return "帳號";
     if (normalizedLocale.startsWith("ja")) return "アカウント";
     if (normalizedLocale.startsWith("ko")) return "계정";
     if (normalizedLocale.startsWith("zh")) return "账号";
     return "Account";
-  }, [authView, entryAccountType, merchantSignUpLabel, normalizedLocale, personalSignUpLabel]);
+  }, [authView, entryAccountType, merchantSignUpLabel, normalizedLocale, pendingSignupVerificationEmail, personalSignUpLabel]);
   const authPrimaryTitle = useMemo(() => {
+    if (pendingSignupVerificationEmail) return normalizedLocale.startsWith("zh") ? "验证注册邮箱" : "Verify Registration Email";
     if (authView === "signup_personal") return personalSignUpLabel;
     if (authView === "signup_merchant") return merchantSignUpLabel;
-    if (entryAccountType === "personal") return normalizedLocale.startsWith("zh") ? "个人用户登录" : "Personal Sign In";
-    if (entryAccountType === "merchant") return normalizedLocale.startsWith("zh") ? "商户登录" : "Merchant Sign In";
+    if (entryAccountType) return normalizedLocale.startsWith("zh") ? "用户登录" : "User Sign In";
     return welcomeLoginTitle;
-  }, [authView, entryAccountType, merchantSignUpLabel, normalizedLocale, personalSignUpLabel, welcomeLoginTitle]);
+  }, [authView, entryAccountType, merchantSignUpLabel, normalizedLocale, pendingSignupVerificationEmail, personalSignUpLabel, welcomeLoginTitle]);
   const authDescription = useMemo(() => {
+    if (pendingSignupVerificationEmail) return normalizedLocale.startsWith("zh") ? "输入发送至注册邮箱的验证码，完成验证。" : "Enter the code sent to your registration email to complete verification.";
     if (authView === "signup_personal") return personalSignUpTip;
     if (authView === "signup_merchant") return merchantSignUpTip;
-    if (entryAccountType === "personal") {
-      return normalizedLocale.startsWith("zh") ? "用于消费、收藏商户、会话、小工具和游戏大厅。" : "For customer use: favorites, chats, tools, and games.";
-    }
-    if (entryAccountType === "merchant") {
-      return normalizedLocale.startsWith("zh") ? "用于商户后台、预约订单、生意会话和商户资料管理。" : "For merchant admin, bookings, orders, business chats, and profiles.";
-    }
+    if (entryAccountType) return userEntryDescription;
     return loginAccountTip;
-  }, [authView, entryAccountType, loginAccountTip, merchantSignUpTip, normalizedLocale, personalSignUpTip]);
+  }, [authView, entryAccountType, loginAccountTip, merchantSignUpTip, normalizedLocale, pendingSignupVerificationEmail, personalSignUpTip, userEntryDescription]);
   const authHeroPills = useMemo(() => {
     if (authView === "signup_personal") {
       if (normalizedLocale.startsWith("zh")) return ["邮箱注册", "个人中心"];
@@ -854,20 +856,14 @@ function LoginPageInner() {
       if (normalizedLocale.startsWith("zh")) return ["邮箱注册", "商户后台"];
       return ["Email Sign Up", "Merchant Admin"];
     }
-    if (entryAccountType === "personal") {
-      return normalizedLocale.startsWith("zh") ? ["个人用户", "Google 登录", "收藏与会话"] : ["Personal", "Google", "Favorites"];
-    }
-    if (entryAccountType === "merchant") {
-      return normalizedLocale.startsWith("zh") ? ["商户", "Google 登录", "预约与订单"] : ["Merchant", "Google", "Bookings"];
-    }
     return loginMethodPills;
-  }, [authView, entryAccountType, loginMethodPills, normalizedLocale]);
-  const accountFieldLabel = authView === "signin" ? loginAccountLabel : registrationEmailLabel;
-  const accountFieldPlaceholder = authView === "signin" ? loginAccountPlaceholder : registrationEmailPlaceholder;
+  }, [authView, loginMethodPills, normalizedLocale]);
+  const accountFieldLabel = isRegistrationFlow ? registrationEmailLabel : loginAccountLabel;
+  const accountFieldPlaceholder = isRegistrationFlow ? registrationEmailPlaceholder : loginAccountPlaceholder;
   const activeSignupAccountType: PlatformAccountType | null =
     authView === "signup_personal" ? "personal" : authView === "signup_merchant" ? "merchant" : null;
   const activeEntryAccountType = activeSignupAccountType ?? entryAccountType;
-  const shouldShowEntrySelection = !isGoogleOAuthReturn && !entryAccountType;
+  const shouldShowEntrySelection = !isGoogleOAuthReturn && !entryAccountType && !isRegistrationFlow;
   const googleWeChatNoticeTitle = normalizedLocale.startsWith("zh")
     ? "微信内无法直接使用 Google 登录"
     : "Google sign-in is blocked inside WeChat";
@@ -881,49 +877,19 @@ function LoginPageInner() {
     ? "复制失败。请点右上角“...”，选择“在浏览器打开”。"
     : "Copy failed. Use the top-right menu and open this page in an external browser.";
   const entryTitle = normalizedLocale.startsWith("zh") ? "请选择登录入口" : "Choose Sign-In Entry";
-  const personalEntryDescription = normalizedLocale.startsWith("zh")
-    ? "用于消费、收藏商户、会话、小工具和游戏大厅。"
-    : "For customer use: favorites, chats, tools, and games.";
-  const merchantEntryDescription = normalizedLocale.startsWith("zh")
-    ? "用于商户后台、预约订单、生意会话和商户资料管理。"
-    : "For merchant admin, bookings, orders, business chats, and profiles.";
   const employeeEntryLabel = normalizedLocale.startsWith("zh") ? "企业员工入口" : "Enterprise Employee Entry";
   const employeeEntryDescription = normalizedLocale.startsWith("zh")
     ? "使用负责人邀请的员工邮箱登录企业工作台。"
     : "Sign in to the enterprise workspace with the employee email invited by an owner.";
   const merchantStaffIdentityMessage = normalizedLocale.startsWith("zh")
-    ? "此账号已关联员工身份，不能从个人或商户入口登录。请使用企业员工入口；如果它本应是负责人账号，请改用独立的负责人账号，或联系平台管理员核查身份。员工账号不能直接转换为负责人账号。"
-    : "This account is linked to an employee identity and cannot use the personal or merchant entry. Use the enterprise employee entry. If this should be an owner account, use a separate owner account or contact a platform administrator to verify the identity. Employee accounts cannot be converted directly into owner accounts.";
+    ? "此账号已关联员工身份，不能从用户登录入口登录。请使用企业员工入口；如果它本应是负责人账号，请改用独立的负责人账号，或联系平台管理员核查身份。员工账号不能直接转换为负责人账号。"
+    : "This account is linked to an employee identity and cannot use the user sign-in entry. Use the enterprise employee entry. If this should be an owner account, use a separate owner account or contact a platform administrator to verify the identity. Employee accounts cannot be converted directly into owner accounts.";
   const backToEntryLabel = normalizedLocale.startsWith("zh") ? "返回入口选择" : "Back to Entry";
   const switchToSignInLabel = normalizedLocale.startsWith("zh") ? "返回登录" : "Back to Sign In";
-  const switchToSignUpLabel = normalizedLocale.startsWith("zh") ? "注册账号" : "Create Account";
-  const buildAutoSwitchedEntryMessage = useCallback(
-    (accountType: PlatformAccountType) => {
-      if (normalizedLocale.startsWith("zh")) {
-        return accountType === "personal"
-          ? "您是个人用户，已帮您切换入口进行登录。"
-          : "您是商户，已帮您切换入口进行登录。";
-      }
-      return accountType === "personal"
-        ? "You are a personal user. We switched the entry and signed you in."
-        : "You are a merchant. We switched the entry and signed you in.";
-    },
-    [normalizedLocale],
-  );
-  const showAutoSwitchedEntryNotice = useCallback(
-    async (accountType: PlatformAccountType, requestedAccountType: PlatformAccountType | null, message?: string) => {
-      if (!requestedAccountType || requestedAccountType === accountType) return;
-      setEntryAccountType(accountType);
-      setAuthView("signin");
-      setMsg(message?.trim() || buildAutoSwitchedEntryMessage(accountType));
-      await new Promise((resolve) => setTimeout(resolve, 900));
-    },
-    [buildAutoSwitchedEntryMessage],
-  );
   async function copyGoogleExternalBrowserLoginLink() {
     const accountType = activeEntryAccountType;
     if (!accountType) {
-      setMsg(normalizedLocale.startsWith("zh") ? "请先选择个人入口或商户入口。" : "Choose personal or merchant entry first.");
+      setMsg(normalizedLocale.startsWith("zh") ? "请先选择用户登录入口。" : "Choose the user sign-in entry first.");
       return;
     }
     if (typeof window === "undefined") return;
@@ -1436,18 +1402,6 @@ function LoginPageInner() {
     const completeGoogleOAuthSignIn = async (payload: GoogleMerchantSessionPayload | null) => {
       const merchantIds = readMerchantSessionMerchantIds(payload);
       const accountType = normalizePlatformAccountType(payload?.accountType) || googleOAuthAccountType;
-      const requestedAccountType =
-        normalizePlatformAccountType(payload?.requestedAccountType) || googleOAuthAccountType;
-      const entrySwitched =
-        payload?.entrySwitched === true || Boolean(requestedAccountType && requestedAccountType !== accountType);
-      if (entrySwitched) {
-        await showAutoSwitchedEntryNotice(
-          accountType,
-          requestedAccountType,
-          typeof payload?.message === "string" ? payload.message : "",
-        );
-        if (!mounted) return;
-      }
       await redirectToAccountHome(payload?.user ?? null, {
         accountType,
         accountId: normalizePlatformAccountId(payload?.accountId),
@@ -1622,14 +1576,13 @@ function LoginPageInner() {
     readGoogleOAuthSession,
     redirectToAccountHome,
     requestedRedirectPath,
-    showAutoSwitchedEntryNotice,
     t,
   ]);
 
   async function signInViaServer(
     accountValue: string,
     passwordValue: string,
-    preferredAccountType: PlatformAccountType,
+    preferredAccountType: PlatformAccountType | null,
   ): Promise<ServerSignInResult> {
     const response = await withTimeout(
       fetch("/api/auth/merchant-login", {
@@ -1641,7 +1594,7 @@ function LoginPageInner() {
         body: JSON.stringify({
           account: accountValue.trim(),
           password: passwordValue,
-          preferredAccountType,
+          ...(preferredAccountType ? { preferredAccountType } : {}),
         }),
       }),
       20000,
@@ -1752,7 +1705,6 @@ function LoginPageInner() {
       setEmailConfirmationRequired(needsConfirmation);
       clearStoredBrowserSupabaseSessionTokens();
       if (needsConfirmation) {
-        setAuthView("signin");
         setPendingSignupVerificationEmail(account.trim().toLowerCase());
         setPendingSignupVerificationMaskedEmail(
           typeof payload?.maskedEmail === "string" ? payload.maskedEmail : account.trim().toLowerCase(),
@@ -1789,6 +1741,7 @@ function LoginPageInner() {
 
   function selectSignupView(accountType: PlatformAccountType) {
     if (pendingAction) return;
+    setEntryAccountType(accountType);
     setAuthView(accountType === "personal" ? "signup_personal" : "signup_merchant");
     setMsg("");
     setNeedConfirmEmail(false);
@@ -1839,7 +1792,7 @@ function LoginPageInner() {
     if (pendingAction && !options?.retryExpiredState) return;
     const accountType = options?.accountType ?? activeEntryAccountType;
     if (!accountType) {
-      setMsg("请先选择个人入口或商户入口。");
+      setMsg("请先选择用户登录入口。");
       return;
     }
     if (isWeChatBrowser) {
@@ -1912,12 +1865,13 @@ function LoginPageInner() {
   signInWithGoogleRef.current = signInWithGoogle;
 
   function submitPrimaryAuthAction() {
+    if (pendingSignupVerificationEmail) return;
     if (activeSignupAccountType) {
       void signUp(activeSignupAccountType);
       return;
     }
     if (!entryAccountType) {
-      setMsg("请先选择个人入口或商户入口。");
+      setMsg("请先选择用户登录入口。");
       return;
     }
     void signIn();
@@ -1930,7 +1884,7 @@ function LoginPageInner() {
     setNeedConfirmEmail(false);
 
     if (!entryAccountType) {
-      return setMsg("请先选择个人入口或商户入口。");
+      return setMsg("请先选择用户登录入口。");
     }
     writeStoredLoginEntryAccountType(entryAccountType);
 
@@ -1945,16 +1899,11 @@ function LoginPageInner() {
 
     setPendingAction("signin");
     try {
-      const result = await signInViaServer(account, password, entryAccountType);
+      // Legacy links can retain their lookup hint; the unified entry sends no
+      // type preference. The authenticated server result always chooses home.
+      const result = await signInViaServer(account, password, requestedEntryAccountType);
       clearStoredBrowserSupabaseSessionTokens();
       void readMerchantSessionPayload(4200, { includeClientTokens: true }).catch(() => null);
-      if (result.entrySwitched) {
-        await showAutoSwitchedEntryNotice(
-          result.accountType,
-          result.requestedAccountType ?? entryAccountType,
-          result.message,
-        );
-      }
       await redirectToAccountHome(result.user, {
         accountType: result.accountType,
         accountId: result.accountId,
@@ -2088,13 +2037,6 @@ function LoginPageInner() {
       if (signedInResult) {
         clearStoredBrowserSupabaseSessionTokens();
         void readMerchantSessionPayload(4200, { includeClientTokens: true }).catch(() => null);
-        if (signedInResult.entrySwitched) {
-          await showAutoSwitchedEntryNotice(
-            signedInResult.accountType,
-            signedInResult.requestedAccountType ?? verificationAccountType,
-            signedInResult.message,
-          );
-        }
         await redirectToAccountHome(signedInResult.user, {
           accountType: signedInResult.accountType,
           accountId: signedInResult.accountId,
@@ -2216,10 +2158,6 @@ function LoginPageInner() {
     "w-full rounded-[20px] border border-slate-200 bg-white px-4 py-3.5 text-[16px] text-slate-900 shadow-[0_10px_28px_rgba(15,23,42,0.06)] outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:ring-4 focus:ring-slate-900/8 md:rounded-[22px] md:py-4";
   const secondaryButtonClassName =
     "rounded-[18px] border border-slate-200 bg-white/88 px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_8px_24px_rgba(15,23,42,0.06)] transition hover:border-slate-300 hover:bg-white disabled:opacity-50 md:rounded-[20px]";
-  const signupSwitchButtonClassName = (active: boolean) =>
-    active
-      ? "rounded-[18px] border border-slate-950 bg-slate-950 px-4 py-3 text-sm font-medium text-white shadow-[0_8px_24px_rgba(15,23,42,0.14)] transition hover:bg-slate-900 disabled:opacity-50 md:rounded-[20px]"
-      : secondaryButtonClassName;
   const androidKeyboardOpen = isAndroid && androidKeyboardInset >= 100;
   const mobileFormSectionStyle =
     androidKeyboardInset > 0
@@ -2232,8 +2170,8 @@ function LoginPageInner() {
         androidKeyboardOpen ? "justify-start pt-2" : "justify-start pt-8 sm:pt-10 md:justify-center md:pt-0"
       }`
     : `mx-auto flex h-full min-h-0 w-full max-w-md flex-col overflow-y-auto overscroll-contain ${
-        androidKeyboardOpen ? "justify-start pt-2" : "justify-center"
-      } md:overflow-visible`;
+        androidKeyboardOpen ? "pt-2" : ""
+      }`;
 
   if (embeddedShellLogin) {
     return <main className="faolla-login-shell min-h-screen bg-[#081121]" aria-hidden="true" />;
@@ -2315,7 +2253,7 @@ function LoginPageInner() {
               className={formViewportClassName}
             >
               {shouldShowEntrySelection ? (
-                <div className="space-y-5 md:space-y-6">
+                <div data-login-entry-selection className="flex min-h-full flex-1 flex-col gap-5 md:gap-6">
                   <div className="space-y-2">
                     <div className="text-2xl font-semibold tracking-tight text-slate-950">{entryTitle}</div>
                   </div>
@@ -2329,22 +2267,8 @@ function LoginPageInner() {
                     >
                       <div className="flex items-center gap-4">
                         <div>
-                          <div className="text-xl font-semibold text-slate-950">个人入口</div>
-                          <div className="mt-2 text-sm leading-6 text-slate-500">{personalEntryDescription}</div>
-                        </div>
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      className="group rounded-[26px] border border-sky-200 bg-sky-50/85 px-5 py-5 text-left shadow-[0_18px_48px_rgba(15,23,42,0.08)] transition hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-50 hover:shadow-[0_22px_54px_rgba(15,23,42,0.12)] disabled:opacity-50"
-                      onClick={() => selectLoginEntry("merchant")}
-                      disabled={pendingAction !== null}
-                    >
-                      <div className="flex items-center gap-4">
-                        <div>
-                          <div className="text-xl font-semibold text-slate-950">商户入口</div>
-                          <div className="mt-2 text-sm leading-6 text-slate-500">{merchantEntryDescription}</div>
+                          <div className="text-xl font-semibold text-slate-950">{userEntryLabel}</div>
+                          <div className="mt-2 text-sm leading-6 text-slate-500">{userEntryDescription}</div>
                         </div>
                       </div>
                     </button>
@@ -2369,9 +2293,15 @@ function LoginPageInner() {
                       {msg}
                     </div>
                   ) : null}
+                  <footer data-login-entry-footer className="mt-auto border-t border-slate-200 pt-6 text-center">
+                    <button type="button" className="w-full rounded-[20px] border border-slate-200 bg-white px-5 py-3.5 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+                      onClick={() => selectSignupView("personal")} disabled={pendingAction !== null}>
+                      {registrationEntryLabel}
+                    </button>
+                  </footer>
                 </div>
               ) : (
-                <div className="space-y-4 md:space-y-6">
+                <div className={`${androidKeyboardOpen ? "" : "my-auto"} shrink-0 space-y-4 py-2 md:space-y-6`}>
                   <div className="flex items-center justify-between gap-3">
                     <button
                       type="button"
@@ -2382,15 +2312,11 @@ function LoginPageInner() {
                       <span aria-hidden="true">←</span>
                       {backToEntryLabel}
                     </button>
-                    {activeSignupAccountType ? (
+                    {isRegistrationFlow ? (
                       <button
                         type="button"
                         className="rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition hover:bg-slate-50 disabled:opacity-50"
-                        onClick={() => {
-                          setAuthView("signin");
-                          setMsg("");
-                          setNeedConfirmEmail(false);
-                        }}
+                        onClick={() => selectLoginEntry(entryAccountType ?? "personal")}
                         disabled={pendingAction !== null}
                       >
                         {switchToSignInLabel}
@@ -2407,19 +2333,34 @@ function LoginPageInner() {
                   <div className="text-sm leading-5 text-slate-500 md:hidden">{loggedOut ? t("login.signIn") : authDescription}</div>
                 </div>
 
+                {activeSignupAccountType && !pendingSignupVerificationEmail ? (
+                  <fieldset disabled={pendingAction !== null} className="space-y-2">
+                    <legend className="px-1 text-xs font-semibold text-slate-500">{normalizedLocale.startsWith("zh") ? "注册身份" : "Account Type"}</legend>
+                    <div className="grid grid-cols-2 gap-3">
+                      {(["personal", "merchant"] as const).map(type => (
+                        <label key={type} className={`flex cursor-pointer items-center gap-2 rounded-2xl border px-4 py-3 text-sm ${activeSignupAccountType === type ? "border-sky-300 bg-sky-50 text-sky-900" : "border-slate-200 bg-white text-slate-600"}`}>
+                          <input type="radio" name="registration-account-type" value={type} checked={activeSignupAccountType === type} onChange={() => selectSignupView(type)}/>
+                          {normalizedLocale.startsWith("zh") ? type === "personal" ? "个人用户" : "商户" : type === "personal" ? "Personal" : "Merchant"}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                ) : null}
+
                 <div className="space-y-3 md:space-y-4">
                   <div className="space-y-2">
                     <div className="px-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{accountFieldLabel}</div>
                     <input
                       ref={accountInputRef}
                       className={fieldClassName}
-                      type={authView === "signin" ? "text" : "email"}
-                      name={authView === "signin" ? "merchant-login-account" : "merchant-signup-email"}
-                      autoComplete={authView === "signin" ? "username" : "email"}
+                      type={isRegistrationFlow ? "email" : "text"}
+                      name={isRegistrationFlow ? "merchant-signup-email" : "merchant-login-account"}
+                      autoComplete={isRegistrationFlow ? "email" : "username"}
                       autoCapitalize="none"
                       autoCorrect="off"
                       spellCheck={false}
-                      maxLength={authView === "signin" ? AUTH_ACCOUNT_MAX_LENGTH : AUTH_EMAIL_MAX_LENGTH}
+                      maxLength={isRegistrationFlow ? AUTH_EMAIL_MAX_LENGTH : AUTH_ACCOUNT_MAX_LENGTH}
+                      disabled={pendingAction !== null || Boolean(pendingSignupVerificationEmail)}
                       value={account}
                       onChange={(e) => setAccount(e.target.value)}
                       placeholder={accountFieldPlaceholder}
@@ -2431,8 +2372,9 @@ function LoginPageInner() {
                     <PasswordField
                       ref={passwordInputRef}
                       className={fieldClassName}
-                      name={authView === "signin" ? "merchant-login-password" : "merchant-signup-password"}
-                      autoComplete={authView === "signin" ? "current-password" : "new-password"}
+                      name={isRegistrationFlow ? "merchant-signup-password" : "merchant-login-password"}
+                      autoComplete={isRegistrationFlow ? "new-password" : "current-password"}
+                      disabled={pendingAction !== null || Boolean(pendingSignupVerificationEmail)}
                       maxLength={AUTH_PASSWORD_MAX_LENGTH}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -2457,6 +2399,7 @@ function LoginPageInner() {
                         className={fieldClassName}
                         name="merchant-signup-password-confirmation"
                         autoComplete="new-password"
+                        disabled={pendingAction !== null || Boolean(pendingSignupVerificationEmail)}
                         maxLength={AUTH_PASSWORD_MAX_LENGTH}
                         value={confirmPassword}
                         onChange={(event) => setConfirmPassword(event.target.value)}
@@ -2490,7 +2433,9 @@ function LoginPageInner() {
                 ) : null}
 
                 <div className="space-y-3">
+                  {!pendingSignupVerificationEmail ? (
                   <button
+                    data-auth-primary-action={activeSignupAccountType ? "signup" : "signin"}
                     className="w-full rounded-[20px] bg-slate-950 px-4 py-3.5 text-[15px] font-semibold text-white shadow-[0_18px_40px_rgba(15,23,42,0.24)] transition hover:bg-slate-800 disabled:opacity-50 md:rounded-[22px] md:py-4"
                     onClick={submitPrimaryAuthAction}
                     disabled={pendingAction !== null}
@@ -2503,7 +2448,9 @@ function LoginPageInner() {
                           ? signUpSubmitLabel
                           : t("login.signIn")}
                   </button>
+                  ) : null}
 
+                  {!isRegistrationFlow ? <div data-login-signin-actions className="space-y-3">
                   {isWeChatBrowser ? (
                     <div className="space-y-3 rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900 md:rounded-[22px]">
                       <div className="font-semibold text-amber-950">{googleWeChatNoticeTitle}</div>
@@ -2528,26 +2475,13 @@ function LoginPageInner() {
                         : "使用 Google 登录"}
                   </button>
 
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <button
-                      className={signupSwitchButtonClassName(Boolean(activeSignupAccountType))}
-                      onClick={() => {
-                        if (activeSignupAccountType) {
-                          setAuthView("signin");
-                          setMsg("");
-                          setNeedConfirmEmail(false);
-                          return;
-                        }
-                        selectSignupView(entryAccountType ?? "personal");
-                      }}
-                      disabled={pendingAction !== null}
-                    >
-                      {activeSignupAccountType ? switchToSignInLabel : switchToSignUpLabel}
-                    </button>
-                    <button className={secondaryButtonClassName} onClick={forgotPassword} disabled={pendingAction !== null}>
+                  <p className="px-1 text-xs leading-5 text-slate-400">
+                    {normalizedLocale.startsWith("zh") ? "首次使用 Google 登录默认创建个人账号；商户请先注册。" : "First-time Google sign-in creates a personal account. Merchants should register first."}
+                  </p>
+
+                    <button className={`w-full ${secondaryButtonClassName}`} onClick={forgotPassword} disabled={pendingAction !== null}>
                       {pendingAction === "forgot" ? t("common.sending") : t("login.forgot")}
                     </button>
-                  </div>
 
                   {isDevelopment && gatewayReachable === false ? (
                     <button
@@ -2558,6 +2492,7 @@ function LoginPageInner() {
                       {t("login.offlineDev")}
                     </button>
                   ) : null}
+                  </div> : null}
 
                   {pendingResetEmail && shouldShowResetCodePreferredHint ? (
                     <div className="rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900 md:rounded-[22px]">
@@ -2644,9 +2579,9 @@ function LoginPageInner() {
                     </button>
                   ) : null}
 
-                  <div className="hidden px-1 text-xs leading-6 text-slate-400 md:block">
+                  {isRegistrationFlow ? <div className="hidden px-1 text-xs leading-6 text-slate-400 md:block">
                     {emailConfirmationRequired === false ? t("login.firstRegisterTipAutoConfirm") : t("login.firstRegisterTip")}
-                  </div>
+                  </div> : null}
                 </div>
               </div>
               )}

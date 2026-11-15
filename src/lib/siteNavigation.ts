@@ -25,3 +25,8 @@ export function getSiteNavigationSubItems(props: NavProps): NavSubItem[] {
 export function siteNavigationColor(value: unknown, fallback: string) {
   return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
 }
+
+/** Only an explicit compact preset changes existing header dimensions. */
+export function siteNavigationDensity(value: unknown) {
+  return value === "compact" ? "compact" : undefined;
+}

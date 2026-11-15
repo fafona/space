@@ -66,6 +66,8 @@ async function mount(browser,width,query='',options={}){
  if(options.video){Object.assign(brandFixture[1].props,{galleryMedia:'background-video',galleryVideoUrl:origin+'/synthetic.mp4',galleryVideoMobileUrl:origin+'/synthetic-mobile.mp4',galleryVideoPosition:'50% 55%'});
   brandFixture.push(b('full-video','gallery','video-one',{pagePresentation:'leisure-games-v1',heading:'Synthetic full video',galleryMedia:'video',galleryVideoUrl:origin+'/synthetic.mp4',galleryVideoPosterUrl:image(2),galleryFrameHeight:400,images:[]}));}
  if(options.brand)Object.assign(brandFixture[0].props,{navLayout:'brand-header',navLogoUrl:image(1),navSticky:true,bgColor:'#303136',fontColor:'#ffffff',navCtaPageId:'visit',navSubItems:[{id:'child-home',parentPageId:'home',label:'Explore experiences',pageId:'home'},{id:'child-visit',parentPageId:'home',label:'Book a visit',pageId:'visit'}]});
+ if(options.utility)brandFixture[0].props.navUtilitySpace=true;
+ if(options.compact)brandFixture[0].props.navDensity='compact';
  await page.goto(origin+'/?'+query);await page.evaluate(({fixture,gallery,visit})=>{window.__fixture=fixture;window.__gallery=gallery;window.__visit=visit;},{fixture:options.ordinary?ordinary(brandFixture):brandFixture,gallery,visit:options.ordinary?ordinary(visit):visit});
  const{css,script}=await assets();await page.addStyleTag({content:css});await page.addScriptTag({content:script});
  await page.locator(query.includes('legacy')?'img':options.ordinary?'[data-block-id="intro"]':'[data-leisure-presentation]').waitFor();
@@ -230,6 +232,27 @@ test('hero carousel supports next, previous, pause, focus/hover and reduced moti
  }finally{await browser.close();}
 });
 
+test('compact brand header is about fifteen percent shorter with a larger logo and brand; standard headers stay unchanged',{timeout:90000},async()=>{
+ const browser=await chromium.launch({headless:true});
+ const dimensions=page=>page.locator('[data-site-navigation]').evaluate(nav=>({height:nav.getBoundingClientRect().height,logo:nav.querySelector('.faolla-site-logo').getBoundingClientRect().width,font:parseFloat(getComputedStyle(nav.querySelector('.faolla-site-brand')).fontSize)}));
+ try{for(const width of [1440,1024,900,390,320]){
+  const standard=await mount(browser,width,'',{brand:true,utility:true});let before;
+  try{before=await dimensions(standard.page);assert.equal(before.height,width>900?158:138);assert.equal(await standard.page.locator('[data-site-navigation]').getAttribute('data-density'),null);}finally{await standard.close();}
+  const compact=await mount(browser,width,'',{brand:true,utility:true,compact:true});try{
+   const nav=compact.page.locator('[data-site-navigation]'),after=await dimensions(compact.page);
+   assert.ok(after.height/before.height>.83&&after.height/before.height<.87,JSON.stringify({width,before,after}));
+   assert.ok(after.logo>=before.logo*1.2);assert.ok(after.font>before.font);
+   assert.equal(await compact.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+   if(width<=900)await nav.locator('.faolla-site-menu-toggle').click();
+   await nav.getByRole('button',{name:'Open submenu: Home',exact:true}).click();await nav.getByRole('button',{name:'Explore experiences',exact:true}).waitFor();
+   await nav.getByRole('button',{name:'Explore experiences',exact:true}).press('Escape');
+   await compact.page.evaluate(()=>scrollTo(0,600));assert.ok(Math.abs((await compact.page.locator('[data-leisure-role="header"]').boundingBox()).y)<2);
+   if(width<=900)assert.equal(await nav.locator('nav').isVisible(),true,'closing only the submenu keeps the mobile menu open');
+   await nav.getByRole('button',{name:'Visit',exact:true}).click();await compact.page.getByText('Synthetic booking',{exact:true}).waitFor();
+  }finally{await compact.close();}
+ }}finally{await browser.close();}
+});
+
 test('opt-in brand navigation: sticky desktop, real submenus, keyboard/outside close, responsive mobile and native settings',{timeout:90000},async()=>{
  const browser=await chromium.launch({headless:true});
  try{
@@ -261,6 +284,9 @@ test('opt-in brand navigation: sticky desktop, real submenus, keyboard/outside c
   const embedded=await mount(browser,1440,'editor=1&narrow=1',{brand:true});try{
    await embedded.page.locator('[data-leisure-role="header"] [data-block-visual-boundary]').click({position:{x:4,y:4}});
    const settings=embedded.page.locator('[data-site-navigation-settings]');await settings.waitFor();
+   const density=settings.getByLabel('紧凑品牌页眉（高度约减少 15%，放大 Logo 和品牌名）',{exact:true});await density.check();
+   await embedded.page.waitForFunction(()=>window.__blocks[0].props.navDensity==='compact'&&document.querySelector('[data-site-navigation]')?.dataset.density==='compact');
+   await density.uncheck();await embedded.page.waitForFunction(()=>window.__blocks[0].props.navDensity==='standard'&&!document.querySelector('[data-site-navigation]')?.dataset.density);
    const nav=embedded.page.locator('[data-site-navigation]');await nav.getByRole('button',{name:'Open navigation',exact:true}).click();
    assert.equal(await nav.getByRole('button',{name:'Visit',exact:true}).isVisible(),true);
    assert.equal(await settings.getByLabel('页面滚动时吸顶').isChecked(),true);

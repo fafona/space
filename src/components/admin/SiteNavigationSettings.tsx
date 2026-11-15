@@ -46,6 +46,7 @@ export default function SiteNavigationSettings({ value, onChange, upload, onAler
         <label className="flex items-center gap-2"><input type="checkbox" checked={value.navSticky === true} onChange={event => onChange({ navSticky: event.target.checked })} />页面滚动时吸顶</label>
         <label className="flex items-center gap-2"><input type="checkbox" checked={value.navUtilitySpace === true} onChange={event => onChange({ navUtilitySpace: event.target.checked })} />为服务中心／语言按钮预留顶部空间</label>
       </div>
+      <label className="flex items-center gap-2"><input type="checkbox" checked={value.navDensity === "compact"} onChange={event => onChange({ navDensity: event.target.checked ? "compact" : "standard" })} />紧凑品牌页眉（高度约减少 15%，放大 Logo 和品牌名）</label>
       <label className="block">Logo 替代文字<input aria-label="Logo 替代文字" className="mt-1 w-full rounded border bg-white p-2" value={value.navLogoAlt ?? ""} onChange={event => onChange({ navLogoAlt: event.target.value })} /></label>
       <div className="flex flex-wrap gap-4">
         {([['bgColor', '导航底色', '#303136'], ['fontColor', '文字颜色', '#ffffff'], ['navAccentColor', '强调／主按钮色', '#f5888e'], ['navPanelColor', '下拉底色', '#303136']] as const).map(([key, label, fallback]) =>
