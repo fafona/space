@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "../components/blocks/leisurePresentation.css";
+@import "../components/blocks/siteNavigation.css";
 
 .faolla-service-sheet { height: min(82dvh, 920px); max-height: 82dvh; padding-bottom: env(safe-area-inset-bottom); }
 .faolla-service-sheet::backdrop { background: rgb(2 6 23 / .32); }

@@ -100,6 +100,10 @@ export function validateWebsiteTemplateDesign(design: WebsiteTemplateDesign) {
                     throw new Error("invalid_template_page_link");
                 if (block.type === "nav" && block.props.navItems?.some(item => !ids.has(item.pageId)))
                     throw new Error("invalid_template_navigation");
+                if (block.type === "nav" && block.props.navLayout === "brand-header" &&
+                    (block.props.navSubItems?.some(item => !ids.has(item.parentPageId) || !ids.has(item.pageId)) ||
+                        (block.props.navCtaPageId && !ids.has(block.props.navCtaPageId))))
+                    throw new Error("invalid_template_navigation");
             }
         }
         if (bookings > 1)

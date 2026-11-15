@@ -495,9 +495,20 @@ export type PollProps = BackgroundEditableProps & TypographyEditableProps & Poll
   pollRoundHistory?: PollRoundSnapshot[];
   pollRoundDeleted?: boolean;
 };
-type NavProps = BackgroundEditableProps &
+export type NavSubItem = { id: string; parentPageId: string; label: string; pageId: string };
+
+export type NavProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading?: string;
+    navLayout?: "classic" | "brand-header";
+    navSticky?: boolean;
+    navLogoUrl?: string;
+    navLogoAlt?: string;
+    navAccentColor?: string;
+    navPanelColor?: string;
+    navCtaPageId?: string;
+    navUtilitySpace?: boolean;
+    navSubItems?: NavSubItem[];
     navOrientation?: "horizontal" | "vertical";
     mobileNavDisplayMode?: "inline" | "hidden";
     mobileNavButtonBgColor?: string;
