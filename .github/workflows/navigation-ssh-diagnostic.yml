@@ -37,7 +37,7 @@ jobs:
           for group in 1 2 3 4; do
             (
               for repetition in 1 2 3 4 5 6 7 8; do
-                if ! node --test --test-name-pattern='deploy keeps every config value in an integrity-checked SSH stdin envelope' scripts/deploy-production-contract.test.mjs > "$NAV_DIAG_ROOT/test-$group-$repetition.log" 2>&1; then
+                if ! node --import tsx --test --test-name-pattern='deploy keeps every config value in an integrity-checked SSH stdin envelope' scripts/deploy-production-contract.test.mjs > "$NAV_DIAG_ROOT/test-$group-$repetition.log" 2>&1; then
                   printf '%s\n' "failed-group-$group-repetition-$repetition" > "$NAV_DIAG_ROOT/failure-$group"
                   exit 1
                 fi
@@ -47,6 +47,21 @@ jobs:
           done
           for group in 1 2 3 4; do
             wait "${groups[$group]}" || failed=1
+          done
+          for repetition in 1 2 3 4; do
+            if ! node --input-type=module -e '
+              import {createRequire} from "node:module";
+              import {pathToFileURL} from "node:url";
+              import {discoverLocalTests,createLocalTestBatches,runLocalTests} from "./scripts/run-local-tests.mjs";
+              import {partitionCiTests} from "./scripts/run-ci-tests.mjs";
+              const require=createRequire(import.meta.url);
+              const args=["--import",pathToFileURL(require.resolve("tsx")).href,"--test","--test-concurrency=4"];
+              const batches=createLocalTestBatches(partitionCiTests(discoverLocalTests()).remaining,args,40);
+              const files=batches.find(batch=>batch.includes("scripts/deploy-production-contract.test.mjs"));
+              if(!files||files.length!==40)throw Error("diagnostic_exact_batch_missing");
+              console.log(JSON.stringify({files}));
+              process.exitCode=(await runLocalTests({files})).exitCode;
+            ' > "$NAV_DIAG_ROOT/exact-batch-$repetition.log" 2>&1; then failed=1; fi
           done
           printf 'diagnostic_failure=%s\n' "$failed"
           exit "$failed"
