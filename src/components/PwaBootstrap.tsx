@@ -358,6 +358,10 @@ export default function PwaBootstrap() {
 
     let cancelled = false;
     let updateTimer: number | null = null;
+    // A first installation only claims the already-current document. Reloading
+    // it tears down an open conversation and interrupts taps during startup.
+    // Keep the existing reload for a real update of a controlled document.
+    const controlledAtStartup = Boolean(navigator.serviceWorker.controller);
 
     const warmRecentRoutes = (registration: ServiceWorkerRegistration) => {
       if (typeof window === "undefined" || navigator.onLine === false || !shouldAutoWarmPwaRoutes()) return;
@@ -427,7 +431,7 @@ export default function PwaBootstrap() {
     };
 
     const handleControllerChange = () => {
-      if (reloadTriggeredRef.current) return;
+      if (cancelled || reloadTriggeredRef.current || !controlledAtStartup) return;
       reloadTriggeredRef.current = true;
       window.location.reload();
     };

@@ -5,7 +5,12 @@ import { servicePortalOrigin } from "@/lib/merchantServiceFrame";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/components/I18nProvider";
 
-const ServiceCenter = dynamic(() => import("@/components/service-center/ServiceCenterSheet"), { ssr: false });
+const ServiceCenter = dynamic(() => import("@/components/service-center/ServiceCenterSheet"), {
+  ssr: false,
+  // A cold mobile connection can take time to fetch this optional chunk. Show
+  // feedback immediately without eagerly loading private services or an iframe.
+  loading: () => <div role="status" data-service-loading className="faolla-service-loading rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-lg">正在打开服务…</div>,
+});
 export default function PublicWebsiteActions({ siteId, siteName = "", serviceOrigin = "" }: { siteId: string; siteName?: string; serviceOrigin?: string }) {
   const { locale } = useI18n();
   const contactLabel = locale.startsWith("zh") ? "联系商户" : locale.startsWith("es") ? "Contactar con el comercio" : "Contact merchant";

@@ -9,11 +9,12 @@ import {chromium} from 'playwright';
 import postcss from 'postcss';
 import tailwind from '@tailwindcss/postcss';
 import QRCode from 'qrcode';
+import './pwa-startup-browser-acceptance.mjs';
 
 const merchantOrigin='https://synthetic.faolla.com',portalOrigin='https://launch.faolla.com',siteId='99990001';
 const html='<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div>';
 const fixtures={
- 'next/dynamic':`import React from 'react';export default function dynamic(load,options={}){return function Deferred(props){const[C,setC]=React.useState(null);React.useEffect(()=>{let active=true;load().then(m=>{if(active)setC(()=>m.default||m)});return()=>{active=false}},[]);return C?React.createElement(C,props):options.loading?React.createElement(options.loading):null}}`,
+ 'next/dynamic':`import React from 'react';export default function dynamic(load,options={}){return function Deferred(props){const[C,setC]=React.useState(null);React.useEffect(()=>{let active=true;const timer=setTimeout(()=>load().then(m=>{if(active)setC(()=>m.default||m)}),window.__dynamicDelayMs||0);return()=>{active=false;clearTimeout(timer)}},[]);return C?React.createElement(C,props):options.loading?React.createElement(options.loading):null}}`,
  'next/link':`import React from'react';export default function Link({prefetch,...props}){return <a {...props}/>}`,
  'next/navigation':`export const usePathname=()=>location.pathname;export const useSearchParams=()=>new URLSearchParams(location.search);export const useParams=()=>({});`,
  '@/lib/supabase':`export const isSupabaseEnabled=false;export const supabase=null;export const getResolvedSupabaseUrl=()=>'';export const resolvedSupabaseAnonKey='';export const legacySupabaseAuthStorageKey='synthetic-legacy-key';export const resolvedSupabaseAuthStorageKey='synthetic-auth-key';`,
@@ -39,7 +40,7 @@ const utilityCss=(await postcss([tailwind()]).process('@import "tailwindcss" sou
 const surfaceCss=(await readFile('src/app/globals.css','utf8')).split(':root {')[0].replace(/^@import[^\n]+/gm,'');
 const css=utilityCss+'\n'+surfaceCss+'\nbody{margin:0}';
 const profile={nickname:'Synthetic visitor',name:'Synthetic visitor',email:'visitor@example.invalid',phone:'000',birthday:'01-01',birthdayMonthDayOnly:true};
-async function setup(browser,width,{logged=true,seedGuest=false,height=900,cameraDenied=false,realDirectory=false}={}){
+async function setup(browser,width,{logged=true,seedGuest=false,height=900,cameraDenied=false,realDirectory=false,dynamicDelayMs=0}={}){
  const context=await browser.newContext({viewport:{width,height},isMobile:width<768,hasTouch:width<768,serviceWorkers:'block'});
  if(logged)await context.addCookies([{name:'__Host-faolla-merchant-auth-v2',value:'synthetic-cookie',url:portalOrigin,secure:true,httpOnly:true,sameSite:'Lax'}]);
  await context.addInitScript(value=>{window.__seedGuest=value.seedGuest;window.__realDirectory=value.realDirectory;window.__messages=[];window.addEventListener('message',event=>{if(event.data?.type==='faolla:merchant-service')window.__messages.push(event.data);});},{seedGuest,realDirectory});
@@ -49,6 +50,7 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900,camer
  const membership=()=>({id:'synthetic-member',siteId,siteName:'Synthetic venue',memberNo:'99990001000001',qrValue:'SYNTHETIC-QR',status:state.member==='left'?'left':'active',joinedAt:'2026-11-01',leftAt:state.member==='left'?'2026-11-13':null});
  const identity=()=>({ok:true,authenticated:state.logged,accountId:state.logged?'50010105':'',profile:state.profile,memberships:state.member==='none'?[]:[membership()],favoriteSites:state.favorite?[favorite()]:[]});
  const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',e=>state.errors.push(e.message));
+ await context.addInitScript(delay=>{window.__dynamicDelayMs=delay;},dynamicDelayMs);
  await context.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url());state.requests.push({url:request.url(),method:request.method(),origin:request.headers().origin||'',cookie:request.headers().cookie||''});
   if(url.hostname==='translate.googleapis.com'){
@@ -379,6 +381,21 @@ test('file-picker cancellation is not a request to dismiss the service dialog',{
    await f.page.keyboard.press('Escape');await f.page.waitForFunction(()=>!document.querySelector('dialog').open);
   }finally{await f.close();}
  }}}finally{await browser.close();}
+});
+
+test('cold mobile chat gives immediate feedback, opens once and preserves the conversation on repeated taps',{timeout:60000},async()=>{
+ const browser=await chromium.launch({headless:true});const f=await setup(browser,390,{logged:false,dynamicDelayMs:900});try{
+  await f.open();await f.page.waitForResponse(r=>r.url().includes('/api/merchant-service/status'));
+  assert.equal(await f.page.locator('[data-service-loading]').count(),0);
+  await f.page.locator('[data-public-chat-launcher]').tap();await f.page.locator('[data-service-loading]').waitFor({timeout:600});
+  await f.page.locator('[data-public-chat-launcher]').tap();
+  await f.page.getByRole('dialog').waitFor();await f.page.getByLabel('输入消息').fill('Synthetic unsent mobile message');
+  assert.equal(await f.page.locator('dialog[open]').count(),1);assert.equal(await f.page.locator('[data-service-loading]').count(),0);
+  await f.page.getByRole('button',{name:'关闭会话',exact:true}).tap();
+  await f.page.locator('[data-public-chat-launcher]').tap();
+  assert.equal(await f.page.getByLabel('输入消息').inputValue(),'Synthetic unsent mobile message');
+  assert.deepEqual(f.state.writes,[]);
+ }finally{await f.close();await browser.close();}
 });
 
 test('contact launcher is icon-only, keeps a named accessible target and opens the original conversation',{timeout:60000},async()=>{

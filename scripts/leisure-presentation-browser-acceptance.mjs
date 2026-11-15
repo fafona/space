@@ -83,6 +83,9 @@ test('native hero video is silent, looped, responsive and free of carousel contr
    assert.equal(await video.getAttribute('src'),origin+(width<768?'/synthetic-mobile.mp4':'/synthetic.mp4'));
    assert.equal(await hero.locator('button,.leisure-carousel-controls').count(),0);
    assert.equal(await video.evaluate(v=>getComputedStyle(v).objectFit),'cover');
+   const overlay=await hero.locator('h2').evaluate(h=>{const text=h.getBoundingClientRect(),v=h.parentElement.querySelector('video').getBoundingClientRect(),layer=h.parentElement.querySelector('[data-gallery-media] .relative');return{title:h.innerText,color:getComputedStyle(h).color,z:Number(getComputedStyle(h).zIndex),inside:text.left>=v.left&&text.right<=v.right+1&&text.top>=v.top&&text.bottom<=v.bottom,pointerEvents:getComputedStyle(layer,'::after').pointerEvents,gradient:getComputedStyle(layer,'::after').backgroundImage};});
+   assert.match(overlay.title,/Synthetic/);assert.equal(overlay.color,'rgb(255, 255, 255)');assert(overlay.z>0);assert.equal(overlay.inside,true,'mobile and desktop headline must stay over the footage');
+   if(width<900){assert.equal(overlay.pointerEvents,'none');assert.match(overlay.gradient,/linear-gradient/);}else assert.equal(overlay.gradient,'none','desktop presentation stays unchanged');
    assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    await f.page.evaluate(()=>scrollTo(0,1500));await f.page.waitForFunction(()=>document.querySelector('[data-gallery-video="background"]').paused);
    const player=f.page.locator('[data-block-id="full-video"] video');await player.scrollIntoViewIfNeeded();
