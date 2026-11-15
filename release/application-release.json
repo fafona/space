@@ -2,13 +2,25 @@
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "3bbbe054fab2e6a1634599a90d4fbaa94edec946",
-  "purpose": "Fix only opt-in public brand navigation sticky overflow on desktop and mobile; preserve modal locking, classic pages, business behavior, data and certified worker; mail stays off.",
+  "purpose": "Fix opted-in public navigation sticky ancestors on desktop and mobile; align isolated browser CI heap with existing bounded build budget",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
   "mail": "unchanged-off",
   "backgroundTasks": "retain-certified-worker",
   "changes": [
+    {
+      "file": ".github/workflows/ci.yml",
+      "role": "verification",
+      "before": [
+        "100644",
+        "99595ac9b5bf9c85b038be8429dc36b63852c6f6"
+      ],
+      "after": [
+        "100644",
+        "7f99e85c920d7e95ad1f05f99cdad6d291856c8b"
+      ]
+    },
     {
       "file": "docs/ordinary-application-release.md",
       "role": "verification",
@@ -154,6 +166,18 @@
       "after": [
         "100644",
         "c936858fd7c59bce38f8ecc304a9eebcd5d9b4b4"
+      ]
+    },
+    {
+      "file": "scripts/ci-workflow-contract.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "6bd323757553f5547869afebaa97b4d121e67d40"
+      ],
+      "after": [
+        "100644",
+        "5d0c16525d5c35b4311b4de4d0fdcf4be70b4ffe"
       ]
     },
     {
