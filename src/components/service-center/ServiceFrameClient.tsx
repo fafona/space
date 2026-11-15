@@ -61,10 +61,18 @@ export default function ServiceFrameClient({ siteId, siteName, parentOrigin, non
     return () => { clearTimeout(firstRead); clearInterval(timer); };
   }, [active, refreshIdentity]);
   const props = { siteId, siteName, identity, refreshIdentity };
+  useEffect(() => {
+    // Unknown identity must be verified in this isolated origin first. Once it
+    // is definitively a guest, use the merchant-host visitor channel, just like
+    // a successful anonymous status read. Never create a second visitor identity
+    // in this frame merely because the initial status read was delayed.
+    if (identity?.authenticated === false && section === "conversations") notify("signed-out");
+  }, [identity?.authenticated, section, notify]);
   return <main data-service-frame-content data-service-active={active ? "true" : "false"} className={`bg-slate-50 p-3 text-slate-900 sm:p-5 ${section === "conversations" ? "flex h-dvh min-h-0 flex-col overflow-hidden" : "min-h-screen"}`}>
     {error ? <div role="alert" className="mb-4 rounded-xl bg-rose-50 p-4 text-sm"><p>{error}</p><button type="button" className={serviceButton + " mt-3"} onClick={() => void refreshIdentity()}>重新读取账号</button></div> : null}
     {!identity && !error ? <p role="status">正在读取账号…</p> : null}
-    {identity && visited.has("conversations") ? <div className="min-h-0 flex-1" key={identity.accountId + ":conversations"} hidden={section !== "conversations"}><Conversations {...props} compact active={active && section === "conversations"} /></div> : null}
+    {identity?.authenticated && visited.has("conversations") ? <div className="min-h-0 flex-1" key={identity.accountId + ":conversations"} hidden={section !== "conversations"}><Conversations {...props} compact active={active && section === "conversations"} /></div> : null}
+    {identity?.authenticated === false && section === "conversations" ? <p role="status">正在打开本店游客会话…</p> : null}
     {identity && visited.has("orders") ? <div key={identity.accountId + ":orders"} hidden={section !== "orders"}><Orders {...props} active={active && section === "orders"} /></div> : null}
     {identity && visited.has("account") ? <div key={identity.accountId + ":account"} hidden={section !== "account"}><Account {...props} active={active && section === "account"} onLocaleChange={locale => notify("locale", undefined, locale)} onSignedOut={() => {
       ++version.current; setIdentity({ authenticated: false, accountId: "", profile: {} as ServiceIdentity["profile"], favoriteSites: [], memberships: [] }); notify("signed-out");

@@ -10,6 +10,7 @@ import postcss from 'postcss';
 import tailwind from '@tailwindcss/postcss';
 import QRCode from 'qrcode';
 import './pwa-startup-browser-acceptance.mjs';
+import './guest-chat-browser-acceptance.mjs';
 
 const merchantOrigin='https://synthetic.faolla.com',portalOrigin='https://launch.faolla.com',siteId='99990001';
 const html='<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div>';
@@ -69,8 +70,10 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900,camer
   }
   if(url.pathname==='/api/merchant-service/status'){
    assert.equal(url.origin,portalOrigin);assert.equal(request.headers().origin,merchantOrigin);
+   if(state.statusUnavailable)return route.fulfill({status:503,headers:{'access-control-allow-origin':merchantOrigin,'access-control-allow-credentials':'true','cache-control':'no-store'},json:{ok:false}});
    return route.fulfill({headers:{'access-control-allow-origin':merchantOrigin,'access-control-allow-credentials':'true','cache-control':'no-store'},json:{ok:true,authenticated:state.logged,favorited:state.favorite}});
   }
+  if(url.origin===merchantOrigin&&url.pathname==='/api/guest-chat'&&request.method()==='GET')return route.fulfill({json:{ok:true,guest:null,thread:null,messages:[],before:null}});
   if(url.pathname.startsWith('/api/')&&url.pathname!=='/api/platform-published'){
    assert.equal(url.origin,portalOrigin,'all personal IO must stay inside the login origin');
    if(logged)assert.match(request.headers().cookie||'',/__Host-faolla-merchant-auth-v2=synthetic-cookie/);
@@ -371,16 +374,25 @@ test('file-picker cancellation is not a request to dismiss the service dialog',{
    assert.equal(await surface.locator(`[data-conversation-id="${siteId}"]`).getAttribute('aria-pressed'),'true');
    assert.equal(new URL(f.page.url()).origin,merchantOrigin);
    assert.deepEqual(f.state.writes,[]);
-   // Choosing an image still follows the existing local-draft/upload path;
-   // cancel must not make the next attachment control unusable.
+   // Registered uploads remain unchanged. Visitors must not receive a false
+   // "sent" result for an image which used to exist only in the local draft.
    await input.setInputFiles({name:'synthetic.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64')});
-   await surface.locator('textarea').filter({visible:true}).evaluate(element=>new Promise((resolve,reject)=>{const deadline=Date.now()+5000;const timer=setInterval(()=>{if(element.value.includes('图片：')){clearInterval(timer);resolve(true)}else if(Date.now()>deadline){clearInterval(timer);reject(new Error('attachment draft was not updated'))}},10)}));
-   assert.match(await surface.getByLabel('输入消息').inputValue(),/^Keep this unsent draft\n图片：/);
+   if(logged){await surface.locator('textarea').filter({visible:true}).evaluate(element=>new Promise((resolve,reject)=>{const deadline=Date.now()+5000;const timer=setInterval(()=>{if(element.value.includes('图片：')){clearInterval(timer);resolve(true)}else if(Date.now()>deadline){clearInterval(timer);reject(new Error('attachment draft was not updated'))}},10)}));assert.match(await surface.getByLabel('输入消息').inputValue(),/^Keep this unsent draft\n图片：/);}
+   else {await surface.getByRole('alert').filter({hasText:'游客会话目前支持文字；发送图片或文件请先登录。'}).waitFor();assert.equal(await surface.getByLabel('输入消息').inputValue(),'Keep this unsent draft');}
    assert.deepEqual(f.state.writes.map(write=>write.path),logged?['/api/assets/upload']:[]);
    await f.page.getByRole('button',{name:'关闭会话',exact:true}).focus();
    await f.page.keyboard.press('Escape');await f.page.waitForFunction(()=>!document.querySelector('dialog').open);
   }finally{await f.close();}
  }}}finally{await browser.close();}
+});
+
+test('an unavailable initial status verifies identity but never creates a second guest chat inside the canonical frame',{timeout:60000},async()=>{
+ const browser=await chromium.launch({headless:true});const f=await setup(browser,390,{logged:false});try{
+  f.state.statusUnavailable=true;await f.open();await f.page.locator('[data-public-chat-launcher]').click();await f.page.getByLabel('输入消息').waitFor();
+  assert.equal(f.state.requests.some(r=>r.url.startsWith(merchantOrigin+'/api/guest-chat')),true);
+  assert.equal(f.state.requests.some(r=>r.url.startsWith(portalOrigin+'/api/guest-chat')),false);
+  assert.deepEqual(f.state.writes,[]);
+ }finally{await f.close();await browser.close();}
 });
 
 test('cold mobile chat gives immediate feedback, opens once and preserves the conversation on repeated taps',{timeout:60000},async()=>{

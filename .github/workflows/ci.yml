@@ -12,20 +12,22 @@ jobs:
     name: Quality
     # Preserve the existing required check. Neither a skipped nor cancelled
     # partition can become a green aggregate through dependency skipping.
-    needs: [quality-core, maintenance-contracts]
+    needs: [quality-core, maintenance-contracts, guest-chat-database]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Require Both Quality Partitions
+      - name: Require All Quality Partitions
         shell: bash
         env:
           CORE_RESULT: ${{ needs['quality-core'].result }}
           MAINTENANCE_RESULT: ${{ needs['maintenance-contracts'].result }}
+          GUEST_CHAT_RESULT: ${{ needs['guest-chat-database'].result }}
         run: |
           set -euo pipefail
           test "$CORE_RESULT" = success
           test "$MAINTENANCE_RESULT" = success
+          test "$GUEST_CHAT_RESULT" = success
 
   maintenance-contracts:
     name: Isolated Maintenance Contract Tests
@@ -205,6 +207,40 @@ jobs:
 
       - name: Unified User Login Browser Journeys
         run: node --test --test-concurrency=1 scripts/unified-user-login-browser-acceptance.mjs scripts/public-utility-controls-browser-acceptance.mjs
+
+  guest-chat-database:
+    name: Guest Chat PostgreSQL Acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: faolla_guest_chat_test
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d faolla_guest_chat_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      FAOLLA_GUEST_CHAT_DISPOSABLE_DB: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Check PostgreSQL client
+        run: psql --version
+      - name: Run guest chat isolated database acceptance
+        run: node scripts/guest-chat-db-acceptance.mjs
 
   qr-database:
     name: QR Atomic PostgreSQL Acceptance

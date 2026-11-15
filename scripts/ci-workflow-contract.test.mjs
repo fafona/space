@@ -42,17 +42,31 @@ function stepBlock(job, name) {
 test("Quality preserves its required name and rejects every non-success partition result", () => {
   const quality = jobBlock("quality");
   assert.match(quality, /name: Quality\n/);
-  assert.match(quality, /needs: \[quality-core, maintenance-contracts\]/);
+  assert.match(quality, /needs: \[quality-core, maintenance-contracts, guest-chat-database\]/);
   assert.match(quality, /if: \$\{\{ always\(\) \}\}/);
   assert.match(quality, /timeout-minutes: 3\n/);
   assert.match(quality, /shell: bash\n/);
   assert.match(quality, /CORE_RESULT: \$\{\{ needs\['quality-core'\]\.result \}\}/);
   assert.match(quality, /MAINTENANCE_RESULT: \$\{\{ needs\['maintenance-contracts'\]\.result \}\}/);
+  assert.match(quality, /GUEST_CHAT_RESULT: \$\{\{ needs\['guest-chat-database'\]\.result \}\}/);
   assert.equal((quality.match(/- name:/g) || []).length, 1);
   assert.doesNotMatch(quality, /continue-on-error|uses:|secrets\.|checkout|download-artifact|\|\|\s*true/);
   const script = quality.split("        run: |\n")[1]?.trimEnd().split("\n")
     .map((line) => line.replace(/^          /, "")).join("\n");
-  assert.equal(script, 'set -euo pipefail\ntest "$CORE_RESULT" = success\ntest "$MAINTENANCE_RESULT" = success');
+  assert.equal(script, 'set -euo pipefail\ntest "$CORE_RESULT" = success\ntest "$MAINTENANCE_RESULT" = success\ntest "$GUEST_CHAT_RESULT" = success');
+});
+
+test("guest chat SQL acceptance is a mandatory isolated PostgreSQL job and refuses accidental local execution", () => {
+  const job=jobBlock("guest-chat-database");
+  assert.match(job,/image: postgres:15/);assert.match(job,/POSTGRES_DB: faolla_guest_chat_test/);
+  assert.match(job,/FAOLLA_GUEST_CHAT_DISPOSABLE_DB: "1"/);
+  assert.match(job,/run: node scripts\/guest-chat-db-acceptance\.mjs/);
+  assert.doesNotMatch(job,/continue-on-error|secrets\.|SUPABASE_SERVICE_ROLE_KEY|\.env\.local/);
+  const result=spawnSync(process.execPath,["scripts/guest-chat-db-acceptance.mjs"],{
+    cwd:fileURLToPath(new URL("..",import.meta.url)),encoding:"utf8",timeout:5000,windowsHide:true,
+    env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,GITHUB_ACTIONS:"false",RUNNER_ENVIRONMENT:"github-hosted",FAOLLA_GUEST_CHAT_DISPOSABLE_DB:"1"},
+  });
+  assert.notEqual(result.status,0);assert.doesNotMatch(result.stdout,/all SQL\/ACL assertions/);
 });
 
 const gateBash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "bash";
@@ -65,6 +79,7 @@ test("actual Quality shell fails on failed, cancelled, skipped, missing or malfo
   for (const core of outcomes) for (const maintenance of outcomes) {
     const result = spawnSync(gateBash, ["--noprofile", "--norc", "-c", script], {
       env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
+        GUEST_CHAT_RESULT: "success",
         ...(core === undefined ? {} : { CORE_RESULT: core }),
         ...(maintenance === undefined ? {} : { MAINTENANCE_RESULT: maintenance }) },
       encoding: "utf8", timeout: 5000, windowsHide: true,
@@ -73,6 +88,17 @@ test("actual Quality shell fails on failed, cancelled, skipped, missing or malfo
     assert.equal(result.signal, null);
     assert.equal(result.status === 0, core === "success" && maintenance === "success",
       JSON.stringify({ core, maintenance, stderr: result.stderr }));
+  }
+  // Preserve the entire original 81-case matrix and additionally prove the new
+  // SQL gate cannot be skipped, cancelled, absent or treated as successful.
+  for (const guest of outcomes) {
+    const result = spawnSync(gateBash, ["--noprofile", "--norc", "-c", script], {
+      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, CORE_RESULT: "success", MAINTENANCE_RESULT: "success",
+        ...(guest === undefined ? {} : { GUEST_CHAT_RESULT: guest }) },
+      encoding: "utf8", timeout: 5000, windowsHide: true,
+    });
+    assert.equal(result.error, undefined); assert.equal(result.signal, null);
+    assert.equal(result.status === 0, guest === "success", JSON.stringify({ guest, stderr: result.stderr }));
   }
 });
 
@@ -142,7 +168,7 @@ test("real PM2 acceptance follows the unchanged serial proofs in an independent 
   assert.match(step, /run:\s*node scripts\/production-maintenance-pm2-acceptance\.mjs/);
   assert.doesNotMatch(step, /continue-on-error|\bif:|secrets\.|PM2_HOME:|SUPABASE_SERVICE_ROLE_KEY|\.env\.local/);
   const jobs = [...workflow.slice(workflow.indexOf("jobs:\n")).matchAll(/^  ([a-z0-9-]+):$/gm)].map((match) => match[1]);
-  assert.deepEqual(jobs, ["quality", "maintenance-contracts", "quality-core", "browser", "qr-database", "transaction-database", "redemption-database",
+  assert.deepEqual(jobs, ["quality", "maintenance-contracts", "quality-core", "browser", "guest-chat-database", "qr-database", "transaction-database", "redemption-database",
     "checkout-database", "pages-acl-database", "recovery-database", "maintenance-ingress", "maintenance-supabase-scheduler"]);
 });
 
@@ -163,7 +189,7 @@ test("moving maintenance to its own runner preserves all four reviewed step bodi
 });
 
 test("independent jobs have no artifact dependency, optional condition or failure suppression", () => {
-  for (const name of ["quality-core", "maintenance-contracts", "browser", "qr-database", "transaction-database",
+  for (const name of ["quality-core", "maintenance-contracts", "browser", "guest-chat-database", "qr-database", "transaction-database",
     "redemption-database", "checkout-database", "pages-acl-database", "recovery-database", "maintenance-ingress",
     "maintenance-supabase-scheduler"]) {
     assert.doesNotMatch(jobBlock(name), /\bneeds:|\bif:|continue-on-error|download-artifact|self-hosted/, name);
