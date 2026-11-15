@@ -50,7 +50,10 @@ test('public login, favorite and service controls match the language flag on des
     const boxes=await page.locator('.faolla-utility-control').evaluateAll(elements=>elements.map(element=>{const r=element.getBoundingClientRect();return {height:r.height,top:r.top,bottom:r.bottom,right:r.right,left:r.left,text:element.textContent?.trim(),visible:getComputedStyle(element).display!=='none'};}));
     assert.equal(boxes.length,authenticated?4:3);
     for(const box of boxes){assert.equal(box.height,24);assert.equal(box.top,width<768?12:20);assert.ok(box.left>=0&&box.right<=width);assert.equal(box.visible,true);}
-    const flag=page.locator('.faolla-mobile-language-button');await flag.click();assert.equal(await flag.getAttribute('aria-expanded'),'true');await page.keyboard.press('Escape');assert.equal(await flag.getAttribute('aria-expanded'),'false');
+    const flag=page.locator('.faolla-mobile-language-button');
+    assert.equal((await flag.locator('..').boundingBox()).height,24,'the pointer-active wrapper must not extend past the visible flag and intercept modal controls');
+    assert.equal(await flag.evaluate(button=>{const r=button.getBoundingClientRect();return button.parentElement.contains(document.elementFromPoint(r.left+r.width/2,r.bottom+1));}),false);
+    await flag.click();assert.equal(await flag.getAttribute('aria-expanded'),'true');await page.keyboard.press('Escape');assert.equal(await flag.getAttribute('aria-expanded'),'false');
    }
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    const contact=page.locator('[data-public-chat-launcher]');assert.equal((await contact.textContent()).trim(),'');assert.equal((await contact.boundingBox()).height,52);
