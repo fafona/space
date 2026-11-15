@@ -461,6 +461,15 @@ test('desktop and mobile keep the merchant document and load one isolated person
    await f.page.getByRole('button',{name:'返回服务中心',exact:true}).click();await choose(f.page,'会话');await openThread(serviceFrame(f.page));await serviceFrame(f.page).getByLabel('输入消息').waitFor();
    await serviceFrame(f.page).getByLabel('输入消息').fill('Synthetic unsent draft');
    assert.equal(await f.page.locator('iframe').getAttribute('src'),src);
+   if(width>=768){
+    await f.page.clock.runFor(250); // Exercise the actual bottom gap after the opening transition settles.
+    const corner=await f.page.getByRole('dialog').boundingBox();
+    assert.ok(corner.y+corner.height<900,'desktop dialog leaves its intended bottom gap');
+    await f.page.mouse.click(corner.x+corner.width/2,(corner.y+corner.height+900)/2);
+    await f.page.waitForFunction(()=>!document.querySelector('dialog').open);
+    await f.page.locator('[data-public-chat-launcher]').click();
+    assert.equal(await serviceFrame(f.page).getByLabel('输入消息').inputValue(),'Synthetic unsent draft','clicking the bottom gap also closes without losing the draft');
+   }
    await f.page.mouse.click(10,20);await f.page.waitForFunction(()=>!document.querySelector('dialog').open);
    await serviceFrame(f.page).locator('[data-service-active="false"]').waitFor({state:'attached'});
    const beforeCloseCount=f.state.requests.length;await f.page.clock.fastForward(20000);assert.equal(f.state.requests.length,beforeCloseCount,'closed panels stop polling');

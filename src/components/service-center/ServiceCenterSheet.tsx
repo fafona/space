@@ -95,7 +95,7 @@ export default function ServiceCenterSheet(props: { siteId: string; siteName: st
       event.preventDefault(); onClose();
     }}
     onClick={event => { if (event.target !== event.currentTarget) return;
-      const bounds = event.currentTarget.getBoundingClientRect(); if (event.clientY < bounds.top || event.clientX < bounds.left || event.clientX > bounds.right) onClose(); }}>
+      const bounds = event.currentTarget.getBoundingClientRect(); if (event.clientY < bounds.top || event.clientY > bounds.bottom || event.clientX < bounds.left || event.clientX > bounds.right) onClose(); }}>
     <div className="mx-auto flex h-full max-w-6xl flex-col">
       <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-slate-300" aria-hidden="true" />
       <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
