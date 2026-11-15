@@ -9,7 +9,9 @@ import {isDeepStrictEqual} from 'node:util';
 import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertRecordedSchemaDatabase} from './application-release-compatibility.mjs';
 import {applicationPublicationProof} from './application-release-publication-proof.mjs';
 import {inspectPinnedExecutionSource,parseSourceTree,sourceGit,ownedReleasePath} from './release-toolchain-source.mjs';
-import {readOnlineRetentionHistory} from './online-release-retention.mjs';
+import {captureApplicationHistoryObservation} from './application-release-history-observation.mjs';
+import {reviewedNavigationApplicationSource} from './application-release-authority.mjs';
+import {withApplicationCliLifetime} from './application-release-cli-lifetime.mjs';
 import {inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
 import {assertOnlineRetentionPersistedProcesses} from './online-release-retention-writer.mjs';
 import {withPinnedFormalPm2Process} from './release-toolchain-proc-witness.mjs';
@@ -31,10 +33,12 @@ const location=value=>Object.fromEntries(['target','name','directory','port'].ma
 export async function observeApplicationRelease(target,{requireCompletion=true}={}){
  need(process.platform==='linux'&&process.getuid?.()===0&&/^[a-f0-9]{40}$/.test(target??''),'invocation');
  const source=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
- need(source==='/var/lib/faolla-online-code/'+target,'source');
- const tool=inspectPinnedExecutionSource({revision:target,directory:source});
+ const retained=reviewedNavigationApplicationSource();
+ need(source==='/var/lib/faolla-online-code/'+target||retained?.target===target&&source===retained.tool.directory,'source');
+ const tool=retained?.application??inspectPinnedExecutionSource({revision:target,directory:source});
  return withPinnedFormalPm2Process(async verify=>{
-  const state=read(ROOT+'/'+target+'/state.json'),history=readOnlineRetentionHistory(),certificate=history.entries.at(-1),active=read(ROOT+'/active.json');
+  const historyObservation=captureApplicationHistoryObservation();
+  const state=read(ROOT+'/'+target+'/state.json'),history=historyObservation.history,certificate=history.entries.at(-1),active=read(ROOT+'/active.json');
   need(state.target===target&&state.status==='active'&&state.lane===APPLICATION_RELEASE_LANE&&certificate?.active.target===target,'not_active');
   same(location(state),active,'metadata');
   need(sourceGit(state.directory,['rev-parse','HEAD']).toString().trim()===target&&
@@ -70,15 +74,17 @@ export async function observeApplicationRelease(target,{requireCompletion=true}=
   const dump=read('/root/.pm2/dump.pm2');assertOnlineRetentionPersistedProcesses(snapshot.rows,dump,{processes:current.slice().sort((a,b)=>a.pmId-b.pmId)});
   const identity=fs.readFileSync('/proc/'+worker.pid+'/stat','utf8').split(')').slice(1).join(')').trim().split(/\s+/)[19];
   ownedReleasePath('/proc/'+worker.pid,{directory:true});
-  const verifyUnchanged=()=>{
-   verify();same(readOnlineRetentionHistory(),history,'history_changed');same(read(ROOT+'/active.json'),active,'active_changed');
+  const verifyRuntime=()=>{
+   verify();same(read(ROOT+'/active.json'),active,'active_changed');
    same(collectFormalBookingPm2Registry().rows.map(normalizeRetirementProcess),current,'processes_changed');
    need(fs.readFileSync('/proc/'+worker.pid+'/stat','utf8').split(')').slice(1).join(')').trim().split(/\s+/)[19]===identity,'worker_replaced');
   };
+  const verifyUnchanged=()=>{historyObservation.verify();verifyRuntime();};
   const publicProof=await proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target,operationId:randomUUID(),verify:verifyUnchanged,deadlineAtMs:Date.now()+30000});
   const cycle=readNaturalWorkerCycle(worker,Date.parse(certificate.completedAt),2);
   need(cycle,'worker_cycles_pending');verifyUnchanged();
   if(requireCompletion)need(state.applicationCompletion.workerPid===worker.pid,'completion_worker');
+  historyObservation.finish();verifyRuntime();
   return{kind:'ordinary-application-release-readonly-verified',target,baseline:state.baseline,certificateSha256:history.headSha256,
    manifestSha256:proof.manifestSha256,workerPid:worker.pid,naturalCycle:cycle,publicProof,savedProcessConfigurationVerified:true,
    rollbackRetained:true,otherProcessesUnchanged:true,businessDataWrittenByAudit:false,mailEnabled:false,recordedSchema,at:new Date().toISOString()};
@@ -87,5 +93,5 @@ export async function observeApplicationRelease(target,{requireCompletion=true}=
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
  const [target,...extra]=process.argv.slice(2);
  if(extra.length)throw Error('application_release_audit_invocation');
- observeApplicationRelease(target).then(value=>console.log(JSON.stringify(value)),error=>{console.error(JSON.stringify({kind:'application-release-audit-refused',code:/^[a-z_]{1,160}$/.test(error?.message??'')?error.message:'unconfirmed'}));process.exitCode=1;});
+ await withApplicationCliLifetime(()=>observeApplicationRelease(target)).then(value=>console.log(JSON.stringify(value)),error=>{console.error(JSON.stringify({kind:'application-release-audit-refused',code:/^[a-z_]{1,160}$/.test(error?.message??'')?error.message:'unconfirmed'}));process.exitCode=1;});
 }

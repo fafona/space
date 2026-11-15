@@ -10,6 +10,8 @@ import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,applicationRelease
 import {inspectPinnedExecutionSource,collectRemoteReleaseReview,assertReviewFresh,ownedReleasePath,sourceGit,parseSourceTree} from './release-toolchain-source.mjs';
 import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.mjs';
 import {bookingHostRead} from './booking-handoff-host-io.mjs';
+import {inspectReviewedNavigationSource,assertNavigationPreserved} from './application-release-navigation-source.mjs';
+import {NAVIGATION_TARGET,NAVIGATION_BASELINE} from './application-release-navigation-policy.mjs';
 const active=new AsyncLocalStorage(),issued=new WeakSet(),ROOT='/var/lib/faolla-online-release',REPOSITORY='/www/wwwroot/merchant-space';
 const need=(value,reason)=>{if(!value)throw Error('application_release_authority_'+reason);};
 export function assertApplicationPriorStates(rows){
@@ -34,6 +36,7 @@ function priorStates(target){
 export function reviewedApplicationExecution(revision,target){
  const context=active.getStore();
  if(!context)return null;
+ if(context.readOnly)return null;
  need(issued.has(context)&&context.target===target&&context.target===revision,'context');
  assertOnlineRetentionHeldLocks(context.lock);
  const current=priorStates(target);need(isDeepStrictEqual(current,context.prior),'prior_states_changed');
@@ -83,4 +86,32 @@ export async function withReviewedApplicationExecution({target,baseline,lock},wo
  context.public=Object.freeze({...context.public,review:Object.freeze(structuredClone(review))});
  issued.add(context);
  return active.run(context,()=>work(context.public));
+}
+
+// Separate approved retained-build context. Original ordinary admission above
+// remains exact-source-only and never accepts a rolled-back generic candidate.
+export async function withReviewedNavigationExecution({lock,readOnly=false},work){
+ need(typeof work==='function'&&typeof readOnly==='boolean','navigation_invocation');
+ if(!readOnly)assertOnlineRetentionHeldLocks(lock);
+ const source=await inspectReviewedNavigationSource();
+ need(readOnly?source.action==='audit':['run','recover'].includes(source.action),'navigation_action');
+ const target=NAVIGATION_TARGET,baseline=NAVIGATION_BASELINE;
+ const manifest=JSON.parse(sourceGit(REPOSITORY,['show',target+':'+APPLICATION_RELEASE_MANIFEST]));
+ const proof=assertApplicationReleaseManifest(manifest,{baseline,baselineRows:parseSourceTree(sourceGit(REPOSITORY,['ls-tree','-r','-z',baseline])),targetRows:source.application.rows});
+ assertRecordedSchemaDatabase(manifest);
+ assertApplicationReleasePackage(JSON.parse(sourceGit(REPOSITORY,['show',baseline+':package.json'])),JSON.parse(sourceGit(REPOSITORY,['show',target+':package.json'])));
+ const prior=priorStates(target),state=JSON.parse(bookingHostRead(ROOT+'/'+target+'/state.json'));
+ need(state.applicationPriorStatesSha256===prior.sha256,'prior_states_changed');
+ assertNavigationPreserved({originalState:false});
+ const context={target,lock,prior,readOnly,navigation:source,public:Object.freeze({kind:APPLICATION_RELEASE_LANE,target,baseline,
+  manifestSha256:proof.manifestSha256,priorStatesSha256:prior.sha256,legacyStatesPreserved:true,legacyCandidatesResumed:false,
+  review:source.review,reviewedRevision:source.toolRevision,retainedNavigation:true})};
+ issued.add(context);return active.run(context,()=>work(context.public));
+}
+export function reviewedNavigationApplicationSource(){
+ const context=active.getStore();if(!context?.navigation)return null;
+ need(issued.has(context)&&context.target===NAVIGATION_TARGET,'navigation_context');
+ if(!context.readOnly)reviewedApplicationExecution(NAVIGATION_TARGET,NAVIGATION_TARGET);
+ else need(isDeepStrictEqual(priorStates(NAVIGATION_TARGET),context.prior),'prior_states_changed');
+ return context.navigation;
 }
