@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "66645e5c5741179a918cf7488d5c99abc5aa7736",
-  "purpose": "Native background video with responsive poster fallback and independent merchant contact window; preserve reservations and existing account services",
+  "baseline": "160c7a086c97f6f4d7a5a1cef93677f66d35170a",
+  "purpose": "Unified user login and verification, aligned public utility controls, icon-only contact and opt-in compact brand header",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,15 +10,27 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
+      "file": ".github/workflows/ci.yml",
+      "role": "verification",
+      "before": [
+        "100644",
+        "7f99e85c920d7e95ad1f05f99cdad6d291856c8b"
+      ],
+      "after": [
+        "100644",
+        "82130c047f2873eefc1617198a31b56425299abc"
+      ]
+    },
+    {
       "file": "scripts/leisure-presentation-browser-acceptance.mjs",
       "role": "verification",
       "before": [
         "100644",
-        "b6588a30d4b5e6e976dc21e2802995878fc6a139"
+        "9bcd239540d776e89c1b69a25db45ac3cc43ff9b"
       ],
       "after": [
         "100644",
-        "9bcd239540d776e89c1b69a25db45ac3cc43ff9b"
+        "23e22b75906c6325197d43a337902487f253ee1a"
       ]
     },
     {
@@ -26,11 +38,29 @@
       "role": "verification",
       "before": [
         "100644",
-        "1c49e2b758d44d5c2d42a944b54954b24cb73d6b"
+        "02ac188c4d1a59f3cd1bb6a7961c816dd5ccf2a0"
       ],
       "after": [
         "100644",
-        "02ac188c4d1a59f3cd1bb6a7961c816dd5ccf2a0"
+        "6be53f589bc07f9bfc735857a06d3f7e801726e4"
+      ]
+    },
+    {
+      "file": "scripts/public-utility-controls-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "bb71b2418b1a9e12661647c4c4602cad31febb79"
+      ]
+    },
+    {
+      "file": "scripts/unified-user-login-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "afce3e643ace5390e9d6438fe6d0a20a9fe8ba7f"
       ]
     },
     {
@@ -38,11 +68,71 @@
       "role": "application",
       "before": [
         "100644",
-        "30a178a590d55076b46e53090430f4b07ab81fa3"
+        "f8d3c9a1d0a833722a5fb84f0ff73646a31f7f7f"
       ],
       "after": [
         "100644",
-        "f8d3c9a1d0a833722a5fb84f0ff73646a31f7f7f"
+        "6eadfbfba1539c9c2963336ed7d2456596dbd31e"
+      ]
+    },
+    {
+      "file": "src/app/login/googleOAuthTransition.test.ts",
+      "role": "verification",
+      "before": [
+        "100644",
+        "7f8e50b444c0fe55a046ac0dea40d671a34add01"
+      ],
+      "after": [
+        "100644",
+        "0f167ec865cbdc0675831f2f5e4fbb6bda1a82cc"
+      ]
+    },
+    {
+      "file": "src/app/login/page.contract.test.ts",
+      "role": "verification",
+      "before": [
+        "100644",
+        "57e8b17e94d5e8abc57fe195680c4eed9e73dae4"
+      ],
+      "after": [
+        "100644",
+        "6500bbc40ae673668dab1bcc4ff8d7a430d36f66"
+      ]
+    },
+    {
+      "file": "src/app/login/page.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "3bae2b9418bf09b0dccc7843dcc1f7006227b272"
+      ],
+      "after": [
+        "100644",
+        "0b19443d18500ff801f247f34263841613a1a35a"
+      ]
+    },
+    {
+      "file": "src/components/FrontendAuthEntry.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "e4a0a9657c5dbe36785b80e88e538acc0769862c"
+      ],
+      "after": [
+        "100644",
+        "dae2525d05e24b5e6a8c678a80cc0d75a2900212"
+      ]
+    },
+    {
+      "file": "src/components/GlobalLanguageSwitcher.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "e56c9faf3a5130d683ef35a0eeab0d8577f0a634"
+      ],
+      "after": [
+        "100644",
+        "e7bdbf8ed560d4403eba078cfffecb26b0f2e76e"
       ]
     },
     {
@@ -50,101 +140,47 @@
       "role": "application",
       "before": [
         "100644",
-        "3a44ab8b63ea3789338300c4fb2c2957af179316"
-      ],
-      "after": [
-        "100644",
         "ae3b03d744bff17d7884dd67920b8bbe25866bfa"
-      ]
-    },
-    {
-      "file": "src/components/admin/GalleryVideoSettings.tsx",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "caacc2dd1cdd7550e068cb6fc5e028113278f49b"
-      ]
-    },
-    {
-      "file": "src/components/admin/InlineEditorBlock.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "a5babf628a590ea5ac04bfcb841f83bf4c28091d"
       ],
       "after": [
         "100644",
-        "881441487f2a43ebe135169bc4f212c155db07f6"
+        "3220cae49e2d69fc50a78afdf22dc114c80e8cd5"
       ]
     },
     {
-      "file": "src/components/blocks/GalleryBlock.tsx",
+      "file": "src/components/admin/SiteNavigationSettings.tsx",
       "role": "application",
       "before": [
         "100644",
-        "34a269811dfac6a9bffba9ae7c85568e47fd0ef8"
+        "d983649ee8edc05a98441d2ce2218ffbdf53c1b4"
       ],
       "after": [
         "100644",
-        "235a728aafc8f717afaa94f610ee853906e2705e"
+        "26d88849a33a157f2e4475f045ea4119a5cb8c02"
       ]
     },
     {
-      "file": "src/components/blocks/GalleryVideo.tsx",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "96fa82504e733c5ddbe00ac316eac39c64f6ffbf"
-      ]
-    },
-    {
-      "file": "src/components/blocks/leisurePresentation.css",
+      "file": "src/components/blocks/BrandedNavigation.tsx",
       "role": "application",
       "before": [
         "100644",
-        "9331eeba7bfda9fd2407f906c0af1494aabc68f5"
+        "34e923b08836e399fcd30916370748dc08d6e73e"
       ],
       "after": [
         "100644",
-        "927c030c38be114aea947604d4cb3b19819b634a"
+        "f6f54dc97782b83f621228887cf759123cfdda27"
       ]
     },
     {
-      "file": "src/components/service-center/ServiceCenterSheet.tsx",
+      "file": "src/components/blocks/siteNavigation.css",
       "role": "application",
       "before": [
         "100644",
-        "79fb5db606ae76de80fcb3ef4efcf621fdc5842e"
+        "04e0bf7e824497c69c28c032a631b2b36e387950"
       ],
       "after": [
         "100644",
-        "14a56fec85ccab6e00b72745f195348431752316"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceConversations.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "52af25cac17d4befeb2606a102950675727b85d1"
-      ],
-      "after": [
-        "100644",
-        "20cc071e17749e1a10b6802582a98babe248425b"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceFrameClient.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "a778df440b25fc58f5ecf5d1d8aac8a8f4f081f8"
-      ],
-      "after": [
-        "100644",
-        "47347f947aa5d9720d98c0ea5a9e111413138421"
+        "7abaa0b5b8eafca5a747f6afa5965f6e73ee788c"
       ]
     },
     {
@@ -152,47 +188,42 @@
       "role": "application",
       "before": [
         "100644",
-        "02f3d9438db96856023a46fbe044eaaf19020540"
+        "75e87b97b5b95e4f84f5f215a0d58f3d4ccba8a0"
       ],
       "after": [
         "100644",
-        "75e87b97b5b95e4f84f5f215a0d58f3d4ccba8a0"
+        "d9d87e27b9a73b1329f3854ed52656a5dda4298a"
       ]
     },
     {
-      "file": "src/lib/galleryVideo.test.ts",
+      "file": "src/lib/siteNavigation.test.ts",
       "role": "verification",
-      "before": null,
+      "before": [
+        "100644",
+        "975142fa75bf4f6c3d36fb4f09edccfc219163c6"
+      ],
       "after": [
         "100644",
-        "6adb6b6c8c81f369aab69accf418e32b97142ee6"
+        "e7507c216cfbd3a6cd6a7848a832d89936a9f3ec"
       ]
     },
     {
-      "file": "src/lib/galleryVideo.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "050873c42166b5fd44d7c0fe6b845f7e5e115713"
-      ]
-    },
-    {
-      "file": "src/lib/leisurePresentation.ts",
+      "file": "src/lib/siteNavigation.ts",
       "role": "application",
       "before": [
         "100644",
-        "53a68938080df0cfc2a8a81a683a247443c88f2f"
+        "d66d27319f2ad279196c402e10a3d7ed76c545bb"
       ],
       "after": [
         "100644",
-        "512e3491a6581c0cb5e40d8d39188f706f7796b4"
+        "f80e82021e9a181967330d48f7e9b6874a66901b"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/galleryVideo.test.ts",
-    "src/lib/leisurePresentation.test.ts",
+    "src/app/login/page.contract.test.ts",
+    "src/app/login/googleOAuthTransition.test.ts",
+    "src/lib/siteNavigation.test.ts",
     "src/lib/blocksSanitizer.test.ts",
     "src/lib/merchantServiceFrame.test.ts",
     "src/components/SitePageClient.behavior.test.ts"
