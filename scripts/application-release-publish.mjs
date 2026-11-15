@@ -13,6 +13,7 @@ import {applicationPublicationProof} from './application-release-publication-pro
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {bookingHostRead,bookingHostWriteOnce,bookingHostSync,bookingHostEnvironment} from './booking-handoff-host-io.mjs';
 import {captureProcessFact} from './check-production-runtime-supervision.mjs';
+import {withApplicationCliLifetime} from './application-release-cli-lifetime.mjs';
 const ROOT='/var/lib/faolla-application-publications',RELEASE='/var/lib/faolla-online-release';
 const need=(value,reason)=>{if(!value)throw Error('application_publication_'+reason);};
 const digest=value=>createHash('sha256').update(value).digest('hex');
@@ -166,5 +167,5 @@ if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.m
  const [action,target,baseline,...extra]=process.argv.slice(2);
  const run=action==='start'?startOrdinaryApplicationPublication:action==='run'?runOrdinaryApplicationPublication:action==='recover'?recoverOrdinaryApplicationPublication:null;
  if(!run||extra.length)throw Error('application_publication_invocation');
- run(target,baseline).then(value=>console.log(JSON.stringify(value)),error=>{console.error(JSON.stringify({kind:'ordinary-application-publication-refused',code:/^[a-z_]{1,160}$/.test(error?.message??'')?error.message:'operation_unconfirmed',publicationCompleted:false}));process.exitCode=1;});
+ await withApplicationCliLifetime(()=>run(target,baseline)).then(value=>console.log(JSON.stringify(value)),error=>{console.error(JSON.stringify({kind:'ordinary-application-publication-refused',code:/^[a-z_]{1,160}$/.test(error?.message??'')?error.message:'operation_unconfirmed',publicationCompleted:false}));process.exitCode=1;});
 }

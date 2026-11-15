@@ -7,6 +7,8 @@ import {fileURLToPath} from 'node:url';
 import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertApplicationReleasePackage} from './application-release-compatibility.mjs';
 import {parseSourceTree,sourceGit} from './release-toolchain-source.mjs';
 import {reviewedApplicationExecution,reviewedApplicationStandbyExecution} from './application-release-authority.mjs';
+import {NAVIGATION_TARGET,NAVIGATION_PINS,assertNavigationContinuationInvocation,assertNavigationOperationOwner,executeNavigationScopeClosure} from './application-release-navigation-policy.mjs';
+import {assertNavigationPinnedFile} from './application-release-navigation-source.mjs';
 import {readOnlineRetentionHistory, ONLINE_RETENTION_ROOT, ONLINE_RETENTION_FILES,
   buildOnlineRetentionPreparation, buildOnlineRetentionReceipt} from './online-release-retention.mjs';
 import {ONLINE_RETENTION_POLICY, assertOnlineRetentionPlan, assertOnlineRetentionCompletion,
@@ -539,6 +541,58 @@ export async function withApplicationOrphanRecoveryLocks({target},work){
     // recovery never deletes/replaces it or touches somebody else's process.
     if(!closed){ /* Intentionally retain the original inode and all evidence. */ }
   }
+}
+
+// Fixed navigation continuation only. Old orphan bytes/inode are preserved by
+// rename after a verified closure, never deleted or claimed by the old entry.
+export async function withNavigationContinuationLocks({orphan=false,recordRoot},work){
+ const directory=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+ const invocation=assertNavigationContinuationInvocation({argv:process.argv,directory,platform:process.platform,uid:process.getuid?.(),executable:process.execPath});
+ if(!['run','recover'].includes(invocation.action)||orphan!== (invocation.action==='recover')||typeof work!=='function'||
+  recordRoot!=='/var/lib/faolla-navigation-continuation/'+NAVIGATION_TARGET+'/'+invocation.toolRevision)fail('navigation_lock_invocation');
+ privateDirectory(recordRoot);ownedPath(DEPLOY_LOCK,'file');const fd=fs.openSync(DEPLOY_LOCK,fs.constants.O_RDWR|fs.constants.O_NOFOLLOW);
+ let token;
+ try{
+  const deploy=dirIdentity(fs.fstatSync(fd));equal(deploy,dirIdentity(fs.lstatSync(DEPLOY_LOCK)),'deploy_lock_changed');
+  const result=spawnSync('flock',['--nonblock','3'],{stdio:['ignore','pipe','pipe',fd],env:runtimeEnvironment(),timeout:10000});
+  if(result.status!==0||result.signal||result.error)fail('deploy_lock_busy');
+  let owner,id;
+  if(orphan){
+   const operation=dirIdentity(privateDirectory(OPERATION_LOCK)),birth=applicationOperationBirth();
+   if(fs.readdirSync(OPERATION_LOCK).length)fail('operation_lock_changed');
+   const matches=[];
+   for(const name of fs.readdirSync(recordRoot).filter(n=>/^operation-[a-f0-9-]{36}\.owner\.json$/.test(n))){
+    const bytes=readOwned(recordRoot+'/'+name),v=parse(bytes);equal(bytes,Buffer.from(retentionCanonicalText(v)),'navigation_owner_encoding');
+    if(isDeepStrictEqual(v.operation,operation)&&isDeepStrictEqual(v.operationBirth,birth)){
+     assertNavigationOperationOwner(v,{toolRevision:invocation.toolRevision,operation,operationBirth:birth,deploy});
+     if(v.kind!=='navigation-continuation-operation-owner'||v.target!==NAVIGATION_TARGET||v.toolRevision!==invocation.toolRevision||
+      v.controller?.cwd!==directory||v.controller?.uid!==0||v.controller?.executable!=='/usr/bin/node'||
+      v.controller.commandSha256!==digest(Buffer.from(['/usr/bin/node',directory+'/scripts/application-release-navigation-continuation.mjs','run',''].join('\0'))))fail('navigation_owner_invalid');
+     equal(v.deploy,deploy,'deploy_lock_changed');matches.push(v);
+    }
+   }
+   if(matches.length===0){
+    const p=NAVIGATION_PINS.owner;owner=parse(assertNavigationPinnedFile(p.file,p));
+    assertApplicationOperationOwner(owner,{target:NAVIGATION_TARGET,operation,operationBirth:birth,deploy,file:owner.id+'.owner.json'});
+    equal(owner.id,p.id,'navigation_original_owner');
+   }else{if(matches.length!==1)fail('navigation_owner_ambiguous');owner=matches[0];}
+   id=owner.id;
+   try{const current=processFact(owner.controller.pid),text=fs.readFileSync('/proc/'+owner.controller.pid+'/stat','utf8'),status=text.slice(text.lastIndexOf(')')+2).split(/\s+/)[0];if(current.startTicks===owner.controller.startTicks&&status!=='Z')fail('application_controller_still_present');}
+   catch(e){if(!['ENOENT','ESRCH'].includes(e.code))throw e;}
+  }else{
+   fs.mkdirSync(OPERATION_LOCK,{mode:0o700});syncDirectory(path.dirname(OPERATION_LOCK));id=randomUUID();
+   owner={kind:'navigation-continuation-operation-owner',target:NAVIGATION_TARGET,toolRevision:invocation.toolRevision,id,
+    controller:processFact(process.pid),operation:dirIdentity(privateDirectory(OPERATION_LOCK)),operationBirth:applicationOperationBirth(),deploy,at:new Date().toISOString()};
+   privateWrite(recordRoot+'/operation-'+id+'.owner.json',retentionCanonicalText(owner));
+  }
+  token=Object.freeze({deployFd:fd,operationDirectory:OPERATION_LOCK});
+  heldLocks.set(token,{deployLock:DEPLOY_LOCK,operation:OPERATION_LOCK,deployIdentity:deploy,operationIdentity:owner.operation,applicationOperationBirth:owner.operationBirth});assertHeldLocks(token);
+  return await executeNavigationScopeClosure({verify:()=>assertHeldLocks(token),
+   seal:value=>privateWrite(recordRoot+'/operation-'+id+'.closed.json',retentionCanonicalText({kind:'navigation-continuation-owned-scope-closed',target:NAVIGATION_TARGET,toolRevision:invocation.toolRevision,id,operation:owner.operation,result:value,at:new Date().toISOString()})),
+   archive:()=>{const destination=recordRoot+'/operation-'+id+'.directory';if(exists(destination))fail('application_archive_exists');
+    fs.renameSync(OPERATION_LOCK,destination);syncDirectory(path.dirname(OPERATION_LOCK));syncDirectory(recordRoot);equal(dirIdentity(privateDirectory(destination)),owner.operation,'application_archive_changed');}
+  },()=>work(token));
+ }finally{if(token)heldLocks.delete(token);fs.closeSync(fd);}
 }
 
 // New ACTIVE incident scope, not a relaxation of withOnlineRetentionLocks.
