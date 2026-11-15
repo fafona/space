@@ -14,6 +14,8 @@ export const NAVIGATION_CONTINUATION_FILES=Object.freeze([
  'scripts/application-release-navigation-native.mjs',
  'scripts/application-release-authority.mjs','scripts/application-release-audit.mjs',
  'scripts/application-release-publish.mjs','scripts/online-traffic-release.mjs','scripts/online-release-retention-writer.mjs',
+ 'scripts/release-toolchain-active-generation-routing-native.mjs','scripts/release-toolchain-active-fixture-ports.test.mjs',
+ 'scripts/online-unpublished-candidate.test.mjs',
  'docs/ordinary-application-release.md'
 ]);
 const need=(v,c)=>{if(!v)throw Error('navigation_continuation_'+c);};

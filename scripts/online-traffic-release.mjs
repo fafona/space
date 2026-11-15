@@ -1008,7 +1008,7 @@ async function activateCandidate(s){
   // The retained certificate already names this candidate. Record explicit
   // activating intent before switching; only full smoke marks it active. The
   // dedicated recovery handles either physical route while this phase exists.
-  if(reviewedNavigationApplicationSource())atomic(activeFile,JSON.stringify({target:s.target,port:s.port,directory:s.directory,name:s.name}));
+  if(s.lane===APPLICATION_RELEASE_LANE&&reviewedNavigationApplicationSource())atomic(activeFile,JSON.stringify({target:s.target,port:s.port,directory:s.directory,name:s.name}));
   for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,saved?saved.get(file).after:safeFile(`${operation}/after-${file}`));run(nginx,['-t']);run(nginx,['-s','reload']);
   let verified=false;for(let i=0;i<8;i++){try{s.checkedAssets=await smoke(s,true);verified=true;break;}catch(error){console.error(`online_public_probe_failed:${error.message}`);await new Promise(r=>setTimeout(r,1500));}}if(!verified)fail('public_verification_failed');
   await request('https://launch.faolla.com/login');await verifyBase(s);verifyCandidate(s);configUnchanged(s,true);run('pm2',['save']);
