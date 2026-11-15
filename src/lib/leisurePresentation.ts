@@ -10,7 +10,7 @@ const ROLE_TYPES: Readonly<Record<string, readonly Block["type"][]>> = {
   "copy-one": ["text"], "copy-two": ["text"], "copy-one-link": ["button"], "copy-two-link": ["button"],
   "panel-one": ["text"], "panel-two": ["text"], "panel-three": ["text"],
   "panel-one-link": ["button"], "panel-two-link": ["button"], "panel-three-link": ["button"],
-  "video-title": ["text"], "video-one": ["button", "common"], "video-two": ["button", "common"],
+  "video-title": ["text"], "video-one": ["button", "common", "gallery"], "video-two": ["button", "common", "gallery"],
   visit: ["text"], "visit-link": ["button"], booking: ["booking"], contact: ["contact"],
   "before-visit": ["text"], "map-link": ["button"], footer: ["text"], "footer-link": ["button"],
 };

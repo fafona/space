@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import {readFile} from 'node:fs/promises';
 import {build} from 'esbuild';
 import {chromium} from 'playwright';
 import postcss from 'postcss';
@@ -35,7 +36,8 @@ const query=new URLSearchParams(location.search);createRoot(document.getElementB
 `;
 const script=(await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:entry},bundle:true,platform:'browser',format:'iife',write:false,jsx:'automatic',plugins:[plugin],define:{'process.env':'{}','process.env.NODE_ENV':'"production"'},logLevel:'silent'})).outputFiles[0].text;
 const utilityCss=(await postcss([tailwind()]).process('@import "tailwindcss" source(none);\n@source "./src/components/service-center";\n@source "./src/components/PublicWebsiteActions.tsx";', {from:path.resolve('service-center-acceptance.css')})).css;
-const css=utilityCss+'\n.faolla-service-sheet{height:82dvh;max-height:82dvh;padding-bottom:env(safe-area-inset-bottom)}.faolla-service-sheet::backdrop{background:#02061755}body{margin:0}';
+const surfaceCss=(await readFile('src/app/globals.css','utf8')).split(':root {')[0].replace(/^@import[^\n]+/gm,'');
+const css=utilityCss+'\n'+surfaceCss+'\nbody{margin:0}';
 const profile={nickname:'Synthetic visitor',name:'Synthetic visitor',email:'visitor@example.invalid',phone:'000',birthday:'01-01',birthdayMonthDayOnly:true};
 async function setup(browser,width,{logged=true,seedGuest=false,height=900,cameraDenied=false,realDirectory=false}={}){
  const context=await browser.newContext({viewport:{width,height},isMobile:width<768,hasTouch:width<768,serviceWorkers:'block'});
@@ -126,8 +128,18 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900,camer
 }
 const serviceFrame=page=>page.frameLocator('iframe[data-isolated-service-frame]');
 async function menu(page){await page.getByRole('button',{name:'服务中心',exact:true}).click();await page.getByRole('dialog').waitFor();}
-async function choose(page,label){const ids={'订单':'orders','会话':'conversations','我的':'account','Faolla':'directory'};await page.getByRole('dialog').locator(`[data-service-section="${ids[label]}"]`).click();}
-async function openThread(surface,id=siteId){await surface.locator(`[data-conversation-id="${id}"]`).click();}
+async function choose(page,label){
+ if(label==='会话'){
+  if(await page.getByRole('dialog').isVisible())await page.getByRole('button',{name:/^关闭(?:服务中心|会话)$/}).click();
+  await page.locator('[data-public-chat-launcher]').click();await page.locator('dialog[data-chat-window="true"]').waitFor();return;
+ }
+ const ids={'订单':'orders','我的':'account','Faolla':'directory'};await page.getByRole('dialog').locator(`[data-service-section="${ids[label]}"]`).click();
+}
+async function openThread(surface,id=siteId){
+ const contact=surface.locator(`[data-conversation-id="${id}"]`);
+ if(!(await contact.isVisible())){await surface.getByLabel('输入消息').waitFor();await surface.getByRole('button',{name:'返回会话列表',exact:true}).click();}
+ await contact.click();
+}
 
 test('service center Faolla real merchant cards navigate to sibling merchants, never a nested merchant subdomain',{timeout:60000},async()=>{
  const browser=await chromium.launch({headless:true});try{for(const width of [390,1440]){
@@ -363,43 +375,46 @@ test('file-picker cancellation is not a request to dismiss the service dialog',{
    await surface.locator('textarea').filter({visible:true}).evaluate(element=>new Promise((resolve,reject)=>{const deadline=Date.now()+5000;const timer=setInterval(()=>{if(element.value.includes('图片：')){clearInterval(timer);resolve(true)}else if(Date.now()>deadline){clearInterval(timer);reject(new Error('attachment draft was not updated'))}},10)}));
    assert.match(await surface.getByLabel('输入消息').inputValue(),/^Keep this unsent draft\n图片：/);
    assert.deepEqual(f.state.writes.map(write=>write.path),logged?['/api/assets/upload']:[]);
-   await f.page.getByRole('button',{name:'关闭服务中心',exact:true}).focus();
+   await f.page.getByRole('button',{name:'关闭会话',exact:true}).focus();
    await f.page.keyboard.press('Escape');await f.page.waitForFunction(()=>!document.querySelector('dialog').open);
   }finally{await f.close();}
  }}}finally{await browser.close();}
 });
 
-test('conversation list stays left on desktop and opens separate WhatsApp-style chat on mobile',{timeout:90000},async()=>{
+test('independent chat opens the current merchant directly, uses a desktop corner window and a mobile sheet, and preserves contact switching',{timeout:90000},async()=>{
  const browser=await chromium.launch({headless:true});try{for(const width of [390,1440]){
   const f=await setup(browser,width);try{
    f.state.contacts=Array.from({length:18},(_,index)=>({merchantId:String(99991000+index),merchantName:'Synthetic contact '+(index+1),lastMessage:{id:'preview-'+index,text:'Recent conversation '+(index+1),createdAt:'2026-11-13T10:00:00Z'}}));
    f.state.threads=[{threadKey:'synthetic-thread',merchantAId:'50010105',merchantBId:siteId,messages:[{id:'synthetic-inbound',text:'Synthetic incoming message',senderMerchantId:siteId,createdAt:'2026-11-13T10:00:00Z'}]}];
    await f.open();await f.page.getByRole('button',{name:'收藏并加入本店会员'}).waitFor();
    await menu(f.page);await choose(f.page,'会话');const surface=serviceFrame(f.page);
-   await surface.locator('[data-conversation-id="99991000"]').waitFor();
+   await surface.getByLabel('输入消息').waitFor();
    const list=surface.getByRole('complementary',{name:'会话对象列表'}),chat=surface.getByRole('region',{name:'当前会话'});
+   assert.equal(await chat.isVisible(),true,'launcher opens this merchant without a second selection');
+   await chat.getByText('Synthetic incoming message',{exact:true}).waitFor();
+   const dialogBox=await f.page.getByRole('dialog').boundingBox();
+   if(width>=768){assert.ok(dialogBox.width<=440);assert.ok(Math.abs(dialogBox.x+dialogBox.width-(width-20))<2);}
+   else {assert.ok(dialogBox.y>=120);assert.equal(Math.round(dialogBox.width),width);}
+   await surface.getByRole('button',{name:'返回会话列表',exact:true}).click();
+   await surface.locator('[data-conversation-id="99991000"]').waitFor();
    assert.equal(await list.isVisible(),true);assert.equal(await surface.getByRole('combobox',{name:'选择会话'}).count(),0);
-   if(width<768){assert.equal(await chat.isVisible(),false);assert.equal(f.state.writes.length,0,'unopened mobile chat is not marked read');}
+   assert.equal(await chat.isVisible(),false);
    if(process.env.FAOLLA_SERVICE_QA_DIR)await f.page.screenshot({path:path.join(process.env.FAOLLA_SERVICE_QA_DIR,`service-conversation-list-${width}.png`)});
    await openThread(surface);await surface.getByLabel('聊天记录').getByText('Synthetic incoming message',{exact:true}).waitFor();
    await f.page.waitForFunction(()=>document.querySelector('dialog').open);
-   const chatBox=await chat.boundingBox(),listBox=width>=768?await list.boundingBox():null;
+   const chatBox=await chat.boundingBox();
    assert.ok(chatBox.width>250);
-   if(width>=768){assert.ok(listBox.x+listBox.width<=chatBox.x+1,'contacts occupy a stable left column');assert.ok(Math.abs(listBox.y-chatBox.y)<1);}
-   else {assert.equal(await list.isVisible(),false);assert.ok(chatBox.width<=width);}
+   assert.equal(await list.isVisible(),false);assert.ok(chatBox.width<=width);
    await surface.getByLabel('输入消息').fill('Preserve this conversation draft');
    const sendBox=await surface.getByRole('button',{name:'发送',exact:true}).boundingBox(),frameBox=await f.page.locator('iframe').boundingBox();
    assert.ok(sendBox.y+sendBox.height<=frameBox.y+frameBox.height,'composer stays inside the sheet');
    assert.equal(await surface.locator('main').evaluate(element=>element.scrollWidth<=element.clientWidth),true);
    if(process.env.FAOLLA_SERVICE_QA_DIR)await f.page.screenshot({path:path.join(process.env.FAOLLA_SERVICE_QA_DIR,`service-conversation-chat-${width}.png`)});
-   if(width<768){
-    await surface.getByRole('button',{name:'返回会话列表',exact:true}).click();assert.equal(await list.isVisible(),true);assert.equal(await chat.isVisible(),false);
-    await openThread(surface);assert.equal(await surface.getByLabel('输入消息').inputValue(),'Preserve this conversation draft');
-   }else{
-    await openThread(surface,'99991000');await chat.getByRole('heading',{name:'Synthetic contact 1',exact:true}).waitFor();
-    assert.equal(await chat.getByText('Synthetic incoming message',{exact:true}).count(),0);
-    await openThread(surface);await chat.getByText('Synthetic incoming message',{exact:true}).waitFor();
-   }
+   await surface.getByRole('button',{name:'返回会话列表',exact:true}).click();assert.equal(await list.isVisible(),true);assert.equal(await chat.isVisible(),false);
+   await surface.locator(`[data-conversation-id="${siteId}"]`).click();assert.equal(await surface.getByLabel('输入消息').inputValue(),'Preserve this conversation draft');
+   await openThread(surface,'99991000');await chat.getByRole('heading',{name:'Synthetic contact 1',exact:true}).waitFor();
+   assert.equal(await chat.getByText('Synthetic incoming message',{exact:true}).count(),0);
+   await openThread(surface);await chat.getByText('Synthetic incoming message',{exact:true}).waitFor();
    assert.deepEqual(f.state.writes.map(write=>write.body.action),['mark_read']);
   }finally{await f.close();}
  }}finally{await browser.close();}
@@ -416,7 +431,7 @@ test('short mobile viewports keep the composer and close control reachable witho
    assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    await f.page.getByRole('button',{name:'返回会话列表',exact:true}).click();await openThread(f.page);
    assert.equal(await f.page.getByLabel('输入消息').inputValue(),'Short viewport draft');
-   await f.page.getByRole('button',{name:'关闭服务中心',exact:true}).click();assert.equal(await f.page.getByRole('dialog').isVisible(),false);
+   await f.page.getByRole('button',{name:'关闭会话',exact:true}).click();assert.equal(await f.page.getByRole('dialog').isVisible(),false);
    assert.deepEqual(f.state.writes,[]);
   }finally{await f.close();}
  }}finally{await browser.close();}
@@ -428,11 +443,14 @@ test('desktop and mobile keep the merchant document and load one isolated person
    await f.page.clock.install();await f.open();await f.page.clock.runFor(1500);await f.page.getByRole('button',{name:'收藏并加入本店会员'}).waitFor();
    assert.equal(await f.page.locator('iframe').count(),0);assert.equal(f.state.requests.filter(r=>r.url.includes('/api/personal-')).length,0);
    assert.equal(f.state.requests.filter(r=>r.url.includes('/api/auth/')).length,0);
+   assert.equal(f.state.requests.filter(r=>/\/api\/(?:merchant-peer|support)-messages/.test(r.url)).length,0,'chat IO is deferred until intent');
+   const launcherBox=await f.page.locator('[data-public-chat-launcher]').boundingBox();assert.ok(launcherBox.x+launcherBox.width<=width-15);assert.ok(launcherBox.y+launcherBox.height>=875);
    assert.equal(f.state.requests.filter(r=>r.url.startsWith(merchantOrigin)&&r.cookie).length,0);
    await f.page.evaluate(()=>{document.querySelector('[data-merchant-heading]').dataset.identity='preserved';window.scrollTo(0,350)});
    await menu(f.page);assert.equal(await f.page.locator('iframe').count(),0);
    const tones=await f.page.locator('[data-service-section]').evaluateAll(elements=>elements.map(element=>getComputedStyle(element).backgroundColor));
-   assert.equal(new Set(tones).size,4,'each service has a distinct soft color, not just a different label');
+   assert.equal(new Set(tones).size,3,'orders, account and Faolla retain distinct soft colors');
+   assert.deepEqual(await f.page.locator('[data-service-section]').evaluateAll(elements=>elements.map(element=>element.dataset.serviceSection)),['orders','account','directory']);
    if(process.env.FAOLLA_SERVICE_QA_DIR)await f.page.screenshot({path:path.join(process.env.FAOLLA_SERVICE_QA_DIR,`service-menu-${width}.png`)});
    const bounds=await f.page.getByRole('dialog').boundingBox();assert.ok(bounds.y>=120,'visible merchant backdrop stays above the sheet');
    await choose(f.page,'订单');await serviceFrame(f.page).getByText('Synthetic account product × 2',{exact:true}).waitFor();
@@ -513,7 +531,7 @@ test('visible conversations retain normal send and read receipts, without replay
   await serviceFrame(f.page).getByLabel('输入消息').fill('Synthetic outgoing message');
   await serviceFrame(f.page).getByRole('button',{name:'发送',exact:true}).click();
   await serviceFrame(f.page).getByLabel('聊天记录').getByText('Synthetic outgoing message',{exact:true}).waitFor();
-  await f.page.getByRole('button',{name:'关闭服务中心',exact:true}).click();await menu(f.page);await choose(f.page,'会话');
+  await f.page.getByRole('button',{name:'关闭会话',exact:true}).click();await menu(f.page);await choose(f.page,'会话');
   await serviceFrame(f.page).getByLabel('聊天记录').getByText('Synthetic outgoing message',{exact:true}).waitFor();
   assert.deepEqual(f.state.writes.map(row=>row.body.action),['mark_read','send']);
  }finally{await f.close();await browser.close();}

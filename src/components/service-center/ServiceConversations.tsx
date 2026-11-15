@@ -34,13 +34,14 @@ const mergeThreads = (old: MerchantPeerThread[], next: MerchantPeerThread[]) => 
 };
 const safeLink = (value: string) => { if (!value.trim()) return ""; try { const url = new URL(value, window.location.origin); return /^https?:$/.test(url.protocol) ? url.href : ""; } catch { return ""; } };
 
-export default function ServiceConversations({ active, identity, siteId, siteName }: ServicePanelProps) {
+export default function ServiceConversations({ active, identity, siteId, siteName, compact = false }: ServicePanelProps & { compact?: boolean }) {
   const [contacts, setContacts] = useState<MerchantPeerContactSummary[]>([]);
   const [threads, setThreads] = useState<MerchantPeerThread[]>([]);
   const [official, setOfficial] = useState<PlatformSupportThread | null>(null);
   const [selected, setSelected] = useState(siteId);
-  const [mobileChatOpen, setMobileChatOpen] = useState(false);
-  const desktop = useSyncExternalStore(subscribeDesktop, desktopSnapshot, serverSnapshot);
+  const [mobileChatOpen, setMobileChatOpen] = useState(compact);
+  const viewportDesktop = useSyncExternalStore(subscribeDesktop, desktopSnapshot, serverSnapshot);
+  const desktop = viewportDesktop && !compact;
   const chatVisible = desktop || mobileChatOpen;
   const [draft, setDraft] = useState("");
   const [search, setSearch] = useState("");
@@ -162,8 +163,8 @@ export default function ServiceConversations({ active, identity, siteId, siteNam
   return <div className="flex h-full min-h-0 flex-col gap-2" data-service-conversations>
     {!identity?.authenticated ? <p className="shrink-0 px-1 text-xs leading-5 text-slate-500">游客会话仅临时保存在本设备；登录后可同步账号消息。</p> : null}
     {error ? <p role="alert" className="shrink-0 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
-    <div className="grid min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm md:grid-cols-[minmax(240px,300px)_minmax(0,1fr)]">
-      <aside aria-label="会话对象列表" className={`${mobileChatOpen ? "hidden" : "flex"} min-h-0 flex-col md:flex md:border-r md:border-slate-200`}>
+    <div className={`grid min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm ${compact ? "" : "md:grid-cols-[minmax(240px,300px)_minmax(0,1fr)]"}`}>
+      <aside aria-label="会话对象列表" className={`${mobileChatOpen ? "hidden" : "flex"} min-h-0 flex-col ${compact ? "" : "md:flex md:border-r md:border-slate-200"}`}>
         <div className="shrink-0 space-y-3 border-b border-slate-100 bg-slate-50/70 p-4">
           <div className="flex items-center justify-between gap-2"><div><h3 className="font-semibold">聊天列表</h3><p className="mt-1 text-xs text-slate-500">全部 {rows.length} 个会话</p></div>
             <button type="button" className={serviceButton + " !px-3 !py-2 !text-xs"} disabled={busy || loading} onClick={() => void load()}>刷新会话</button></div>
@@ -179,9 +180,9 @@ export default function ServiceConversations({ active, identity, siteId, siteNam
           </button>)}
         </nav>
       </aside>
-      <section aria-label="当前会话" className={`${mobileChatOpen ? "flex" : "hidden"} min-h-0 min-w-0 flex-col md:flex`}>
+      <section aria-label="当前会话" className={`${mobileChatOpen ? "flex" : "hidden"} min-h-0 min-w-0 flex-col ${compact ? "" : "md:flex"}`}>
         <header className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-3 py-3 sm:px-4">
-          <button type="button" className={serviceButton + " !px-3 md:hidden"} aria-label="返回会话列表" onClick={() => setMobileChatOpen(false)}>←</button>
+          <button type="button" className={serviceButton + (compact ? " !px-3" : " !px-3 md:hidden")} aria-label="返回会话列表" onClick={() => setMobileChatOpen(false)}>←</button>
           <ConversationAvatar name={selectedRow?.name || selected} image={selectedRow?.image} official={selected === "official"} />
           <div className="min-w-0"><h3 className="truncate text-sm font-semibold" data-no-translate="1">{selectedRow?.name || selected}</h3><p className="mt-1 text-xs text-slate-500">{selected === "official" ? "Faolla 官方服务" : "会话消息"}</p></div>
           <button type="button" className={serviceButton + " ml-auto shrink-0 !px-3"} aria-label="刷新当前会话" title="刷新当前会话" disabled={busy || loading} onClick={() => void load()}><svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 18 17" /></svg></button>

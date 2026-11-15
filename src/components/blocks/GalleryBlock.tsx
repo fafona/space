@@ -15,6 +15,8 @@ import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { toRichHtml } from "./richText";
+import GalleryVideo from "./GalleryVideo";
+import { galleryVideoSettings, type GalleryVideoProps } from "@/lib/galleryVideo";
 
 type GalleryImageItem = {
   id: string;
@@ -27,9 +29,9 @@ type GalleryImageItem = {
   scaleY: number;
 };
 
-type GalleryBlockProps = BackgroundEditableProps & {
+type GalleryBlockProps = BackgroundEditableProps & GalleryVideoProps & {
   heading?: string;
-  galleryControls?: "hero";
+  galleryControls?: "hero" | "none";
   galleryMoreLabel?: string;
   galleryPreviousLabel?: string;
   galleryNextLabel?: string;
@@ -97,6 +99,9 @@ export default function GalleryBlock(props: GalleryBlockProps) {
   const imageItems = useMemo(() => normalizeGalleryItems(props.images), [props.images]);
   const featured = imageItems.filter((item) => item.featured);
   const homeItems = featured.length > 0 ? featured : imageItems;
+  const video = galleryVideoSettings(props, homeItems[0]?.url);
+  const videoMode = video.media !== "images";
+  const controlsHidden = videoMode || props.galleryControls === "none";
   const [index, setIndex] = useState(0);
   const [showMore, setShowMore] = useState(false);
   const heroControls = props.galleryControls === "hero";
@@ -111,12 +116,12 @@ export default function GalleryBlock(props: GalleryBlockProps) {
   const safeIndex = homeItems.length > 0 ? index % homeItems.length : 0;
 
   useEffect(() => {
-    if (homeItems.length <= 1 || (heroControls && (paused || hovered || focused || reducedMotion))) return;
+    if (videoMode || homeItems.length <= 1 || (heroControls && (paused || hovered || focused || reducedMotion))) return;
     const timer = window.setInterval(() => {
       setIndex((prev) => (prev + 1) % homeItems.length);
     }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [homeItems.length, intervalMs, heroControls, paused, hovered, focused, reducedMotion]);
+  }, [homeItems.length, intervalMs, heroControls, paused, hovered, focused, reducedMotion, videoMode]);
 
   useEffect(() => {
     if (!heroControls) return;
@@ -210,7 +215,14 @@ export default function GalleryBlock(props: GalleryBlockProps) {
           style={headingStyle}
           dangerouslySetInnerHTML={{ __html: toRichHtml(props.heading, "相册展示") }}
         />
-        {currentImage ? (
+        {videoMode ? <div className="mt-4 space-y-3" data-gallery-media={video.media}>
+          <div className="block mx-auto overflow-hidden rounded-lg bg-slate-950" style={frameStyle}>
+            <div className="relative w-full h-full overflow-hidden">
+              {video.media === "background-video" && video.poster ? <Image src={video.poster} alt="" fill unoptimized priority sizes="100vw" className="object-cover" style={{ objectPosition: video.position }} /> : null}
+              {video.url ? <GalleryVideo key={video.media + video.url + video.mobileUrl} {...video} background={video.media === "background-video"} /> : null}
+            </div>
+          </div>
+        </div> : currentImage ? (
           <div className="mt-4 space-y-3">
             <div className="block mx-auto overflow-hidden rounded-lg bg-transparent" style={frameStyle}>
               <div className="relative w-full h-full overflow-hidden"
@@ -247,20 +259,20 @@ export default function GalleryBlock(props: GalleryBlockProps) {
                     <Image src={currentImage.url} alt="" fill unoptimized sizes="100vw" className="object-contain" />
                   </div>
                 )}
-                <div className="absolute left-2 bottom-2 px-2 py-1 text-xs rounded border bg-white/90 text-gray-700">
+                {!controlsHidden ? <div className="absolute left-2 bottom-2 px-2 py-1 text-xs rounded border bg-white/90 text-gray-700">
                   {safeIndex + 1} / {homeItems.length}
-                </div>
-                {heroControls && homeItems.length > 1 ? <div className="leisure-carousel-controls">
+                </div> : null}
+                {!controlsHidden && heroControls && homeItems.length > 1 ? <div className="leisure-carousel-controls">
                   <button type="button" aria-label={props.galleryPreviousLabel || "上一张"} onClick={() => setIndex(prev => (prev - 1 + homeItems.length) % homeItems.length)}><span aria-hidden="true">←</span></button>
                   <button type="button" aria-label={props.galleryNextLabel || "下一张"} onClick={() => setIndex(prev => (prev + 1) % homeItems.length)}><span aria-hidden="true">→</span></button>
                   <button type="button" aria-label={paused || reducedMotion ? (props.galleryPlayLabel || "播放轮播") : (props.galleryPauseLabel || "暂停轮播")} aria-pressed={paused || reducedMotion} onClick={() => { setPaused(!(paused || reducedMotion)); setReducedMotion(false); }}><span aria-hidden="true">{paused || reducedMotion ? "▶" : "Ⅱ"}</span></button>
                 </div> : null}
-                <button
+                {!controlsHidden ? <button
                   className="absolute right-2 bottom-2 px-3 py-1 text-xs rounded border bg-white/90 hover:bg-white"
                   onClick={() => setShowMore((prev) => !prev)}
                 >
                   {props.galleryMoreLabel || "更多"}
-                </button>
+                </button> : null}
               </div>
             </div>
             {showMore ? (

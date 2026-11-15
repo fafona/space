@@ -290,11 +290,11 @@ export type ButtonProps = BackgroundEditableProps &
     heading?: string;
     text?: string;
   };
-type GalleryProps = BackgroundEditableProps &
+type GalleryProps = import("@/lib/galleryVideo").GalleryVideoProps & BackgroundEditableProps &
   TypographyEditableProps & {
     heading: string;
     galleryFrameWidth?: number;
-    galleryControls?: "hero";
+    galleryControls?: "hero" | "none";
     galleryMoreLabel?: string;
     galleryPreviousLabel?: string;
     galleryNextLabel?: string;
