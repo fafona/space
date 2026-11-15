@@ -181,6 +181,9 @@ jobs:
         run: npm ci
 
       - name: Build
+        # Use the same bounded heap as the quality build; retain all checks.
+        env:
+          NODE_OPTIONS: "--max-old-space-size=3072"
         run: npm run build
 
       - name: Enterprise Browser Journeys

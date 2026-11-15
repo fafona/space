@@ -1,4 +1,10 @@
 /* Native, explicitly enabled navigation. No selector affects classic navigation. */
+/* Hidden horizontal overflow makes an unintended scroll container, including
+   the mobile html/body lock. Clip only opted-in public navigation ancestors.
+   Do not override overflow-y: dialogs must retain their vertical scroll lock. */
+html:has(main.faolla-public-site-shell [data-site-navigation]),
+body:has(main.faolla-public-site-shell [data-site-navigation]),
+main.faolla-public-site-shell:has([data-site-navigation]) { overflow-x:clip !important; }
 .faolla-leisure-site > [data-leisure-role="header"]:has([data-site-navigation]) { grid-column:1 / -1; grid-row:1; z-index:100 !important; }
 .faolla-leisure-site [data-leisure-role="header"]:has([data-site-navigation]) > section:not([data-site-navigation]) { padding:0; max-width:none; margin:0; }
 .faolla-leisure-site [data-leisure-role="header"] [data-block-visual-boundary]:has([data-site-navigation]) { padding:0; background-image:none !important; }
