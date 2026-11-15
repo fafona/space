@@ -26,11 +26,13 @@ async function assets(){return assetsPromise??=(async()=>{
  import Blocks from'./src/components/blocks/BlockRenderer';import Gallery from'./src/components/blocks/GalleryBlock';
  import Editor from'./src/components/admin/InlineEditorBlock';import Layout from'./src/components/blocks/LeisurePageLayout';
  import{getLeisureBlockStyle,getLeisureRole}from'./src/lib/leisurePresentation';
+ import{useMobileHorizontalScrollLock}from'./src/lib/useMobileHorizontalScrollLock';
  const params=new URLSearchParams(location.search),noop=()=>{};
  function App(){const[blocks,setBlocks]=useState(window.__fixture),[selected,setSelected]=useState(null),[page,setPage]=useState('home');
+ useMobileHorizontalScrollLock(params.has('public-shell')&&params.has('mobile-lock'));
  window.__blocks=blocks;
  if(params.has('legacy'))return <Gallery {...window.__gallery.props} galleryControls={undefined}/>;
- return <SearchParamsContext.Provider value={params}><main style={{width:params.has('narrow')?422:'100%',maxWidth:'100%'}}>
+ return <SearchParamsContext.Provider value={params}><main className={params.has('public-shell')?'faolla-public-site-shell':undefined} style={{width:params.has('narrow')?422:'100%',maxWidth:'100%',overflowX:params.has('public-shell')?'hidden':undefined}}>
  {params.has('editor')?<Layout blocks={blocks} editorBoundary>{blocks.map((block,i)=><div className="relative" key={block.id} data-leisure-role={getLeisureRole(block)} style={getLeisureBlockStyle(block,i)}><Editor block={block} publicBlockId={'010'+i} draggingBlockId={null} isSelected={selected===block.id} onDragHandleMouseDown={noop} onNudge={noop} onLayerToFront={noop} onLayerUp={noop} onLayerDown={noop} onLayerToBack={noop} onSelect={()=>setSelected(block.id)} onChange={patch=>setBlocks(bs=>bs.map(b=>b.id===block.id?{...b,props:{...b.props,...patch}}:b))} onResizePreview={noop} onResizeCommit={noop} previewOffsetY={0} onDelete={noop} onAlert={noop} availablePages={[{id:'home',name:'Home'},{id:'visit',name:'Visit'}]} availableBlocks={[]} currentPageId="home" recentColors={[]} onRecordColor={noop} onClearRecentColors={noop} onApplyNavSettingsToOtherPages={noop} onPersistImageFile={async()=>{throw Error('unexpected upload')}} onPersistProductImageFile={async()=>{throw Error('unexpected upload')}} onPersistAudioFile={async()=>{throw Error('unexpected upload')}} previewViewport={params.has('narrow')?'mobile':'desktop'}/></div>)}</Layout>:<Blocks blocks={page==='home'?blocks:window.__visit} currentPageId={page} availablePages={[{id:'home',name:'Home'},{id:'visit',name:'Visit'}]} onNavigatePage={setPage} bookingSiteId="99999999" bookingViewport="desktop" bookingInteractive/>}
  </main></SearchParamsContext.Provider>;}
  createRoot(document.getElementById('root')).render(<App/>);`},bundle:true,platform:'browser',format:'iife',write:false,logLevel:'silent',define:{'process.env':'{}'},plugins:[{name:'synthetic-io',setup(builder){
@@ -102,6 +104,38 @@ test('leisure page genuinely changes desktop composition; phone and narrow edito
  }finally{await browser.close();}
 });
 
+test('public brand header remains sticky through the actual public shell and mobile horizontal lock without changing classic pages or modal scroll locking',{timeout:90000},async()=>{
+ const browser=await chromium.launch({headless:true});
+ try{
+  for(const width of [1440,390,320]){
+   const query='public-shell=1'+(width<=900?'&mobile-lock=1':'');
+   const f=await mount(browser,width,query,{brand:true});try{
+    await f.page.evaluate(()=>scrollTo(0,800));
+    await f.page.waitForFunction(()=>scrollY>=700);
+    const header=f.page.locator('[data-leisure-role="header"]');
+    const sticky=await header.boundingBox();assert(Math.abs(sticky.y)<2,'the real public shell and mobile html/body lock must not trap the sticky header');
+    assert.equal(await f.page.evaluate(()=>getComputedStyle(document.querySelector('main.faolla-public-site-shell')).overflowX),'clip');
+    assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    assert.equal(await header.evaluate(element=>{const rect=element.getBoundingClientRect();return element.contains(document.elementFromPoint(rect.left+20,rect.top+20));}),true,'sticky header remains above the scrolled page');
+    const modal=await f.page.evaluate(()=>{const body=document.body,before=body.style.overflow;try{body.style.overflow='hidden';return{vertical:getComputedStyle(body).overflowY,overscrollX:body.style.overscrollBehaviorX};}finally{body.style.overflow=before;}});
+    assert.equal(modal.vertical,'hidden','the scoped horizontal fix must retain modal vertical scroll locking');
+    assert.equal(modal.overscrollX,width<=900?'none':'');
+    if(width<=900){assert.equal(await f.page.evaluate(()=>getComputedStyle(document.documentElement).overflowX),'clip');assert.equal(await f.page.evaluate(()=>getComputedStyle(document.body).overflowX),'clip');}
+   }finally{await f.close();}
+   const classic=await mount(browser,width,query);try{
+    assert.equal(await classic.page.locator('[data-site-navigation]').count(),0);
+    assert.equal(await classic.page.evaluate(()=>getComputedStyle(document.querySelector('main.faolla-public-site-shell')).overflowX),'hidden','classic public pages retain their original overflow policy');
+    if(width<=900)for(const tag of ['html','body'])assert.equal(await classic.page.locator(tag).evaluate(element=>getComputedStyle(element).overflowX),'hidden','unrelated mobile pages retain the original horizontal lock');
+   }finally{await classic.close();}
+  }
+  const editor=await mount(browser,1440,'editor=1&narrow=1',{brand:true});try{
+   assert.equal(await editor.page.locator('main.faolla-public-site-shell').count(),0);
+   assert.equal(await editor.page.locator('html').evaluate(element=>getComputedStyle(element).overflowX),'visible');
+   assert.equal(await editor.page.locator('body').evaluate(element=>getComputedStyle(element).overflowX),'visible');
+  }finally{await editor.close();}
+ }finally{await browser.close();}
+});
+
 test('hero carousel supports next, previous, pause, focus/hover and reduced motion; legacy autoplay is unchanged',{timeout:60000},async()=>{
  const browser=await chromium.launch({headless:true});
  try{
@@ -142,7 +176,11 @@ test('opt-in brand navigation: sticky desktop, real submenus, keyboard/outside c
     else assert.equal(await menu.isVisible(),true);
     const sub=nav.getByRole('button',{name:'Open submenu: Home',exact:true});
     await sub.focus();await sub.press('ArrowDown');
-    const child=nav.getByRole('button',{name:'Explore experiences',exact:true});await child.waitFor();assert.equal(await child.evaluate(e=>document.activeElement===e),true);
+    const child=nav.getByRole('button',{name:'Explore experiences',exact:true});await child.waitFor();
+    // Opening renders before BrandedNavigation's requestAnimationFrame focus.
+    // Wait for the actual focus transition; a missing focus still times out.
+    await f.page.waitForFunction(()=>document.querySelector('[data-site-navigation] .faolla-site-submenu button')===document.activeElement);
+    assert.equal(await child.evaluate(e=>document.activeElement===e),true);
     await child.press('Escape');assert.equal(await child.isVisible(),false);assert.equal(await sub.evaluate(e=>document.activeElement===e),true);
     await sub.press('Enter');await child.waitFor();
     assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);

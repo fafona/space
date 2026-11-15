@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import postcss from "postcss";
 import type { NavProps } from "../data/homeBlocks";
 import { getSiteNavigationItems, getSiteNavigationSubItems, siteNavigationColor } from "./siteNavigation";
 import { sanitizeBlocksForRuntime } from "./blocksSanitizer";
@@ -36,4 +38,25 @@ test("native draft sanitization preserves configured navigation and independent 
   assert.equal(result.removed, 0);
   assert.deepEqual(result.blocks[0], nav);
   assert.notEqual(result.blocks[0].props, nav.props);
+});
+
+test("public sticky overflow correction is opt-in and never overrides vertical modal locking", () => {
+  const css = postcss.parse(readFileSync(new URL("../components/blocks/siteNavigation.css", import.meta.url), "utf8"));
+  const rootRules: string[][] = [];
+  css.walkRules(rule => {
+    if (!rule.selectors.some(selector => /^(?:html|body|main)[.:]/.test(selector))) return;
+    rootRules.push(rule.selectors);
+    assert.deepEqual(rule.selectors, [
+      "html:has(main.faolla-public-site-shell [data-site-navigation])",
+      "body:has(main.faolla-public-site-shell [data-site-navigation])",
+      "main.faolla-public-site-shell:has([data-site-navigation])",
+    ]);
+    assert.equal(rule.nodes.length, 1);
+    rule.walkDecls(declaration => {
+      assert.equal(declaration.prop, "overflow-x");
+      assert.equal(declaration.value, "clip");
+      assert.equal(declaration.important, true);
+    });
+  });
+  assert.equal(rootRules.length, 1);
 });
