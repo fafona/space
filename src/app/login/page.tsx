@@ -820,7 +820,7 @@ function LoginPageInner() {
   const userEntryLabel = normalizedLocale.startsWith("zh") ? "用户登录入口" : "User Sign-In Entry";
   const registrationEntryLabel = normalizedLocale.startsWith("zh") ? "用户注册" : "Create Account";
   const userEntryDescription = normalizedLocale.startsWith("zh")
-    ? "登录后按账号身份自动进入个人中心或商户后台。"
+    ? "个人与商户入口已合并，登录后按账号身份自动进入个人中心或商户后台。"
     : "Your account identity determines whether you enter the personal center or merchant admin.";
   const authSectionLabel = useMemo(() => {
     if (pendingSignupVerificationEmail) return normalizedLocale.startsWith("zh") ? "用户注册" : "Account Registration";

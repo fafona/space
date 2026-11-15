@@ -141,6 +141,9 @@ test('unified entry, bottom registration and clean verification on desktop and m
         assert.equal(await entry.getByRole('button', {name: /^用户登录入口/}).count(), 1);
         assert.equal(await entry.getByRole('button', {name: /^企业员工入口/}).count(), 1);
         assert.equal(await entry.getByRole('button', {name: /^(个人入口|商户入口)/}).count(), 0);
+        // Existing merchant journeys can locate the combined entry by its
+        // visible explanation; there is still just one user sign-in button.
+        assert.equal(await entry.getByRole('button', {name: /商户入口/}).count(), 1);
         const signup = entry.locator('[data-login-entry-footer]').getByRole('button', {name: '用户注册', exact: true});
         assert.equal(await entry.evaluate(el => el.lastElementChild.hasAttribute('data-login-entry-footer')), true);
         await signup.scrollIntoViewIfNeeded();
