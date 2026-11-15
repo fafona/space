@@ -247,10 +247,10 @@ export default function GlobalLanguageSwitcher() {
       data-no-translate="1"
       className={`pointer-events-none fixed right-6 ${isMobileAdminPage ? "z-[2147483605]" : "z-[20010]"} ${mobileAdminTopClassName} md:right-8`}
     >
-      <div ref={rootRef} className="pointer-events-auto relative">
+      <div ref={rootRef} className="pointer-events-auto relative flex">
         <button
           type="button"
-          className="faolla-mobile-language-button block h-6 w-[35px] overflow-hidden rounded-[3px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
+          className="faolla-utility-control faolla-mobile-language-button w-[35px] overflow-hidden rounded-[3px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
           onClick={() => setOpen((prev) => !prev)}
           aria-label={t("lang.placeholder")}
           aria-expanded={open}

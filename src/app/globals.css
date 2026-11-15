@@ -2,6 +2,21 @@
 @import "../components/blocks/leisurePresentation.css";
 @import "../components/blocks/siteNavigation.css";
 
+/* Controls sharing the top-right language row use the flag's height. */
+.faolla-utility-control {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  min-height: 24px;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .faolla-service-sheet { height: min(82dvh, 920px); max-height: 82dvh; padding-bottom: env(safe-area-inset-bottom); }
 .faolla-service-sheet::backdrop { background: rgb(2 6 23 / .32); }
 .faolla-public-chat-launcher { position: fixed; right: max(18px,env(safe-area-inset-right)); bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 90; }

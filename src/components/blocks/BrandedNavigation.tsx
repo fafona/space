@@ -5,7 +5,7 @@ import Image from "next/image";
 import type { NavBlockProps } from "./NavBlock";
 import { useI18n } from "@/components/I18nProvider";
 import { localizeSystemDefaultText } from "@/lib/editorSystemDefaults";
-import { getSiteNavigationItems, getSiteNavigationSubItems, siteNavigationColor } from "@/lib/siteNavigation";
+import { getSiteNavigationItems, getSiteNavigationSubItems, siteNavigationColor, siteNavigationDensity } from "@/lib/siteNavigation";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import { toPlainRichText } from "@/lib/richTextSafety";
 import { toRichHtml } from "./richText";
@@ -65,7 +65,7 @@ export default function BrandedNavigation(props: NavBlockProps) {
 
   return (
     <section ref={root} data-site-navigation data-force-mobile={props.forceMobileViewport || undefined}
-      data-utility-space={props.navUtilitySpace || undefined} className="faolla-site-navigation" style={style}
+      data-utility-space={props.navUtilitySpace || undefined} data-density={siteNavigationDensity(props.navDensity)} className="faolla-site-navigation" style={style}
       onKeyDown={event => {
         if (event.key !== "Escape") return;
         event.stopPropagation();

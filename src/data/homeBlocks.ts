@@ -501,6 +501,7 @@ export type NavProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading?: string;
     navLayout?: "classic" | "brand-header";
+    navDensity?: "standard" | "compact";
     navSticky?: boolean;
     navLogoUrl?: string;
     navLogoAlt?: string;

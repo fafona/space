@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import postcss from "postcss";
 import type { NavProps } from "../data/homeBlocks";
-import { getSiteNavigationItems, getSiteNavigationSubItems, siteNavigationColor } from "./siteNavigation";
+import { getSiteNavigationItems, getSiteNavigationSubItems, siteNavigationColor, siteNavigationDensity } from "./siteNavigation";
 import { sanitizeBlocksForRuntime } from "./blocksSanitizer";
 
 const value: NavProps = {
@@ -33,11 +33,16 @@ test("malformed imported navigation is bounded and colors cannot inject styles",
   assert.equal(siteNavigationColor("#f5888e", "#ffffff"), "#f5888e");
 });
 test("native draft sanitization preserves configured navigation and independent copies", () => {
-  const nav = { id: "nav", type: "nav" as const, props: { ...structuredClone(value), schemaVersion: 3, navLayout: "brand-header" as const, navSticky: true, navLogoUrl: "https://example.com/logo.webp" } };
+  const nav = { id: "nav", type: "nav" as const, props: { ...structuredClone(value), schemaVersion: 3, navLayout: "brand-header" as const, navDensity: "compact" as const, navSticky: true, navLogoUrl: "https://example.com/logo.webp" } };
   const result = sanitizeBlocksForRuntime([nav]);
   assert.equal(result.removed, 0);
   assert.deepEqual(result.blocks[0], nav);
   assert.notEqual(result.blocks[0].props, nav.props);
+});
+
+test("compact density is explicit; absent, classic and malformed values retain normal sizing", () => {
+  assert.equal(siteNavigationDensity("compact"), "compact");
+  for (const input of [undefined, null, "standard", "classic", "compact;position:fixed", {}, 1]) assert.equal(siteNavigationDensity(input), undefined);
 });
 
 test("public sticky overflow correction is opt-in and never overrides vertical modal locking", () => {

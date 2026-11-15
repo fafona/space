@@ -43,3 +43,27 @@ test("Google OAuth uses the production allow-listed callback bridge", async () =
   assert.match(oauthFlow, /callbackUrl\.searchParams\.set\("oauth", "google"\)/);
   assert.match(oauthFlow, /redirectTo: callbackUrl\.toString\(\)/);
 });
+
+test("personal and merchant sign-in share one entry and registration lives in the entry footer", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  assert.match(source, /const userEntryLabel = .*"用户登录入口"/);
+  assert.match(source, /data-login-entry-footer className="mt-auto/);
+  assert.match(source, /onClick=\{\(\) => selectSignupView\("personal"\)\}/);
+  assert.doesNotMatch(source, /personalEntryDescription|merchantEntryDescription|showAutoSwitchedEntryNotice/);
+  assert.match(source, /signInViaServer\(account, password, requestedEntryAccountType\)/);
+  assert.match(source, /\.\.\.\(preferredAccountType \? \{ preferredAccountType \} : \{\}\)/);
+});
+
+test("registration and verification never render the sign-in action group", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  assert.match(source, /const isRegistrationFlow = authView !== "signin" \|\| Boolean\(pendingSignupVerificationEmail\)/);
+  assert.match(source, /!isRegistrationFlow \? <div data-login-signin-actions/);
+  assert.match(source, /!pendingSignupVerificationEmail \? \(\s*<button\s*data-auth-primary-action=/);
+  assert.match(source, /activeSignupAccountType && !pendingSignupVerificationEmail \? \(/);
+  const signUpStart = source.indexOf("async function signUp(");
+  const signUpEnd = source.indexOf("function selectSignupView(", signUpStart);
+  assert.ok(signUpStart >= 0 && signUpEnd > signUpStart);
+  const signUp = source.slice(signUpStart, signUpEnd);
+  assert.match(signUp, /if \(needsConfirmation\) \{\s*setPendingSignupVerificationEmail/);
+  assert.doesNotMatch(signUp, /setAuthView\("signin"\)/, "sending a verification code must not switch back to login");
+});

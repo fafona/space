@@ -129,13 +129,13 @@ export default function FrontendAuthEntry({
   if (hideLogin) return null;
 
   return (
-    <div className={className}>
+    <div className={`flex items-center ${className}`}>
       <Link
         href={loginHref}
         target="_top"
         className={
-          loginClassName ||
-          "inline-flex items-center rounded-full border border-slate-200/80 bg-white/90 px-4 py-2 text-sm font-semibold text-slate-900 shadow-[0_12px_30px_rgba(15,23,42,0.14)] backdrop-blur transition hover:bg-white"
+          `faolla-utility-control ${loginClassName ||
+          "rounded-full border border-slate-200/80 bg-white/90 px-3 text-xs font-semibold text-slate-900 shadow-[0_12px_30px_rgba(15,23,42,0.14)] backdrop-blur transition hover:bg-white"}`
         }
         aria-label="登录"
       >
