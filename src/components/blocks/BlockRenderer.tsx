@@ -491,7 +491,8 @@ export default function BlockRenderer({
             data-jump-target={publicBlockId}
             data-block-public-id={publicBlockId}
             data-leisure-role={leisurePresentation ? getLeisureRole(b) : undefined}
-            style={{ ...(leisurePresentation ? getLeisureBlockStyle(b, index) : undefined), zIndex: getBlockRenderStackOrder(b, index, blocks.length) }}
+            style={{ ...(leisurePresentation ? getLeisureBlockStyle(b, index) : undefined), zIndex: getBlockRenderStackOrder(b, index, blocks.length),
+              ...(b.type === "nav" && b.props.navLayout === "brand-header" && b.props.navSticky === true ? { position: "sticky", top: 0, alignSelf: "start", zIndex: 100 } : {}) }}
           >
             <BlockRuntimeBoundary blockId={b.id}>
               {content}

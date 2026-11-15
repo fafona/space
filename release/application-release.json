@@ -1,8 +1,8 @@
 {
   "schemaVersion": 3,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "d246ea6a824c2a657db046da9e927d814db24c80",
-  "purpose": "Introduce an explicit opt-in leisure website layout with native editable blocks and accessible carousel controls; no changes to existing layouts, booking logic, data, dependencies, worker or mail.",
+  "baseline": "ca92851ff2dba44dd1ad71fa3cd3ec66e0becf5f",
+  "purpose": "Deploy configurable opt-in brand navigation with sticky desktop header, existing-page submenus, mobile disclosure and native editor settings; preserve classic navigation, booking, data and certified worker; mail stays off.",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,36 +10,24 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
-      "file": "scripts/application-release-template-browser-acceptance.mjs",
+      "file": "docs/native-brand-navigation.md",
       "role": "verification",
-      "before": [
-        "100644",
-        "aa418b0fcd2b62c7f526db088c3a5d07bbb2f5a0"
-      ],
+      "before": null,
       "after": [
         "100644",
-        "f1212a08ced377fe651e0d8840da47308efb3522"
+        "9261c68413aa7ba3c0cc30f6f1cb3309be38daf3"
       ]
     },
     {
       "file": "scripts/leisure-presentation-browser-acceptance.mjs",
       "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "f3631c7d980de2bd12123761d7cd530ede46a805"
-      ]
-    },
-    {
-      "file": "src/app/admin/AdminClient.tsx",
-      "role": "application",
       "before": [
         "100644",
-        "81fe6cbaf70f1485f8451357215409851b9eb66d"
+        "f3631c7d980de2bd12123761d7cd530ede46a805"
       ],
       "after": [
         "100644",
-        "e4c125b9b4f44b2d23a8836bd143a9b6a97e02e0"
+        "831421714bb9829a9bf57771101b61e929cca4ef"
       ]
     },
     {
@@ -47,11 +35,32 @@
       "role": "application",
       "before": [
         "100644",
-        "79feb97aeaab65a6984a7709f762ff2587a4cf39"
+        "348644a41e79284def6c055f55b4af2724ed2840"
       ],
       "after": [
         "100644",
-        "348644a41e79284def6c055f55b4af2724ed2840"
+        "30a178a590d55076b46e53090430f4b07ab81fa3"
+      ]
+    },
+    {
+      "file": "src/components/admin/InlineEditorBlock.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "b7f9d27ca917b0ecebd10894ecb98452251c240a"
+      ],
+      "after": [
+        "100644",
+        "a5babf628a590ea5ac04bfcb841f83bf4c28091d"
+      ]
+    },
+    {
+      "file": "src/components/admin/SiteNavigationSettings.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "d983649ee8edc05a98441d2ce2218ffbdf53c1b4"
       ]
     },
     {
@@ -59,50 +68,53 @@
       "role": "application",
       "before": [
         "100644",
-        "47ae34769546a1693c2fff7e4a40e2fac1e70fab"
+        "2f961b724d1036104af076ae483431f5d5c0b178"
       ],
       "after": [
         "100644",
-        "2f961b724d1036104af076ae483431f5d5c0b178"
+        "451120fac3f299fdd54864ebb1b0a7c70cf55ada"
       ]
     },
     {
-      "file": "src/components/blocks/GalleryBlock.tsx",
+      "file": "src/components/blocks/BrandedNavigation.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "34e923b08836e399fcd30916370748dc08d6e73e"
+      ]
+    },
+    {
+      "file": "src/components/blocks/NavBlock.tsx",
       "role": "application",
       "before": [
         "100644",
-        "2fe53bf3b7115def40e50b21edc181c0e142f929"
+        "36de596293c627f53783c1adc61b4ff7a3299a23"
       ],
       "after": [
         "100644",
-        "34a269811dfac6a9bffba9ae7c85568e47fd0ef8"
-      ]
-    },
-    {
-      "file": "src/components/blocks/LeisurePageLayout.test.tsx",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "ec0ed86d7cb3c1bfee217e4903a48bd7c7d4f1ba"
-      ]
-    },
-    {
-      "file": "src/components/blocks/LeisurePageLayout.tsx",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "cba4b924bf4bf5fcc41770fec7e76b4fb86caee4"
+        "26985e155d320d2f61abb62cdf90bd0ada474c8e"
       ]
     },
     {
       "file": "src/components/blocks/leisurePresentation.css",
       "role": "application",
+      "before": [
+        "100644",
+        "fe284a30d4f2b2aee2764c8eee732faa0f7ca855"
+      ],
+      "after": [
+        "100644",
+        "9331eeba7bfda9fd2407f906c0af1494aabc68f5"
+      ]
+    },
+    {
+      "file": "src/components/blocks/siteNavigation.css",
+      "role": "application",
       "before": null,
       "after": [
         "100644",
-        "fe284a30d4f2b2aee2764c8eee732faa0f7ca855"
+        "1c8d57a47e9f95b57ac41fda2aec8ca2250516c1"
       ]
     },
     {
@@ -110,33 +122,58 @@
       "role": "application",
       "before": [
         "100644",
-        "dee9866739b1807370c0c2ec812d3e2b22f2f7bf"
+        "5486ab704a97cdbb9bed4a2526ea0a48ec3274ca"
       ],
       "after": [
         "100644",
-        "5486ab704a97cdbb9bed4a2526ea0a48ec3274ca"
+        "02f3d9438db96856023a46fbe044eaaf19020540"
       ]
     },
     {
-      "file": "src/lib/leisurePresentation.test.ts",
+      "file": "src/lib/siteNavigation.test.ts",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
-        "9ed04e31d0a7dbc2af8b65da472d804e43541da4"
+        "c7d6da4fd3c0d4bd78afb9a8615c4a710cb3d901"
       ]
     },
     {
-      "file": "src/lib/leisurePresentation.ts",
+      "file": "src/lib/siteNavigation.ts",
       "role": "application",
       "before": null,
       "after": [
         "100644",
-        "53a68938080df0cfc2a8a81a683a247443c88f2f"
+        "d66d27319f2ad279196c402e10a3d7ed76c545bb"
+      ]
+    },
+    {
+      "file": "src/lib/websiteTemplateLibrary.test.ts",
+      "role": "verification",
+      "before": [
+        "100644",
+        "f55056a3d33452a3c328a17b4d01828b30642c6f"
+      ],
+      "after": [
+        "100644",
+        "d6e95ec1461412921fb109e3a9c296cc722c1d5f"
+      ]
+    },
+    {
+      "file": "src/lib/websiteTemplateLibrary.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "2bd5a675a81e990933056bd095bf46942429e4fc"
+      ],
+      "after": [
+        "100644",
+        "b0c5801fdf3721601e41783da78d5eb095f14f34"
       ]
     }
   ],
   "focusedTests": [
+    "src/lib/siteNavigation.test.ts",
     "src/lib/leisurePresentation.test.ts",
     "src/components/blocks/LeisurePageLayout.test.tsx",
     "src/lib/websiteTemplateLibrary.test.ts",

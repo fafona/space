@@ -14,6 +14,8 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import NextImage from "next/image";
+import BrandedNavigation from "@/components/blocks/BrandedNavigation";
+import SiteNavigationSettings from "./SiteNavigationSettings";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import {
@@ -6014,7 +6016,7 @@ type GalleryEditorImage = {
           data-block-visual-boundary
           className={`${navCardClass} ${isSelected ? "!overflow-visible" : ""}`}
           onClick={onSelect}
-          style={{ ...blockBackgroundStyle, ...navBlockSizeStyle, ...previewBorderInlineStyle }}
+          style={block.props.navLayout === "brand-header" ? { padding: 0, background: "transparent", overflow: "visible" } : { ...blockBackgroundStyle, ...navBlockSizeStyle, ...previewBorderInlineStyle }}
         >
           {imageDialog}
           {imageSettingsDialog}
@@ -6032,7 +6034,9 @@ type GalleryEditorImage = {
                 onActivate={registerActiveEditor}
                 onSelectionChange={updateSelectionRange}
               />
+              <SiteNavigationSettings value={block.props} onChange={onChange} upload={onPersistImageFile} onAlert={onAlert} />
               <div className="flex items-center gap-2 flex-nowrap overflow-visible">
+                {block.props.navLayout !== "brand-header" ? <>
                 <span className="text-sm text-gray-600 whitespace-nowrap shrink-0">{"方向"}</span>
                 <button
                   type="button"
@@ -6052,6 +6056,7 @@ type GalleryEditorImage = {
                 >
                   {"纵向"}
                 </button>
+                </> : null}
                 <span className="ml-4 text-sm text-gray-600 whitespace-nowrap shrink-0">{"栏目数量"}</span>
                 <button
                   type="button"
@@ -6072,13 +6077,13 @@ type GalleryEditorImage = {
                 >
                   +
                 </button>
-                <button
+                {block.props.navLayout !== "brand-header" ? <button
                   type="button"
                   className="ml-3 px-3 py-1 rounded border bg-white hover:bg-gray-50 text-sm whitespace-nowrap shrink-0"
                   onClick={editNavItemStyle}
                 >
                   栏目样式
-                </button>
+                </button> : null}
                 <button
                   type="button"
                   className="px-3 py-1 rounded border bg-white hover:bg-gray-50 text-sm whitespace-nowrap shrink-0 disabled:opacity-40"
@@ -6089,7 +6094,7 @@ type GalleryEditorImage = {
                   导航栏对齐
                 </button>
               </div>
-              {previewViewport === "mobile" ? (
+              {previewViewport === "mobile" && block.props.navLayout !== "brand-header" ? (
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm text-gray-600 whitespace-nowrap shrink-0">{"手机导航"}</span>
                   <button
@@ -6131,11 +6136,11 @@ type GalleryEditorImage = {
                   </div>
                 ))}
               </div>
-              <div className={orientation === "vertical" ? "flex flex-col items-start gap-2 pt-1" : "flex flex-wrap gap-2 pt-1"}>
+              {block.props.navLayout === "brand-header" ? <BrandedNavigation {...block.props} currentPageId={selectedNavPageId} forceMobileViewport={previewViewport === "mobile"} onNavigatePage={setPreviewNavPageId} /> : <div className={orientation === "vertical" ? "flex flex-col items-start gap-2 pt-1" : "flex flex-wrap gap-2 pt-1"}>
                 {mobileHiddenNavMode ? renderHiddenMobileNavPreview() : renderNavPreviewButtons()}
-              </div>
+              </div>}
             </div>
-          ) : (
+          ) : block.props.navLayout === "brand-header" ? <BrandedNavigation {...block.props} currentPageId={selectedNavPageId} forceMobileViewport={previewViewport === "mobile"} onNavigatePage={setPreviewNavPageId} /> : (
             <div className="space-y-2">
               {!mobileHiddenNavMode && block.props.heading ? (
                 <div
@@ -6150,7 +6155,7 @@ type GalleryEditorImage = {
           )}
           {resizeHandles}
         </div>
-        {hiddenMobileNavPreviewPopup}
+        {block.props.navLayout !== "brand-header" ? hiddenMobileNavPreviewPopup : null}
       </section>
     );
   }

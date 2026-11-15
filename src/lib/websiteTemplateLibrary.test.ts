@@ -7,6 +7,16 @@ import { type PagePlanConfig, type PlanId } from './pagePlans';
 import type { Block } from '@/data/homeBlocks';
 function config(): PagePlanConfig { return { activePlanId: 'plan-1', plans: ([1, 2, 3] as const).map(i => ({ id: ('plan-' + i) as PlanId, name: '方案' + i, activePageId: 'page-a', blocks: [], pages: [{ id: 'page-a', name: '首页', blocks: [{ id: 'heading', type: 'text', props: { heading: 'Original', text: 'untouched' } }] }] })) }; }
 function design(): WebsiteTemplateDesign { return { desktop: [{ id: 'home', name: '乐园首页', blocks: [{ id: 'new', type: 'text', props: { heading: 'New', text: 'Sample' } }] }], mobile: [{ id: 'home', name: '乐园首页', blocks: [{ id: 'new-mobile', type: 'text', props: { heading: 'Mobile', text: 'Sample' } }] }] }; }
+test('branded template navigation retains existing page boundaries for submenus and primary action', () => {
+    const d = design();
+    const nav: Extract<Block, { type: 'nav' }> = { id: 'nav', type: 'nav', props: { navLayout: 'brand-header', navItems: [{ id: 'home', label: 'Home', pageId: 'home' }], navSubItems: [{ id: 'sub', parentPageId: 'home', label: 'Home section', pageId: 'home' }] } };
+    d.desktop[0].blocks.push(nav);
+    assert.doesNotThrow(() => validateWebsiteTemplateDesign(d));
+    nav.props.navSubItems![0].pageId = 'missing';
+    assert.throws(() => validateWebsiteTemplateDesign(d), /invalid_template_navigation/);
+    nav.props.navSubItems![0].pageId = 'home'; nav.props.navCtaPageId = 'missing';
+    assert.throws(() => validateWebsiteTemplateDesign(d), /invalid_template_navigation/);
+});
 test('applies only the selected plan on both viewports and preserves active/public plan selection', () => {
     const target = { desktop: config(), mobile: config() };
     const before = structuredClone(target);

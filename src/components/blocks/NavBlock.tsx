@@ -9,6 +9,8 @@ import { getBackgroundStyle } from "./backgroundStyle";
 import { getBlockBorderClass, getBlockBorderInlineStyle } from "./borderStyle";
 import { resolveMobileFitCardClass, resolveMobileFitSectionClass } from "./mobileFrame";
 import { stripInlineTextColorStylesFromHtml, toInlineHeadingHtmlSegments, toRichHtml } from "./richText";
+import BrandedNavigation from "./BrandedNavigation";
+import type { NavProps } from "@/data/homeBlocks";
 
 type NavItem = {
   id?: string;
@@ -16,7 +18,7 @@ type NavItem = {
   pageId?: string;
 };
 
-type NavBlockProps = BackgroundEditableProps & {
+export type NavBlockProps = NavProps & BackgroundEditableProps & {
   heading?: string;
   navOrientation?: "horizontal" | "vertical";
   mobileNavDisplayMode?: "inline" | "hidden";
@@ -104,6 +106,10 @@ function buildLabelColorStyle(color: string) {
 }
 
 export default function NavBlock(props: NavBlockProps) {
+  return props.navLayout === "brand-header" ? <BrandedNavigation {...props} /> : <ClassicNavigation {...props} />;
+}
+
+function ClassicNavigation(props: NavBlockProps) {
   const { locale } = useI18n();
   const mobileFitScreenWidth = props.mobileFitScreenWidth === true;
   const [mobileMenuOpenPageId, setMobileMenuOpenPageId] = useState<string | null>(null);

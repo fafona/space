@@ -19,7 +19,7 @@ const fixture=[b('header','nav','header',{heading:'Synthetic leisure',navItems:[
 const visit=[b('booking','booking','booking',{pagePresentation:'leisure-visit-v1',heading:'Synthetic booking',bookingButtonLabel:'Send synthetic request',bookingStores:['Synthetic store'],bookingItems:['Synthetic activity']}),b('long-visit','common',undefined,{pagePresentation:'leisure-visit-v1',blockHeight:2400,commonTextBoxes:[]})];
 let assetsPromise;
 async function assets(){return assetsPromise??=(async()=>{
- const css=(await postcss([tailwind()]).process('@import "tailwindcss" source(none);\n@source "../src/components/blocks";\n@source "../src/components/admin/InlineEditorBlock.tsx";\n'+await readFile('src/components/blocks/leisurePresentation.css','utf8'),{from:path.resolve('scripts/leisure-fixture.css')})).css;
+ const css=(await postcss([tailwind()]).process('@import "tailwindcss" source(none);\n@source "../src/components/blocks";\n@source "../src/components/admin/InlineEditorBlock.tsx";\n@source "../src/components/admin/SiteNavigationSettings.tsx";\n'+await readFile('src/components/blocks/leisurePresentation.css','utf8')+'\n'+await readFile('src/components/blocks/siteNavigation.css','utf8'),{from:path.resolve('scripts/leisure-fixture.css')})).css;
  const script=(await build({stdin:{loader:'tsx',resolveDir:process.cwd(),contents:`
  import React,{useState}from'react';import{createRoot}from'react-dom/client';
  import{SearchParamsContext}from'next/dist/shared/lib/hooks-client-context.shared-runtime';
@@ -53,7 +53,9 @@ async function mount(browser,width,query='',options={}){
   unexpected.push(request.method()+' '+request.url());return route.abort();
  });
  const ordinary=blocks=>blocks.map(b=>{const props={...b.props};delete props.pagePresentation;delete props.leisureRole;return{...b,props};});
- await page.goto(origin+'/?'+query);await page.evaluate(({fixture,gallery,visit})=>{window.__fixture=fixture;window.__gallery=gallery;window.__visit=visit;},{fixture:options.ordinary?ordinary(fixture):fixture,gallery,visit:options.ordinary?ordinary(visit):visit});
+ const brandFixture=structuredClone(fixture);
+ if(options.brand)Object.assign(brandFixture[0].props,{navLayout:'brand-header',navLogoUrl:image(1),navSticky:true,bgColor:'#303136',fontColor:'#ffffff',navCtaPageId:'visit',navSubItems:[{id:'child-home',parentPageId:'home',label:'Explore experiences',pageId:'home'},{id:'child-visit',parentPageId:'home',label:'Book a visit',pageId:'visit'}]});
+ await page.goto(origin+'/?'+query);await page.evaluate(({fixture,gallery,visit})=>{window.__fixture=fixture;window.__gallery=gallery;window.__visit=visit;},{fixture:options.ordinary?ordinary(brandFixture):brandFixture,gallery,visit:options.ordinary?ordinary(visit):visit});
  const{css,script}=await assets();await page.addStyleTag({content:css});await page.addScriptTag({content:script});
  await page.locator(query.includes('legacy')?'img':options.ordinary?'[data-block-id="intro"]':'[data-leisure-presentation]').waitFor();
  return{page,context,errors,unexpected,async close(){await context.close();assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);}};
@@ -126,5 +128,50 @@ test('hero carousel supports next, previous, pause, focus/hover and reduced moti
    const img=legacy.page.locator('img').first(),first=await img.getAttribute('src');
    await legacy.page.waitForFunction(value=>document.querySelector('img')?.getAttribute('src')!==value,first);
   }finally{await legacy.close();}
+ }finally{await browser.close();}
+});
+
+test('opt-in brand navigation: sticky desktop, real submenus, keyboard/outside close, responsive mobile and native settings',{timeout:90000},async()=>{
+ const browser=await chromium.launch({headless:true});
+ try{
+  for(const width of [1440,1024,900,390,320]){
+   const f=await mount(browser,width,'',{brand:true});try{
+    const nav=f.page.locator('[data-site-navigation]'),menu=nav.locator('nav'),toggle=nav.locator('.faolla-site-menu-toggle');
+    assert.equal(await toggle.isVisible(),width<=900);
+    if(width<=900){assert.equal(await menu.isVisible(),false);await toggle.click();assert.equal(await toggle.getAttribute('aria-expanded'),'true');}
+    else assert.equal(await menu.isVisible(),true);
+    const sub=nav.getByRole('button',{name:'Open submenu: Home',exact:true});
+    await sub.focus();await sub.press('ArrowDown');
+    const child=nav.getByRole('button',{name:'Explore experiences',exact:true});await child.waitFor();assert.equal(await child.evaluate(e=>document.activeElement===e),true);
+    await child.press('Escape');assert.equal(await child.isVisible(),false);assert.equal(await sub.evaluate(e=>document.activeElement===e),true);
+    await sub.press('Enter');await child.waitFor();
+    assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    await f.page.locator('[data-block-id="intro"] h2').click();assert.equal(await child.isVisible(),false);
+    if(width<=900){assert.equal(await menu.isVisible(),false);await toggle.click();}
+    await f.page.evaluate(()=>scrollTo(0,800));
+    const sticky=await f.page.locator('[data-leisure-role="header"]').boundingBox();assert(Math.abs(sticky.y)<2,'header stays within the actual scroll viewport');
+    if(width>900){await nav.getByRole('button',{name:'Home',exact:true}).hover();await child.waitFor();await f.page.mouse.move(width-10,500);await child.waitFor({state:'hidden'});}
+    await sub.focus();await sub.press('Enter');await nav.getByRole('button',{name:'Book a visit',exact:true}).click();
+    await f.page.getByText('Synthetic booking',{exact:true}).waitFor();await f.page.waitForFunction(()=>scrollY<5);
+   }finally{await f.close();}
+  }
+  const embedded=await mount(browser,1440,'editor=1&narrow=1',{brand:true});try{
+   await embedded.page.locator('[data-leisure-role="header"] [data-block-visual-boundary]').click({position:{x:4,y:4}});
+   const settings=embedded.page.locator('[data-site-navigation-settings]');await settings.waitFor();
+   const nav=embedded.page.locator('[data-site-navigation]');await nav.getByRole('button',{name:'Open navigation',exact:true}).click();
+   assert.equal(await nav.getByRole('button',{name:'Visit',exact:true}).isVisible(),true);
+   assert.equal(await settings.getByLabel('页面滚动时吸顶').isChecked(),true);
+   await settings.getByLabel('页面滚动时吸顶').uncheck();
+   await embedded.page.waitForFunction(()=>window.__blocks[0].props.navSticky===false);
+   await settings.getByRole('button',{name:'添加子栏目',exact:true}).click();
+   await embedded.page.waitForFunction(()=>window.__blocks[0].props.navSubItems.length===3);
+   const last=settings.getByLabel('子栏目名称',{exact:true}).last();await last.fill('Custom submenu');
+   await settings.getByLabel('子栏目目标页面',{exact:true}).last().selectOption('visit');
+   await embedded.page.waitForFunction(()=>window.__blocks[0].props.navSubItems.at(-1).label==='Custom submenu'&&window.__blocks[0].props.navSubItems.at(-1).pageId==='visit');
+   const snapshot=await embedded.page.evaluate(()=>structuredClone(window.__blocks[0].props.navItems));
+   await settings.getByLabel('导航样式',{exact:true}).selectOption('classic');
+   await embedded.page.waitForFunction(()=>window.__blocks[0].props.navLayout==='classic');
+   assert.equal(await embedded.page.locator('[data-site-navigation]').count(),0);assert.deepEqual(await embedded.page.evaluate(()=>window.__blocks[0].props.navItems),snapshot);
+  }finally{await embedded.close();}
  }finally{await browser.close();}
 });

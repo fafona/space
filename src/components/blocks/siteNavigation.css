@@ -1,0 +1,56 @@
+/* Native, explicitly enabled navigation. No selector affects classic navigation. */
+.faolla-leisure-site > [data-leisure-role="header"]:has([data-site-navigation]) { grid-column:1 / -1; grid-row:1; z-index:100 !important; }
+.faolla-leisure-site [data-leisure-role="header"]:has([data-site-navigation]) > section:not([data-site-navigation]) { padding:0; max-width:none; margin:0; }
+.faolla-leisure-site [data-leisure-role="header"] [data-block-visual-boundary]:has([data-site-navigation]) { padding:0; background-image:none !important; }
+.faolla-leisure-site [data-site-navigation-settings] { color:#17213a; }
+.faolla-site-navigation { container: site-navigation / inline-size; width:100%; background:var(--site-nav-bg); color:var(--site-nav-text); font-size:16px; }
+.faolla-site-navigation[data-utility-space] { padding-top:48px; }
+.faolla-site-navigation-inner { display:flex; align-items:center; justify-content:space-between; gap:40px; max-width:1280px; min-height:110px; margin:auto; padding:16px 32px; }
+.faolla-site-navigation button { appearance:none; color:inherit; font:inherit; cursor:pointer; border:0; background:transparent; }
+.faolla-site-navigation button:focus-visible { outline:3px solid var(--site-nav-accent); outline-offset:4px; }
+.faolla-site-brand { display:flex; align-items:center; gap:16px; min-width:0; text-align:left; font-size:22px !important; font-weight:800 !important; }
+.faolla-site-brand span { overflow-wrap:anywhere; line-height:1.2; }
+.faolla-site-logo { width:64px; height:64px; object-fit:contain; flex-shrink:0; }
+.faolla-site-links { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px 26px; padding:0; margin:0; list-style:none; }
+.faolla-site-menu { min-width:0; }
+.faolla-site-menu-item { position:relative; list-style:none; min-width:0; max-width:100%; }
+.faolla-site-link-row { display:flex; align-items:center; }
+.faolla-site-link { min-width:0; overflow-wrap:anywhere; min-height:48px; padding:10px 4px; font-weight:750 !important; line-height:1.3; text-align:left; transition:color .18s, transform .18s; }
+.faolla-site-link:hover,.faolla-site-link[aria-current=page],.faolla-site-menu-item[data-expanded] > .faolla-site-link-row { color:var(--site-nav-accent); }
+.faolla-site-link:hover { transform:translateY(-2px); }
+.faolla-site-submenu-toggle { width:34px; min-height:44px; display:grid; place-items:center; border-radius:8px; }
+.faolla-site-submenu-toggle svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2; transition:transform .18s; }
+.faolla-site-submenu-toggle[aria-expanded=true] svg { transform:rotate(180deg); }
+.faolla-site-menu-item[data-cta] > .faolla-site-link-row { background:var(--site-nav-accent); color:#252833; border-radius:18px; padding:0 20px; }
+.faolla-site-menu-item[data-cta] .faolla-site-link { color:inherit; }
+.faolla-site-submenu { position:absolute; top:100%; right:0; width:max-content; min-width:230px; max-width:min(350px,80vw); max-height:min(70dvh,520px); overflow-y:auto; padding:10px; margin:0; list-style:none; background:var(--site-nav-panel); color:var(--site-nav-text); border-radius:0 0 14px 14px; border-top:3px solid var(--site-nav-accent); box-shadow:0 16px 32px #0003; z-index:100; }
+.faolla-site-submenu[hidden] { display:none; }
+.faolla-site-submenu button { display:block; width:100%; min-height:44px; text-align:left; padding:12px 16px; border-radius:6px; overflow-wrap:anywhere; white-space:normal; line-height:1.4; }
+.faolla-site-submenu button:hover { background:#ffffff12; color:var(--site-nav-accent); }
+.faolla-site-menu-toggle { display:none; width:44px; height:44px; flex-shrink:0; }
+.faolla-site-menu-toggle svg { width:27px; height:27px; fill:none; stroke:currentColor; stroke-width:2.3; stroke-linecap:round; }
+@container site-navigation (max-width:900px) {
+ .faolla-site-navigation-inner { flex-wrap:wrap; gap:0 10px; min-height:90px; padding:14px 22px; }
+ .faolla-site-brand { flex:1; gap:12px; font-size:19px !important; }
+ .faolla-site-logo { width:50px; height:50px; }
+ .faolla-site-menu-toggle { display:grid; place-items:center; }
+ .faolla-site-menu { display:none; flex-basis:100%; }
+ .faolla-site-menu[data-open] { display:block; max-height:calc(100dvh - 150px); overflow-y:auto; overscroll-behavior:contain; }
+ .faolla-site-links { display:flex; flex-direction:column; align-items:stretch; gap:0; padding:16px 0 8px; }
+ .faolla-site-link-row { justify-content:space-between; }
+ .faolla-site-link { flex:1; padding:13px 4px; }
+ .faolla-site-submenu-toggle { width:48px; }
+ .faolla-site-submenu { position:static; width:auto; min-width:0; max-width:none; max-height:none; background:#ffffff08; box-shadow:none; border-top:0; border-left:2px solid var(--site-nav-accent); margin:0 0 8px 4px; border-radius:0; padding:4px; }
+ .faolla-site-menu-item[data-cta] { align-self:flex-start; margin-top:14px; max-width:100%; }
+}
+.faolla-site-navigation[data-force-mobile] .faolla-site-navigation-inner { flex-wrap:wrap; }
+.faolla-site-navigation[data-force-mobile] .faolla-site-brand { flex:1; }
+.faolla-site-navigation[data-force-mobile] .faolla-site-menu-toggle { display:grid; place-items:center; }
+.faolla-site-navigation[data-force-mobile] .faolla-site-menu { display:none; flex-basis:100%; }
+.faolla-site-navigation[data-force-mobile] .faolla-site-menu[data-open] { display:block; }
+.faolla-site-navigation[data-force-mobile] .faolla-site-links { flex-direction:column; align-items:stretch; gap:0; padding:16px 0 8px; }
+.faolla-site-navigation[data-force-mobile] .faolla-site-link-row { justify-content:space-between; }
+.faolla-site-navigation[data-force-mobile] .faolla-site-link { flex:1; }
+.faolla-site-navigation[data-force-mobile] .faolla-site-submenu { position:static; width:auto; min-width:0; max-width:none; max-height:none; border-top:0; border-left:2px solid var(--site-nav-accent); box-shadow:none; }
+.faolla-site-navigation[data-force-mobile] .faolla-site-menu-item[data-cta] { align-self:flex-start; margin-top:14px; max-width:100%; }
+@media(prefers-reduced-motion:reduce) { .faolla-site-navigation button,.faolla-site-navigation svg { transition:none; transform:none; } }
