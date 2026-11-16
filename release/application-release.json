@@ -181,6 +181,18 @@
       ]
     },
     {
+      "file": "scripts/online-unpublished-candidate.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "c0a28b7f825d03feac9780dcf23fe8f7fffcee98"
+      ],
+      "after": [
+        "100644",
+        "4c656b298d08dd0d3034ac514c7b2b549f9a4a82"
+      ]
+    },
+    {
       "file": "scripts/pwa-startup-browser-acceptance.mjs",
       "role": "verification",
       "before": null,
