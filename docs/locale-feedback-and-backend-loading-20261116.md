@@ -94,3 +94,15 @@ and original auth/isolation regression tests still pass.
   Complete PR/main CI, a separate guarded build and public verification are still
   required before deployment. No online speedup or complete backend optimization
   is claimed from these local tests.
+
+## CI fixture integration
+
+The first PR run (`43940603985`, browser job `133556792386`) rejected the new
+same-origin `/flags/cn.svg` requests in the existing redemption harness, which
+only intercepted the former external flag CDN. Its nine original scenarios reached
+their unchanged unexpected-request assertions. The utility-control harness had
+the same old image fixture and was synchronized as well. Both now serve actual
+local assets only for their synthetic origin and exact known paths; all unknown
+requests and all original business/layout assertions remain rejected/retained.
+The combined locale, utility and redemption browser rerun passed all 19 groups.
+The original failed CI run remains retained; no production changes were made.

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { build } from "esbuild";
@@ -26,13 +26,13 @@ async function mount(browser, width = 1600) {
   const page = await context.newPage(), errors = [], unexpected = [];
   page.setDefaultTimeout(10_000);
   page.on("pageerror", error => errors.push(error.message));
-  await context.route("**/*", route => {
+  await context.route("**/*", async route => {
     const request = route.request(), url = new URL(request.url());
     if (request.isNavigationRequest() && url.origin === "https://redemption-audit.invalid") {
       return route.fulfill({ contentType: "text/html", body: '<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0"><div id="root"></div></body></html>' });
     }
-    if (request.resourceType() === "image" && /flagcdn\.com$/.test(url.hostname)) {
-      return route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16"><rect width="24" height="16" fill="red"/></svg>' });
+    if (request.method() === "GET" && request.resourceType() === "image" && url.origin === "https://redemption-audit.invalid" && url.pathname === "/flags/cn.svg") {
+      return route.fulfill({ contentType: "image/svg+xml", body: await readFile("public/flags/cn.svg") });
     }
     unexpected.push(`${request.method()} ${request.url()}`); return route.abort();
   });
