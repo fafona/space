@@ -15,7 +15,7 @@
       "before": null,
       "after": [
         "100644",
-        "d29ee38bd9805bf88de7f8658d9338435474ba6c"
+        "01a8e8b17e497867b7ad21527726d0f8f8ac47e7"
       ]
     },
     {
@@ -400,6 +400,30 @@
       "after": [
         "100644",
         "c3a301ec7b82cc514908e4ff9e5f0796c5d56049"
+      ]
+    },
+    {
+      "file": "scripts/public-utility-controls-browser-acceptance.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "abad10d0b8c312015d6682433298c4edb5a12b30"
+      ],
+      "after": [
+        "100644",
+        "bcf44c0707d7f2dbe9f5a5df0017b52da6dddf54"
+      ]
+    },
+    {
+      "file": "scripts/redemption-pending-cart-browser-acceptance.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "ed7ced878c5bbbd46420c9dc761cd60938c6c8f0"
+      ],
+      "after": [
+        "100644",
+        "8fddf197cc7db793554d06acd8956e5dfab27799"
       ]
     },
     {
