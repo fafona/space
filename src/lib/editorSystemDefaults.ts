@@ -240,9 +240,21 @@ function toCanonicalSystemDefaultText(value: string) {
   return null;
 }
 
-function localizeSystemDefaultValue<T>(value: T, locale: string): T {
+function createCanonicalDefaultResolver() {
+  // A single synchronous traversal sees one translation-cache state. Reuse
+  // repeated text only inside that traversal; later calls must see new caches.
+  const results = new Map<string, string | null>();
+  return (text: string) => {
+    if (results.has(text)) return results.get(text) ?? null;
+    const result = toCanonicalSystemDefaultText(text);
+    results.set(text, result);
+    return result;
+  };
+}
+
+function localizeSystemDefaultValue<T>(value: T, locale: string, resolveCanonical = createCanonicalDefaultResolver()): T {
   if (typeof value === "string") {
-    const canonical = toCanonicalSystemDefaultText(value);
+    const canonical = resolveCanonical(value);
     if (!canonical) return value;
     const normalizedLocale = normalizeDomLocale(locale);
     const translated = translateDomText(canonical, normalizedLocale);
@@ -257,7 +269,7 @@ function localizeSystemDefaultValue<T>(value: T, locale: string): T {
   if (Array.isArray(value)) {
     let changed = false;
     const next = value.map((item) => {
-      const localized = localizeSystemDefaultValue(item, locale);
+      const localized = localizeSystemDefaultValue(item, locale, resolveCanonical);
       if (localized !== item) changed = true;
       return localized;
     });
@@ -268,7 +280,7 @@ function localizeSystemDefaultValue<T>(value: T, locale: string): T {
     const source = value as Record<string, unknown>;
     let changed = false;
     const nextEntries = Object.entries(source).map(([key, nestedValue]) => {
-      const localized = localizeSystemDefaultValue(nestedValue, locale);
+      const localized = localizeSystemDefaultValue(nestedValue, locale, resolveCanonical);
       if (localized !== nestedValue) changed = true;
       return [key, localized] as const;
     });
@@ -313,17 +325,17 @@ function canonicalizeEditorPageOrPlanName(value: string) {
   return value;
 }
 
-function deepCanonicalizeEditorDefaults<T>(value: T): T {
+function deepCanonicalizeEditorDefaults<T>(value: T, resolveCanonical = createCanonicalDefaultResolver()): T {
   if (typeof value === "string") {
     const pageOrPlanName = canonicalizeEditorPageOrPlanName(value);
-    const canonical = toCanonicalSystemDefaultText(pageOrPlanName);
+    const canonical = resolveCanonical(pageOrPlanName);
     return (canonical ?? pageOrPlanName) as T;
   }
 
   if (Array.isArray(value)) {
     let changed = false;
     const next = value.map((item) => {
-      const canonicalized = deepCanonicalizeEditorDefaults(item);
+      const canonicalized = deepCanonicalizeEditorDefaults(item, resolveCanonical);
       if (canonicalized !== item) changed = true;
       return canonicalized;
     });
@@ -334,7 +346,7 @@ function deepCanonicalizeEditorDefaults<T>(value: T): T {
     const source = value as Record<string, unknown>;
     let changed = false;
     const nextEntries = Object.entries(source).map(([key, nestedValue]) => {
-      const canonicalized = deepCanonicalizeEditorDefaults(nestedValue);
+      const canonicalized = deepCanonicalizeEditorDefaults(nestedValue, resolveCanonical);
       if (canonicalized !== nestedValue) changed = true;
       return [key, canonicalized] as const;
     });

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   createDefaultMerchantPermissionConfig,
   loadPlatformState,
   normalizeMerchantPermissionConfig,
+  normalizePlatformState,
   savePlatformState,
   type PlanTemplate,
 } from "./platformControlStore";
@@ -32,6 +34,87 @@ function createMemoryStorage(): Storage {
     },
   };
 }
+
+test("built-in template optimization preserves the exact existing starter content", () => {
+  const templates = normalizePlatformState({}).planTemplates;
+  assert.equal(
+    createHash("sha256").update(JSON.stringify(templates)).digest("hex"),
+    "626d8813dbf746bea91607df855d290d31892c767591ee6b95fed1120c270a8f",
+  );
+});
+
+test("warm built-in normalization copies the seed once without sharing editable objects", () => {
+  const expected = normalizePlatformState({}).planTemplates;
+  const originalClone = globalThis.structuredClone;
+  let copies = 0;
+  globalThis.structuredClone = (...args) => {
+    copies += 1;
+    return originalClone(...args);
+  };
+  try {
+    const first = normalizePlatformState({ planTemplates: expected }).planTemplates;
+    assert.equal(copies, 1, "stored built-in content must not be rebuilt or normalized again");
+    first[0].name = "Edited label";
+    (first[0].blocks[0] as { props: unknown }).props = { mutated: true };
+    first[0].blocks.push({ id: "caller-only", type: "text", props: {} });
+    const second = normalizePlatformState({}).planTemplates;
+    assert.deepEqual(second, expected);
+    assert.notEqual(second[0].blocks[0], expected[0].blocks[0]);
+  } finally {
+    globalThis.structuredClone = originalClone;
+  }
+});
+
+test("built-in template JSON fallback also returns an independent exact snapshot", () => {
+  const expected = normalizePlatformState({}).planTemplates;
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "structuredClone");
+  Object.defineProperty(globalThis, "structuredClone", { configurable: true, writable: true, value: undefined });
+  try {
+    const first = normalizePlatformState({}).planTemplates;
+    assert.deepEqual(first, expected);
+    (first[0].blocks[0] as { props: unknown }).props = { mutated: true };
+    assert.deepEqual(normalizePlatformState({}).planTemplates, expected);
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, "structuredClone", descriptor);
+    else Reflect.deleteProperty(globalThis, "structuredClone");
+  }
+});
+
+test("built-in metadata overrides and custom template content retain their existing policies", () => {
+  const builtin = normalizePlatformState({}).planTemplates[0];
+  const content = [{ id: "custom-text", type: "text", props: { text: "Customer authored content", image: "https://example.invalid/a.jpg" } }];
+  const custom = {
+    ...builtin,
+    id: "custom-template-kept",
+    name: "Custom template",
+    blocks: content,
+    coverImageUrl: "https://example.invalid/custom.jpg",
+    createdAt: "2026-11-15T12:00:00Z",
+    updatedAt: "2026-11-16T12:00:00Z",
+  };
+  const templates = normalizePlatformState({ planTemplates: [null, 3, {}, {
+    ...builtin,
+    name: "Edited built-in label",
+    category: "娱乐",
+    blocks: content,
+    coverImageUrl: "https://example.invalid/ignored.jpg",
+    createdAt: custom.createdAt,
+    updatedAt: custom.updatedAt,
+  }, custom] }).planTemplates;
+  const restored = templates.find((row) => row.id === builtin.id);
+  assert.ok(restored);
+  assert.equal(restored.name, "Edited built-in label");
+  assert.equal(restored.category, "娱乐");
+  assert.equal(restored.createdAt, custom.createdAt);
+  assert.equal(restored.updatedAt, custom.updatedAt);
+  assert.deepEqual(restored.blocks, builtin.blocks);
+  assert.equal(restored.coverImageUrl, builtin.coverImageUrl);
+  const kept = templates.find((row) => row.id === custom.id);
+  assert.ok(kept);
+  assert.deepEqual(kept.blocks, content);
+  assert.notEqual(kept.blocks[0], content[0]);
+  assert.equal(kept.coverImageUrl, custom.coverImageUrl);
+});
 
 test("merchant permission config includes default business card background image limit", () => {
   const permission = createDefaultMerchantPermissionConfig();

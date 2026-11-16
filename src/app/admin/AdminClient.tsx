@@ -70,7 +70,6 @@ import {
   loadMerchantPrintSettingsPanel,
   loadMerchantProfileDialog,
   loadSupportMessageContent,
-  preloadEditorPreviewComponents,
 } from "@/components/admin/AdminDeferredComponents";
 import type { MerchantEnterpriseView } from "@/components/admin/MerchantEnterpriseManager";
 import {
@@ -4006,18 +4005,24 @@ export default function AdminClient({
     isPlatformEditor
       ? (platformSeedBlocks.length > 0 ? platformSeedBlocks : homeBlocks)
       : MERCHANT_ONBOARDING_BLOCKS;
-  const initialPlanConfig = getPagePlanConfigFromBlocks(defaultEditorBlocks);
-  const initialMobilePlanConfig =
-    getEmbeddedMobilePlanConfig(defaultEditorBlocks) ?? adaptPlanConfigForMobile(JSON.parse(JSON.stringify(initialPlanConfig)) as PagePlanConfig);
-  const initialEditingPlanId = initialPlanConfig.activePlanId;
-  const initialEditingPageId =
-    initialPlanConfig.plans.find((plan) => plan.id === initialEditingPlanId)?.activePageId ?? "page-1";
-  const initialBlocks = cloneBlocks(
-    getBlocksForPage(
-      initialPlanConfig.plans.find((plan) => plan.id === initialEditingPlanId) ?? initialPlanConfig.plans[0],
-      initialEditingPageId,
-    ),
-  );
+  const [initialEditorState] = useState(() => {
+    // These are mount-only seeds for the state/refs below, not the current
+    // merchant draft. Rebuilding them on every notification/render is wasted.
+    const initialPlanConfig = getPagePlanConfigFromBlocks(defaultEditorBlocks);
+    const initialMobilePlanConfig =
+      getEmbeddedMobilePlanConfig(defaultEditorBlocks) ?? adaptPlanConfigForMobile(JSON.parse(JSON.stringify(initialPlanConfig)) as PagePlanConfig);
+    const initialEditingPlanId = initialPlanConfig.activePlanId;
+    const initialEditingPageId =
+      initialPlanConfig.plans.find((plan) => plan.id === initialEditingPlanId)?.activePageId ?? "page-1";
+    const initialBlocks = cloneBlocks(
+      getBlocksForPage(
+        initialPlanConfig.plans.find((plan) => plan.id === initialEditingPlanId) ?? initialPlanConfig.plans[0],
+        initialEditingPageId,
+      ),
+    );
+    return { initialPlanConfig, initialMobilePlanConfig, initialEditingPlanId, initialEditingPageId, initialBlocks };
+  });
+  const { initialPlanConfig, initialMobilePlanConfig, initialEditingPlanId, initialEditingPageId, initialBlocks } = initialEditorState;
   const [planConfig, setPlanConfig] = useState<PagePlanConfig>(initialPlanConfig);
   const [editingPlanId, setEditingPlanId] = useState<PlanId>(initialEditingPlanId);
   const [editingPageId, setEditingPageId] = useState<string>(initialEditingPageId);
@@ -13197,7 +13202,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
       showTip("当前商户还没准备好网站编辑资料，请稍后重试");
       return;
     }
-    preloadEditorPreviewComponents();
+    // The editor opens in another document. Importing its engines here would
+    // execute them in the old workspace as well; the destination loads its own
+    // deferred controls after the existing identity/draft readiness checks.
     const editorHref = new URL(buildMerchantBackendHref(resolvedSiteId), window.location.origin);
     editorHref.searchParams.set("editorOnly", "1");
     if (openTemplates) editorHref.searchParams.set("templateLibrary", "1");
@@ -16152,8 +16159,11 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
   }, [isDesktopMerchantWorkspace, merchantDesktopSection]);
   const planTemplateKeyword = planTemplateSearch.trim().toLowerCase();
   const planTemplateCards = useMemo(
-    () =>
-      planTemplates
+    () => {
+      // This legacy platform-only dialog is not part of merchant startup.
+      // Its deep summaries/previews are needed only while it is actually open.
+      if (!isPlatformEditor || !planTemplateDialogOpen) return [];
+      return planTemplates
         .filter((template) => {
           if (!matchPlanTemplateCategory(template, planTemplateFilter)) return false;
           if (!planTemplateKeyword) return true;
@@ -16184,8 +16194,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           template,
           summary: summarizePlanTemplateBlocks(template.blocks),
           previewPlans: getPlanTemplatePreviewOptions(template.blocks),
-        })),
-    [planTemplateFilter, planTemplateKeyword, planTemplates],
+        }));
+    },
+    [isPlatformEditor, planTemplateDialogOpen, planTemplateFilter, planTemplateKeyword, planTemplates],
   );
   const handleMerchantBusinessCardsChange = useCallback(
     (cards: MerchantBusinessCardAsset[], meta?: BusinessCardChangeMeta) => {

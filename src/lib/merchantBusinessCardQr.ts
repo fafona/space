@@ -1,51 +1,15 @@
 import { businessCardQrFrameGeometry, normalizeBusinessCardQrDecoration, normalizeBusinessCardQrFrame, renderBusinessCardQrFrame, renderBusinessCardQrIcon, type BusinessCardQrDecoration } from "./merchantBusinessCardQrDecorations";
 import { businessCardQrTextLayout, escapeBusinessCardQrText, hasBusinessCardQrText, normalizeBusinessCardQrText, type BusinessCardQrTextOptions } from "./merchantBusinessCardQrText";
+import { normalizeBusinessCardQrBackground, normalizeBusinessCardQrCaption, normalizeBusinessCardQrColor, normalizeBusinessCardQrStyle, type BusinessCardQrStyle } from "./merchantBusinessCardQrSettings";
+export { BUSINESS_CARD_QR_STYLES, BUSINESS_CARD_QR_COLORS, BUSINESS_CARD_QR_BACKGROUNDS, BUSINESS_CARD_QR_CAPTION_MAX_LENGTH, normalizeBusinessCardQrBackground, normalizeBusinessCardQrCaption, normalizeBusinessCardQrColor, normalizeBusinessCardQrStyle } from "./merchantBusinessCardQrSettings";
+export type { BusinessCardQrStyle } from "./merchantBusinessCardQrSettings";
 
-export const BUSINESS_CARD_QR_STYLES = [
-  { id: "classic", label: "经典方格" },
-  { id: "soft", label: "柔和方格" },
-  { id: "rounded", label: "圆润方格" },
-  { id: "dots", label: "圆点" },
-  { id: "diamond", label: "菱形" },
-  { id: "horizontal", label: "横向线条" },
-  { id: "vertical", label: "纵向线条" },
-  { id: "horizontal-pill", label: "横向胶囊" },
-  { id: "vertical-pill", label: "纵向胶囊" },
-  { id: "tiles", label: "精致方块" },
-  { id: "finder-soft", label: "圆角定位·经典方格" },
-  { id: "finder-rounded", label: "圆角定位·圆润方格" },
-  { id: "finder-dots", label: "圆角定位·圆点" },
-  { id: "finder-pill", label: "圆角定位·横向胶囊" },
-  { id: "finder-soft-ring", label: "柔角定位·柔和方格" },
-  { id: "finder-tiles", label: "圆角定位·精致方块" },
-] as const;
-
-export type BusinessCardQrStyle = (typeof BUSINESS_CARD_QR_STYLES)[number]["id"];
-export const BUSINESS_CARD_QR_COLORS = ["#000000", "#0f172a", "#334155", "#1e3a8a", "#1d4ed8", "#075985", "#115e59", "#166534", "#713f12", "#9f1239", "#7e22ce", "#581c87"];
-export const BUSINESS_CARD_QR_BACKGROUNDS = ["#ffffff", "#f8fafc", "#e2e8f0", "#eff6ff", "#dbeafe", "#ecfeff", "#f0fdfa", "#f0fdf4", "#fefce8", "#fff7ed", "#fff1f2", "#faf5ff"];
-export const BUSINESS_CARD_QR_CAPTION_MAX_LENGTH = 24;
 export type BusinessCardQrAppearance = BusinessCardQrDecoration & BusinessCardQrTextOptions & { style?: BusinessCardQrStyle; color?: string; backgroundColor?: string; showCaption?: boolean; caption?: string };
-
-export function normalizeBusinessCardQrBackground(value: unknown): string {
-  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : "#ffffff";
-}
-
-export function normalizeBusinessCardQrCaption(value: unknown): string {
-  return Array.from(typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim() : "扫码了解更多").slice(0, BUSINESS_CARD_QR_CAPTION_MAX_LENGTH).join("");
-}
 
 export function businessCardQrAspectRatio(options: BusinessCardQrAppearance): number {
   if (hasBusinessCardQrText(options)) return businessCardQrTextLayout(options, normalizeBusinessCardQrFrame(options.frame) !== "none" ? 1140 : 1000).height / 1000;
   if (normalizeBusinessCardQrFrame(options.frame) !== "none") return 1.14;
   return options.showCaption && normalizeBusinessCardQrCaption(options.caption) ? 1.16 : 1;
-}
-
-export function normalizeBusinessCardQrStyle(value: unknown): BusinessCardQrStyle {
-  return BUSINESS_CARD_QR_STYLES.find((style) => style.id === value)?.id ?? "classic";
-}
-
-export function normalizeBusinessCardQrColor(value: unknown): string {
-  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : "#000000";
 }
 
 function luminance(color: string): number {
