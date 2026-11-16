@@ -20,6 +20,7 @@
 .faolla-service-sheet { height: min(82dvh, 920px); max-height: 82dvh; padding-bottom: env(safe-area-inset-bottom); }
 .faolla-service-sheet::backdrop { background: rgb(2 6 23 / .32); }
 .faolla-public-chat-launcher { position: fixed; right: max(18px,env(safe-area-inset-right)); bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 90; }
+.faolla-service-loading { position: fixed; right: max(18px,env(safe-area-inset-right)); bottom: calc(82px + env(safe-area-inset-bottom)); z-index: 20001; }
 @media (min-width: 768px) {
   .faolla-service-sheet[data-chat-window="true"] { inset: auto 20px 20px auto; margin: 0; width: min(440px,calc(100vw - 40px)); height: min(680px,calc(100dvh - 40px)); max-height: calc(100dvh - 40px); border-radius: 24px; border: 1px solid #dce5ec; }
   .faolla-service-sheet[data-chat-window="true"]::backdrop { background: transparent; }

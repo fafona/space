@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {executeCacheCleanup, releaseMountReferences, selectPm2CacheProtection, selectReleaseRetentionProtection} from './online-release-cache-cleanup.mjs';
+import {executeCacheCleanup, cacheObservationDiagnostic, releaseMountReferences, selectPm2CacheProtection, selectReleaseRetentionProtection} from './online-release-cache-cleanup.mjs';
 import {planReleaseCacheCleanup} from './online-release-cache-policy.mjs';
 import {normalizeRetirementProcess} from './online-release-retirement.mjs';
 import {normalizeResurrectedRetirementProcess} from './release-toolchain-process-observation.mjs';
@@ -72,6 +72,69 @@ const noMutation = f => {
   assert.equal(f.events.some(value => /^(?:begin|apply:|record:|finish|failed)/.test(value)), false);
   assert.deepEqual(f.records, []); assert.deepEqual(f.failures, []); assert.deepEqual(f.completions, []);
 };
+const diagnosticFailure = (f, stage, field, cacheIndex) => {
+  assert.equal(f.failureContexts.length, 1);
+  const {observationDiagnostic, ...context} = f.failureContexts[0];
+  assert.deepEqual(context, {attemptedCachePath: null, partialCleanupPossible: false});
+  assert.equal(observationDiagnostic.kind, 'release-cache-observation-diagnostic');
+  assert.equal(observationDiagnostic.stage, stage);
+  assert.equal(observationDiagnostic.cacheIndex, cacheIndex);
+  assert.deepEqual(observationDiagnostic.changedFields.map(item => item.field), [field]);
+  assert.equal(observationDiagnostic.truncated, false);
+};
+
+test('snapshot diagnostics identify fields without logging values or arbitrary property names', () => {
+  const secret = 'private-token-do-not-log', key = '/private/merchant/customer@example.invalid';
+  const expected = freeze({pm2: [{pid: 123, environmentSha256: secret}], stateHashes: {[key]: secret}});
+  const observed = freeze({pm2: [{pid: 456, environmentSha256: 'new-secret'}], stateHashes: {[key]: 'changed'}});
+  const diagnostic = cacheObservationDiagnostic(expected, observed, 'before-cache', 0);
+  assert.equal(diagnostic.stage, 'before-cache'); assert.equal(diagnostic.cacheIndex, 0);
+  assert.ok(diagnostic.changedFields.some(item => item.field === 'observation.pm2.0.pid'));
+  assert.ok(diagnostic.changedFields.some(item => /^observation\.stateHashes\.key-[a-f0-9]{16}$/.test(item.field)));
+  const text = JSON.stringify(diagnostic);
+  for (const raw of [secret, key, 'new-secret', '123', '456']) assert.equal(text.includes(raw), false);
+  for (const item of diagnostic.changedFields) {
+    assert.match(item.expected.sha256, /^[a-f0-9]{64}$/);
+    assert.match(item.observed.sha256, /^[a-f0-9]{64}$/);
+    assert.notEqual(item.expected.sha256, item.observed.sha256);
+  }
+});
+
+test('diagnostics distinguish absent keys, undefined, sparse arrays and prototypes', () => {
+  const absent = cacheObservationDiagnostic({}, {pid: undefined}, 'initial');
+  assert.equal(absent.changedFields[0].field, 'observation.pid');
+  assert.equal(absent.changedFields[0].expected.present, false);
+  assert.equal(absent.changedFields[0].observed.present, true);
+  const sparse = cacheObservationDiagnostic(Array(1), [undefined], 'initial');
+  assert.equal(sparse.changedFields[0].field, 'observation.0');
+  assert.equal(sparse.changedFields[0].expected.present, false);
+  const prototype = cacheObservationDiagnostic(Object.assign(Object.create(null), {pid: 1}), {pid: 1}, 'initial');
+  assert.equal(prototype.changedFields[0].field, 'observation.$prototype');
+});
+
+test('diagnostics are bounded and sanitize caller-controlled stage and index', () => {
+  const diagnostic = cacheObservationDiagnostic(Object.fromEntries(Array.from({length: 80}, (_, i) => ['secret-' + i, 'a'])),
+    Object.fromEntries(Array.from({length: 80}, (_, i) => ['secret-' + i, 'b'])), 'private-stage', 'private-index');
+  assert.equal(diagnostic.stage, 'unknown'); assert.equal(Object.hasOwn(diagnostic, 'cacheIndex'), false);
+  assert.equal(diagnostic.changedFields.length, 32); assert.equal(diagnostic.truncated, true);
+  assert.equal(JSON.stringify(diagnostic).includes('secret-'), false);
+  let expected = 1, observed = 2;
+  for (let i = 0; i < 15; i++) {expected = {pid: expected}; observed = {pid: observed};}
+  assert.equal(cacheObservationDiagnostic(expected, observed, 'inspection').truncated, true);
+});
+
+test('initial refusal exposes only diagnostic metadata and preserves the original fixed error and zero mutations', () => {
+  const f = fixture(), observe = f.operations.observe;
+  f.operations.observe = () => {const value = observe(); value.pm2[0].pid++; return value;};
+  assert.throws(() => executeCacheCleanup(f.plan, f.operations), error => {
+    assert.equal(error.message, 'release_cache_observation_changed');
+    assert.equal(error.cacheObservationDiagnostic.stage, 'initial');
+    assert.equal(Object.getOwnPropertyDescriptor(error, 'cacheObservationDiagnostic').enumerable, false);
+    assert.equal(error.cacheObservationDiagnostic.changedFields[0].field, 'observation.pm2.0.pid');
+    return true;
+  });
+  assert.deepEqual(f.events, ['observe:1']); noMutation(f);
+});
 
 test('successful execution verifies all caches first, audits each result, then verifies final observation', () => {
   const f = fixture(), before = JSON.stringify(f.plan);
@@ -168,7 +231,7 @@ test('observation drift immediately after beginning is audited with no applied r
   assert.throws(() => executeCacheCleanup(f.plan, f.operations), /release_cache_observation_changed/);
   assert.deepEqual(f.events, ['observe:1', 'capture:0', 'capture:1', 'begin', 'observe:2', 'failed']);
   assert.deepEqual(f.failures, [{values: [], error: 'release_cache_observation_changed'}]);
-  assert.deepEqual(f.failureContexts, [{attemptedCachePath: null, partialCleanupPossible: false}]);
+  diagnosticFailure(f, 'before-cache', 'observation.historyHead', 0);
   assert.deepEqual(f.records, []); assert.deepEqual(f.completions, []);
 });
 
@@ -205,7 +268,7 @@ test('between-cache observation drift preserves the first result and prevents to
   assert.deepEqual(f.events, ['observe:1', 'capture:0', 'capture:1', 'begin',
     'observe:2', 'apply:0', 'record:1', 'observe:3', 'failed']);
   assert.deepEqual(f.failures, [{values: [f.records[0].value], error: 'release_cache_observation_changed'}]);
-  assert.deepEqual(f.failureContexts, [{attemptedCachePath: null, partialCleanupPossible: false}]);
+  diagnosticFailure(f, 'before-cache', 'observation.pm2.0.pid', 1);
   assert.deepEqual(f.completions, []);
 });
 
@@ -230,7 +293,7 @@ test('final observation drift records all completed cache results but refuses su
   assert.deepEqual(f.events, ['observe:1', 'capture:0', 'capture:1', 'begin',
     'observe:2', 'apply:0', 'record:1', 'observe:3', 'apply:1', 'record:2', 'observe:4', 'failed']);
   assert.deepEqual(f.failures, [{values: f.records.map(item => item.value), error: 'release_cache_protected_state_changed'}]);
-  assert.deepEqual(f.failureContexts, [{attemptedCachePath: null, partialCleanupPossible: false}]);
+  diagnosticFailure(f, 'after-cleanup', 'observation.activeSha256');
   assert.deepEqual(f.completions, []);
 });
 

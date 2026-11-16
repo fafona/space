@@ -2,10 +2,9 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { MerchantPeerContactSummary, MerchantPeerThread } from "@/lib/merchantPeerInbox";
 import type { PlatformSupportThread } from "@/lib/platformSupportInbox";
-import { ensurePersonalGuestIdentity, readPersonalGuestProfile, readPersonalGuestPeerContacts, readPersonalGuestPeerThreads,
-  readPersonalGuestSupportThread, appendPersonalGuestPeerMessage, appendPersonalGuestSupportMessage } from "@/lib/personalGuestSession";
 import { parseSupportMessageAttachmentPreview, formatSupportConversationPreview } from "@/lib/supportMessageAttachments";
 import { serviceButton, serviceInput, serviceRequest, type ServicePanelProps } from "./serviceCenterClient";
+import GuestChatPanel from "./GuestChatPanel";
 
 const subscribeDesktop = (notify: () => void) => {
   const query = window.matchMedia("(min-width: 768px)");
@@ -34,7 +33,11 @@ const mergeThreads = (old: MerchantPeerThread[], next: MerchantPeerThread[]) => 
 };
 const safeLink = (value: string) => { if (!value.trim()) return ""; try { const url = new URL(value, window.location.origin); return /^https?:$/.test(url.protocol) ? url.href : ""; } catch { return ""; } };
 
-export default function ServiceConversations({ active, identity, siteId, siteName, compact = false }: ServicePanelProps & { compact?: boolean }) {
+export default function ServiceConversations(props:ServicePanelProps & { compact?:boolean }) {
+  if(props.identity?.authenticated===false)return <GuestChatPanel siteId={props.siteId} siteName={props.siteName} active={props.active}/>;
+  return <AccountConversations {...props}/>;
+}
+function AccountConversations({ active, identity, siteId, siteName, compact = false }: ServicePanelProps & { compact?: boolean }) {
   const [contacts, setContacts] = useState<MerchantPeerContactSummary[]>([]);
   const [threads, setThreads] = useState<MerchantPeerThread[]>([]);
   const [official, setOfficial] = useState<PlatformSupportThread | null>(null);
@@ -53,18 +56,12 @@ export default function ServiceConversations({ active, identity, siteId, siteNam
   const requestVersion = useRef(0);
   const readReceipts = useRef(new Set<string>());
   const scroller = useRef<HTMLDivElement>(null);
-  const guestId = useRef("");
-  const accountId = identity?.authenticated ? identity.accountId : guestId.current;
+  const accountId = identity?.accountId ?? "";
   const load = useCallback(async (signal?: AbortSignal) => {
-    if (!identity || loadLock.current) return;
+    if (!identity?.authenticated || loadLock.current) return;
     loadLock.current = true;
     const version = requestVersion.current;
     try {
-      if (!identity.authenticated) {
-        const guest = ensurePersonalGuestIdentity(); guestId.current = guest.accountId;
-        setContacts(readPersonalGuestPeerContacts(guest)); setThreads(readPersonalGuestPeerThreads(guest));
-        setOfficial(readPersonalGuestSupportThread(guest, readPersonalGuestProfile())); return;
-      }
       const [inbox, support] = await Promise.allSettled([
         serviceRequest<Inbox>(`/api/merchant-peer-messages?siteId=${encodeURIComponent(identity.accountId)}`, { signal }),
         serviceRequest<{ thread?: PlatformSupportThread }>(`/api/support-messages?siteId=${encodeURIComponent(identity.accountId)}`, { signal }),
@@ -99,14 +96,9 @@ export default function ServiceConversations({ active, identity, siteId, siteNam
   }, [active, chatVisible, identity?.authenticated, identity?.accountId, latestInboundAt, selected]);
   useEffect(() => { if (chatVisible) scroller.current?.scrollTo({ top: scroller.current.scrollHeight }); }, [selected, messages.length, chatVisible]);
   const send = async (text = draft) => {
-    if (!text.trim() || busy || !identity) return;
+    if (!text.trim() || busy || !identity?.authenticated) return;
     setBusy(true); setError("");
     try {
-      if (!identity.authenticated) {
-        if (selected === "official") appendPersonalGuestSupportMessage(text);
-        else appendPersonalGuestPeerMessage({ recipientMerchantId: selected, recipientMerchantName: selected === siteId ? siteName : contacts.find(contact => contact.merchantId === selected)?.merchantName, text });
-        setDraft(""); await load(); return;
-      }
       const payload = selected === "official"
         ? { text, siteId: identity.accountId, merchantEmail: identity.profile.email, merchantName: identity.profile.nickname }
         : { action: "send", recipientMerchantId: selected, text, siteId: identity.accountId, merchantEmail: identity.profile.email, merchantName: identity.profile.nickname };
@@ -144,7 +136,7 @@ export default function ServiceConversations({ active, identity, siteId, siteNam
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file); });
       const image = file.type.startsWith("image/");
-      if (!identity?.authenticated) { if (image) setDraft(current => `${current}\n图片：${dataUrl}`.trim()); else setError("请先登录后发送文件。"); return; }
+      if (!identity?.authenticated) { setError("请先登录后发送文件。"); return; }
       const result = await serviceRequest<{ url: string }>("/api/assets/upload", { method: "POST", body: JSON.stringify({ dataUrl, merchantHint: identity.accountId,
         folder: image ? "merchant-assets" : "merchant-files", usage: image ? "support-image" : "support-file" }) });
       setDraft(current => `${current}\n${image ? "图片" : "文件"}：${result.url}`.trim());
@@ -161,7 +153,6 @@ export default function ServiceConversations({ active, identity, siteId, siteNam
     });
   const selectedRow = rows.find(row => row.id === selected);
   return <div className="flex h-full min-h-0 flex-col gap-2" data-service-conversations>
-    {!identity?.authenticated ? <p className="shrink-0 px-1 text-xs leading-5 text-slate-500">游客会话仅临时保存在本设备；登录后可同步账号消息。</p> : null}
     {error ? <p role="alert" className="shrink-0 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
     <div className={`grid min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm ${compact ? "" : "md:grid-cols-[minmax(240px,300px)_minmax(0,1fr)]"}`}>
       <aside aria-label="会话对象列表" className={`${mobileChatOpen ? "hidden" : "flex"} min-h-0 flex-col ${compact ? "" : "md:flex md:border-r md:border-slate-200"}`}>

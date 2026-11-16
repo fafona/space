@@ -18,6 +18,15 @@ import {
 process.env.FAOLLA_CANONICAL_PORTAL_ORIGIN = "https://faolla.com";
 process.env.FAOLLA_SUPER_ADMIN_ORIGIN = "https://console.faolla.com";
 
+test("visitor and merchant guest APIs stay API requests rather than tenant rewrites or login redirects", async () => {
+  for (const target of ["https://cyberspace.faolla.com/api/guest-chat?siteId=10909095", "https://faolla.com/api/merchant-guest-chat?siteId=10909095"]) {
+    const response=await middleware(new NextRequest(target));
+    assert.equal(response.headers.get("x-middleware-next"),"1");
+    assert.equal(response.headers.get("x-middleware-rewrite"),null);
+    assert.equal(response.headers.get("location"),null);
+  }
+});
+
 test("isLocalLikeRequestHostname only treats local hosts and IPs as local-like", () => {
   assert.equal(isLocalLikeRequestHostname("localhost"), true);
   assert.equal(isLocalLikeRequestHostname("127.0.0.1"), true);

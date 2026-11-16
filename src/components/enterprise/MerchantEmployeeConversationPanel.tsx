@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { MerchantBusinessApiClient } from "@/lib/merchantBusinessApiClient";
 import { getMerchantConversationFrontendAccess } from "@/lib/merchantConversationFrontendAccess";
+import MerchantConversationTabs from "@/components/service-center/MerchantConversationTabs";
 import type {
   MerchantPeerContactSummary,
   MerchantPeerMessage,
@@ -440,6 +441,7 @@ export default function MerchantEmployeeConversationPanel({
   }
 
   return (
+    <MerchantConversationTabs key={siteId} siteId={siteId} apiClient={apiClient} canSend={access.send} onAuthorizationInvalid={onAuthorizationInvalid}>
     <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
         <div>
@@ -640,5 +642,6 @@ export default function MerchantEmployeeConversationPanel({
         </div>
       </div>
     </section>
+    </MerchantConversationTabs>
   );
 }

@@ -121,6 +121,9 @@
   .faolla-leisure-site [data-leisure-role="hero"] > section > div:not([data-editor-toolbar]),
   .faolla-leisure-site [data-leisure-role="hero"] .block.mx-auto { height: 560px !important; }
   .faolla-leisure-site [data-leisure-role="hero"] h2 { left: 25px; right: 25px; top: 65px; font-size: clamp(43px,10.5cqw,65px); max-width: 520px; }
+  /* Mobile headline/copy stays readable over footage and the poster fallback;
+     this visual layer never intercepts taps. Desktop presentation is unchanged. */
+  .faolla-leisure-site [data-leisure-role="hero"] [data-gallery-media="background-video"] .relative::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgb(8 13 23 / .38), rgb(8 13 23 / .08) 40%, rgb(8 13 23 / .36)); }
   .faolla-leisure-site > [data-leisure-role="hero-copy"] { grid-column: 1 / -1; margin: 130px 25px 0; align-self: center; }
   .faolla-leisure-site [data-leisure-role="hero-copy"] .mt-2 { font-size: 16px; }
   .faolla-leisure-site > [data-leisure-role="primary"] { grid-column: 1 / 3; margin: 0 7px 105px 25px; }

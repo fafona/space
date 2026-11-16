@@ -55,6 +55,23 @@ test("Quality preserves its required name and rejects every non-success partitio
   assert.equal(script, 'set -euo pipefail\ntest "$CORE_RESULT" = success\ntest "$MAINTENANCE_RESULT" = success');
 });
 
+test("guest chat SQL acceptance remains mandatory inside the required identity-bound PostgreSQL job and refuses accidental local execution", () => {
+  const job=jobBlock("pages-acl-database"),step=stepBlock(job,"Run isolated guest chat schema and delivery acceptance");
+  assert.match(job,/image: postgres:15/);assert.match(job,/run: node scripts\/ci-postgres-service-identity\.mjs/);
+  assert.match(step,/FAOLLA_GUEST_CHAT_DISPOSABLE_DB: "1"/);
+  assert.match(step,/run: node scripts\/guest-chat-db-acceptance\.mjs/);
+  assert.match(step,/FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: \$\{\{ job.services.postgres.id \}\}/);
+  assert.ok(job.indexOf(step)>job.indexOf('run: node scripts/application-release-template-postgres-acceptance.mjs'));
+  const admission=readFileSync(new URL('./release-toolchain-source.mjs',import.meta.url),'utf8');
+  assert.ok(admission.includes("'Pages Client Write ACL PostgreSQL Acceptance'"));
+  assert.doesNotMatch(job,/continue-on-error|secrets\.|SUPABASE_SERVICE_ROLE_KEY|\.env\.local/);
+  const result=spawnSync(process.execPath,["scripts/guest-chat-db-acceptance.mjs"],{
+    cwd:fileURLToPath(new URL("..",import.meta.url)),encoding:"utf8",timeout:5000,windowsHide:true,
+    env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,GITHUB_ACTIONS:"false",RUNNER_ENVIRONMENT:"github-hosted",FAOLLA_GUEST_CHAT_DISPOSABLE_DB:"1"},
+  });
+  assert.notEqual(result.status,0);assert.doesNotMatch(result.stdout,/all SQL\/ACL assertions/);
+});
+
 const gateBash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "bash";
 test("actual Quality shell fails on failed, cancelled, skipped, missing or malformed results", {
   skip: process.platform === "win32" && !existsSync(gateBash),
@@ -595,13 +612,14 @@ test("pages ACL acceptance uses isolated PostgreSQL 15 with bound identity and n
 test("container-network PostgreSQL jobs bind their exact trusted service identity before database acceptance", () => {
   for (const jobName of ["checkout-database", "recovery-database", "pages-acl-database"]) {
     const job = jobBlock(jobName);
-    assert.equal((job.match(/FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID:\s*\$\{\{ job\.services\.postgres\.id \}\}/g) || []).length, jobName === "pages-acl-database" ? 3 : 2);
+    assert.equal((job.match(/FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID:\s*\$\{\{ job\.services\.postgres\.id \}\}/g) || []).length, jobName === "pages-acl-database" ? 4 : 2);
     const bindAt = job.indexOf("node scripts/ci-postgres-service-identity.mjs");
     const runAt = job.indexOf(`node scripts/${jobName.replace("-database", "")}-integration/run.mjs`);
     assert.ok(bindAt >= 0 && runAt > bindAt);
     if (jobName === "pages-acl-database") {
       assert.ok(job.indexOf("node scripts/application-release-template-postgres-acceptance.mjs") > runAt);
       assert.match(job, /WEBSITE_TEMPLATE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"/);
+      assert.ok(job.indexOf('node scripts/guest-chat-db-acceptance.mjs')>job.indexOf('node scripts/application-release-template-postgres-acceptance.mjs'));
     }
     assert.doesNotMatch(job, /FAOLLA_CI_POSTGRES_SERVER_IPV4:\s*\S|continue-on-error/);
   }

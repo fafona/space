@@ -3,7 +3,7 @@ import {createHash, randomUUID} from 'node:crypto';
 import * as fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {isDeepStrictEqual} from 'node:util';
+import {isDeepStrictEqual, inspect} from 'node:util';
 import {planReleaseCacheCleanup, captureWebpackCache, applyWebpackCacheCleanup} from './online-release-cache-policy.mjs';
 import {readOnlineRetentionHistory} from './online-release-retention.mjs';
 import {ONLINE_RETENTION_POLICY, inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
@@ -32,6 +32,50 @@ const fail = code => {throw Error(`release_cache_${code}`);};
 const json = value => JSON.stringify(value, null, 2) + '\n';
 const under = (value, parent) => value === parent || value.startsWith(`${parent}/`);
 const same = (left, right, code) => {if (!isDeepStrictEqual(left, right)) fail(code);};
+
+// Diagnostic only: never a proof, comparison projection, retry or authorization.
+// Values and unknown key names are fingerprinted, not disclosed to logs.
+export function cacheObservationDiagnostic(expected, observed, stage, cacheIndex) {
+  const known = new Set(('version toolRevision bootId hostSha256 releaseDirectories protectedDirectories certifiedStoppedDirectories pm2 daemon processes scheduled links mountinfoSha256 historyHead legacySha256 historyCertificates stateHashes retentionHead retentionCertificates activeSha256 maintenanceSha256 proxyHashes markerSha256 nginxSha256 worktreesSha256 name pmId pid cwd status port executable interpreter args nodeArgs execMode autorestart watch cronRestart backgroundPaused automationEnabled invitationEnabled killTimeout shutdownWithMessage restartCount createdAt environmentSha256 manualSignalHandle startTicks references location sha256').split(' '));
+  const stages = new Set(['initial', 'before-cache', 'after-cleanup', 'inspection']);
+  const summarize = (value, present = true) => ({
+    present, type: !present ? 'absent' : value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value,
+    ...(present && value && typeof value === 'object' ? {entries: Array.isArray(value) ? value.length : Object.keys(value).length} : {}),
+    sha256: digest(inspect(value, {sorted: true, depth: 6, maxArrayLength: 64, maxStringLength: 4096,
+      customInspect: false, getters: false, breakLength: Infinity, compact: true})),
+  });
+  const changedFields = []; let visited = 0, truncated = false;
+  const add = (field, a, b, aPresent = true, bPresent = true) => {
+    if (changedFields.length >= 32) {truncated = true; return;}
+    changedFields.push({field, expected: summarize(a, aPresent), observed: summarize(b, bPresent)});
+  };
+  function visit(a, b, field, depth = 0) {
+    if (isDeepStrictEqual(a, b)) return;
+    if (++visited > 512 || depth >= 8) {truncated = true; add(field, a, b); return;}
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) {add(field, a, b); return;}
+    if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) add(field + '.$prototype', a, b);
+    const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
+    if (keys.length === 0) {add(field, a, b); return;}
+    for (const key of keys) {
+      if (changedFields.length >= 32 || visited > 512) {truncated = true; break;}
+      const safeKey = known.has(key) || Array.isArray(a) && /^(?:0|[1-9][0-9]{0,5})$/.test(key) ? key : 'key-' + digest(key).slice(0, 16);
+      const aPresent = Object.hasOwn(a, key), bPresent = Object.hasOwn(b, key), path = field + '.' + safeKey;
+      if (aPresent !== bPresent) add(path, a[key], b[key], aPresent, bPresent);
+      else visit(a[key], b[key], path, depth + 1);
+    }
+  }
+  visit(expected, observed, 'observation');
+  return {version: 1, kind: 'release-cache-observation-diagnostic', stage: stages.has(stage) ? stage : 'unknown',
+    ...(Number.isSafeInteger(cacheIndex) && cacheIndex >= 0 && cacheIndex < 1000 ? {cacheIndex} : {}),
+    expected: summarize(expected), observed: summarize(observed), changedFields, truncated};
+}
+function sameObservation(actual, expected, reason, stage, cacheIndex) {
+  try {same(actual, expected, reason);} catch (error) {
+    // A diagnostic failure must never replace the original fixed guard error.
+    try {Object.defineProperty(error, 'cacheObservationDiagnostic', {value: cacheObservationDiagnostic(expected, actual, stage, cacheIndex)});} catch {}
+    throw error;
+  }
+}
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024,
@@ -340,7 +384,7 @@ export function observeReleaseResourcesReadOnly(revision) {
 export function executeCacheCleanup(plan, operations) {
   if (plan?.version !== 1 || !SHA.test(plan.toolRevision ?? '') || !Array.isArray(plan.caches) || !plan.observation) fail('invalid_plan');
   const observation = operations.observe();
-  same(observation, plan.observation, 'observation_changed');
+  sameObservation(observation, plan.observation, 'observation_changed', 'initial');
   const allowed = new Set(planReleaseCacheCleanup(observation).eligible.map(item => item.cachePath));
   if (new Set(plan.caches.map(item => item.cachePath)).size !== plan.caches.length ||
       plan.caches.some(item => !allowed.has(item.cachePath))) fail('candidate_not_eligible');
@@ -349,19 +393,20 @@ export function executeCacheCleanup(plan, operations) {
   const results = [];
   let attemptedCachePath = null;
   try {
-    for (const cache of plan.caches) {
-      same(operations.observe(), observation, 'observation_changed');
+    for (const [index, cache] of plan.caches.entries()) {
+      sameObservation(operations.observe(), observation, 'observation_changed', 'before-cache', index);
       attemptedCachePath = cache.cachePath;
       const result = operations.apply(cache);
       results.push({cachePath: cache.cachePath, ...result});
       operations.record(results.length, results.at(-1));
       attemptedCachePath = null;
     }
-    same(operations.observe(), observation, 'protected_state_changed');
+    sameObservation(operations.observe(), observation, 'protected_state_changed', 'after-cleanup');
     operations.finish(results);
     return results;
   } catch (error) {
-    operations.failed(results, error.message, {attemptedCachePath, partialCleanupPossible: attemptedCachePath !== null});
+    operations.failed(results, error.message, {attemptedCachePath, partialCleanupPossible: attemptedCachePath !== null,
+      ...(error.cacheObservationDiagnostic ? {observationDiagnostic: error.cacheObservationDiagnostic} : {})});
     throw error;
   }
 }
@@ -386,7 +431,7 @@ export function cacheCleanupMain(args = process.argv.slice(2)) {
         if (captured.totalBytes > 0) caches.push(captured);
         else excluded.push({...item, reason: 'empty-webpack-cache'});
       }
-      same(observeReleaseResources(revision), observation, 'inspection_changed');
+      sameObservation(observeReleaseResources(revision), observation, 'inspection_changed', 'inspection');
       const planId = randomUUID(), location = `${AUDIT}/${planId}`;
       fs.mkdirSync(location, {mode: 0o700});
       const plan = {version: 1, toolRevision: revision, createdAt: new Date().toISOString(), observation, caches, excluded};
@@ -425,6 +470,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {cacheCleanupMain();} catch (error) {
     console.error(/^(?:release_cache_|online_cache_|online_tool_|online_retirement_|online_rolling_|online_retention_)[a-z0-9_]+$/.test(error.message)
       ? error.message : 'release_cache_unexpected_failure');
+    if (error.cacheObservationDiagnostic) console.error(json(error.cacheObservationDiagnostic));
     process.exitCode = 1;
   }
 }

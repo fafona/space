@@ -17,6 +17,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import DeferredFaollaFrame from "@/components/admin/DeferredFaollaFrame";
+import MerchantConversationTabs from "@/components/service-center/MerchantConversationTabs";
 import LeisurePageLayout from "@/components/blocks/LeisurePageLayout";
 import { getLeisureBlockStyle, getLeisurePresentation, getLeisureRole } from "@/lib/leisurePresentation";
 import dynamic from "next/dynamic";
@@ -18151,7 +18152,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       )
     : null;
 
-  const supportMobileDialogContent = showMobileSupportThread ? (
+  const legacySupportMobileDialogContent = showMobileSupportThread ? (
     <div
       className={`${supportMobileShellClassName} relative flex h-full min-h-0 flex-1 flex-col overflow-hidden ${supportMobileBackgroundClassName}`}
       onTouchStart={handleSupportMobileThreadTouchStart}
@@ -18631,6 +18632,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     </div>
   );
 
+  const supportMobileDialogContent = isPlatformEditor ? legacySupportMobileDialogContent : (
+    <MerchantConversationTabs key={editingSiteId || merchantSiteIdOverride || supportReadMerchantId} siteId={editingSiteId || merchantSiteIdOverride || supportReadMerchantId}>{legacySupportMobileDialogContent}</MerchantConversationTabs>
+  );
   const supportSelfCardPickerOverlay =
     supportSelfCardPickerOpen && supportInterfaceOpen
       ? renderTopMostOverlay(
@@ -19418,7 +19422,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
     </div>
   );
-  const supportDesktopSurfaceContent = (
+  const legacySupportDesktopSurfaceContent = (
     <div
       data-editor-overlay
       className={`flex min-h-0 min-w-0 w-full flex-col overflow-hidden border bg-white ${
@@ -19911,6 +19915,9 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         </div>
       </div>
     </div>
+  );
+  const supportDesktopSurfaceContent = isPlatformEditor ? legacySupportDesktopSurfaceContent : (
+    <MerchantConversationTabs key={editingSiteId || merchantSiteIdOverride || supportReadMerchantId} siteId={editingSiteId || merchantSiteIdOverride || supportReadMerchantId}>{legacySupportDesktopSurfaceContent}</MerchantConversationTabs>
   );
   const desktopMerchantWorkspaceContent =
     isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
