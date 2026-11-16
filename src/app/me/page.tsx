@@ -9,6 +9,8 @@ import Link from "next/link";
 import AccountSwitcherDialog from "@/components/AccountSwitcherDialog";
 import FaollaQrPanel from "@/components/FaollaQrPanel";
 import { useI18n } from "@/components/I18nProvider";
+import LanguageTranslationFeedback from "@/components/LanguageTranslationFeedback";
+import { languageFlagImageUrl } from "@/lib/languageFlags";
 import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
 import ShuangkouToolIcon from "@/components/ShuangkouToolIcon";
 import TankBattleIcon from "@/components/TankBattleIcon";
@@ -1483,9 +1485,6 @@ function buildSupportLocationMessageText(latitude: number, longitude: number, ac
   return [`位置：${lat}, ${lng}${accuracyLabel}`, buildSupportLocationMapPreviewUrl(latitude, longitude)].join("\n");
 }
 
-function languageFlagImageUrl(countryCode: string) {
-  return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
-}
 
 function normalizeExternalInfoUrl(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
@@ -8130,7 +8129,7 @@ export default function MePage() {
       <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         <div className="faolla-mobile-self-header relative shrink-0 border-b border-slate-200/80 bg-white/90 px-4 pb-5 pt-[calc(var(--faolla-mobile-safe-top)+0.85rem)] shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur">
           <div className="absolute right-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20">
-            <div ref={mobileSelfLanguageRootRef} className="relative">
+            <div ref={mobileSelfLanguageRootRef} className="relative" data-no-translate="1">
               <button
                 type="button"
                 className="faolla-mobile-language-button block h-6 w-[35px] overflow-hidden rounded-[3px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
@@ -8149,6 +8148,7 @@ export default function MePage() {
                   loading="eager"
                 />
               </button>
+              <LanguageTranslationFeedback />
               {mobileSelfLanguageMenuOpen ? (
                 <div
                   ref={mobileSelfLanguageMenuRef}
@@ -8390,7 +8390,7 @@ export default function MePage() {
                   {personalProfileSaving ? "保存中..." : "保存资料"}
                 </button>
               ) : (
-                <div ref={mobileSelfLanguageRootRef} className="relative">
+                <div ref={mobileSelfLanguageRootRef} className="relative" data-no-translate="1">
                   <button
                     type="button"
                     className="faolla-mobile-language-button block h-6 w-[35px] overflow-hidden rounded-[3px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
@@ -8409,6 +8409,7 @@ export default function MePage() {
                       loading="eager"
                     />
                   </button>
+                  <LanguageTranslationFeedback />
                   {mobileSelfLanguageMenuOpen ? (
                     <div
                       ref={mobileSelfLanguageMenuRef}

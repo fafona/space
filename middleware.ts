@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { isLocalLanguageFlagPath } from "@/lib/languageFlags";
 import { extractMerchantPrefixFromHost } from "@/lib/siteRouting";
 import { isMerchantNumericId, normalizeDomainPrefix } from "@/lib/merchantIdentity";
 import {
@@ -420,7 +421,7 @@ function withNoStore(response: NextResponse) {
 }
 
 function isTrustedPlatformRootAssetPath(pathname: string) {
-  return TRUSTED_PLATFORM_ROOT_ASSET_PATHS.has(pathname.toLowerCase());
+  return TRUSTED_PLATFORM_ROOT_ASSET_PATHS.has(pathname.toLowerCase()) || isLocalLanguageFlagPath(pathname);
 }
 
 function isSensitiveUiOrAuthPath(pathname: string) {

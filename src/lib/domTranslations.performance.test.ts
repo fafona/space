@@ -100,3 +100,13 @@ test("failures remain retryable, warm caches avoid network, and pre-aborted call
   await ensureDomTranslations(["No iniciar ninguna petición nueva"], "en-GB", 1, { signal: aborted.signal });
   assert.equal(requests.length, 2);
 });
+
+test("malformed successful HTTP responses are not cached as successful identity translations", async () => {
+  const text = "Respuesta incorrecta del traductor de prueba";
+  globalThis.fetch = async () => Response.json({ unexpected: true });
+  await ensureDomTranslations([text], "en-GB");
+  assert.equal(isDomTranslationCached(text, "en-GB"), false);
+  globalThis.fetch = async () => Response.json([[[text, text]]]);
+  await ensureDomTranslations([text], "en-GB");
+  assert.equal(isDomTranslationCached(text, "en-GB"), true, "a valid same-language result is still cacheable");
+});

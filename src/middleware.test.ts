@@ -94,6 +94,17 @@ test("middleware leaves hashed static assets cacheable", async () => {
   assert.equal(response.headers.get("cache-control"), null);
 });
 
+test("local language flags remain static on public and console hosts without broadening other asset paths", async () => {
+  for (const host of ["faolla.com", "cyberspace.faolla.com", "console.faolla.com"]) {
+    const response = await middleware(new NextRequest(`https://${host}/flags/es.svg`));
+    assert.equal(response.headers.get("x-middleware-rewrite"), null);
+    assert.equal(response.headers.get("location"), null);
+    assert.equal(response.headers.get("cache-control"), null);
+  }
+  const unknown = await middleware(new NextRequest("https://console.faolla.com/flags/xx.svg"));
+  assert.equal(unknown.status, 404);
+});
+
 test("middleware redirects bad OAuth state before homepage render", async () => {
   const request = new NextRequest("https://faolla.com/?error_code=bad_oauth_state&appShell=faolla&loginFrom=checkout");
 

@@ -1,16 +1,17 @@
 "use client";
 
 import { createPortal } from "react-dom";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { usePathname } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
 import { LANGUAGE_OPTIONS, resolveSupportedLocale } from "@/lib/i18n";
 import { isMerchantNumericId } from "@/lib/merchantIdentity";
 import { useHydrated } from "@/lib/useHydrated";
-
-function flagImageUrl(countryCode: string) {
-  return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
-}
+import LanguageTranslationFeedback from "@/components/LanguageTranslationFeedback";
+import { languageFlagImageUrl as flagImageUrl } from "@/lib/languageFlags";
+import {
+  getDomTranslationStatus, getDomTranslationServerStatus, subscribeDomTranslationStatus,
+} from "@/lib/domTranslationStatus";
 
 function isFaollaAppShell() {
   if (typeof window === "undefined") return false;
@@ -25,6 +26,7 @@ export default function GlobalLanguageSwitcher() {
   const hydrated = useHydrated();
   const pathname = usePathname();
   const { locale, setLocale, t } = useI18n();
+  const translationStatus = useSyncExternalStore(subscribeDomTranslationStatus, getDomTranslationStatus, getDomTranslationServerStatus);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -53,6 +55,7 @@ export default function GlobalLanguageSwitcher() {
         ? "top-[4.25rem] md:top-[4.5rem]"
         : "top-3 md:top-5";
   const resolvedLocale = useMemo(() => resolveSupportedLocale(locale), [locale]);
+  const translationPending = translationStatus.locale === resolvedLocale && translationStatus.state === "pending";
 
   const selected = useMemo(
     () => LANGUAGE_OPTIONS.find((item) => item.code === resolvedLocale) ?? LANGUAGE_OPTIONS[0],
@@ -179,6 +182,7 @@ export default function GlobalLanguageSwitcher() {
     open && menuStyle
       ? createPortal(
           <div
+            data-no-translate="1"
             ref={menuRef}
             style={menuStyle}
             className="overflow-y-auto overscroll-contain rounded-xl border border-slate-300 bg-white p-2 text-xs shadow-[0_22px_60px_rgba(15,23,42,0.22)]"
@@ -254,6 +258,7 @@ export default function GlobalLanguageSwitcher() {
           onClick={() => setOpen((prev) => !prev)}
           aria-label={t("lang.placeholder")}
           aria-expanded={open}
+          aria-busy={translationPending}
           title={selected.label}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -266,6 +271,7 @@ export default function GlobalLanguageSwitcher() {
             loading="eager"
           />
         </button>
+        <LanguageTranslationFeedback />
       </div>
       {menuContent}
     </div>

@@ -2,13 +2,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import {readFile} from 'node:fs/promises';
+import {readFile,readdir} from 'node:fs/promises';
 import {build} from 'esbuild';
 import postcss from 'postcss';
 import tailwind from '@tailwindcss/postcss';
 import {chromium} from 'playwright';
 
 const origin='https://utility-controls.invalid';
+const localFlags=new Map(await Promise.all((await readdir('public/flags')).filter(file=>/^[a-z]{2}\.svg$/.test(file)).map(async file=>['/flags/'+file,await readFile('public/flags/'+file)])));
 const fixtures={
  'next/navigation':`export const usePathname=()=>'/';`,
  'next/link':`import React from'react';export default function Link({prefetch,...props}){return <a {...props}/>}`,
@@ -34,11 +35,11 @@ test('public login, favorite and service controls match the language flag on des
  try{for(const width of [1440,390,320])for(const authenticated of [false,true]){
   const context=await browser.newContext({viewport:{width,height:800}}),page=await context.newPage(),unexpected=[],errors=[];
   page.on('pageerror',error=>errors.push(error.message));
-  await context.route('**/*',route=>{const request=route.request(),url=new URL(request.url());
+  await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());
    if(request.method()!=='GET'){unexpected.push(request.method()+' '+url.pathname);return route.abort();}
    if(url.origin===origin&&request.isNavigationRequest())return route.fulfill({contentType:'text/html',body:'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+css+'</style><div id="root"></div><script>'+script.replaceAll('</script>','<\\/script>')+'</script>'});
    if(url.origin===origin&&url.pathname==='/api/merchant-service/status')return route.fulfill({json:{ok:true,authenticated,favorited:false}});
-   if(url.hostname==='flagcdn.com')return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="80" height="60"><path fill="#e21" d="M0 0h80v60H0z"/></svg>'});
+   if(url.origin===origin&&request.resourceType()==='image'&&localFlags.has(url.pathname))return route.fulfill({contentType:'image/svg+xml',body:localFlags.get(url.pathname)});
    unexpected.push(url.href);return route.abort();
   });
   try{

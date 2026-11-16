@@ -175,9 +175,11 @@ body.translated-rtl {
   top: 0 !important;
 }
 
-/* Hide first paint until client-side local translation finishes. */
+/* Translation is progressive, not a page-readiness/authentication gate.
+   Cached/legacy prepaint scripts may still set this marker; never let a slow
+   external translator hide an otherwise usable website or backend. */
 html[data-i18n-pending="1"] body {
-  visibility: hidden;
+  visibility: visible;
 }
 
 @media (max-width: 767px) {

@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useI18n } from "@/components/I18nProvider";
+import { createDomTranslationReporter, subscribeDomTranslationRetry } from "@/lib/domTranslationStatus";
 import {
   ensureDomTranslations,
   hasTranslatableText,
@@ -300,6 +301,7 @@ export default function ClientDomTranslator() {
     const mutationGuard = mutationGuardRef.current;
     const currentVersion = applyVersionRef.current + 1;
     applyVersionRef.current = currentVersion;
+    const translationReporter = createDomTranslationReporter(normalizedLocale);
 
     const paintAvailable = (roots: Iterable<Node>) => {
       if (disposed || applyVersionRef.current !== currentVersion) return;
@@ -359,10 +361,17 @@ export default function ClientDomTranslator() {
         document.documentElement.setAttribute("data-i18n-pending", "1");
       }
 
-      await ensureDomTranslations(missing, normalizedLocale, undefined, {
-        signal: requests.signal,
-        onProgress: () => queueProgress(effectiveRoots),
-      });
+      const translationBatch = translationReporter.begin(missing);
+      try {
+        await ensureDomTranslations(missing, normalizedLocale, undefined, {
+          signal: requests.signal,
+          onProgress: () => queueProgress(effectiveRoots),
+        });
+      } finally {
+        if (!disposed && applyVersionRef.current === currentVersion) {
+          translationReporter.finish(translationBatch, text => isDomTranslationCached(text, normalizedLocale));
+        }
+      }
 
       if (disposed || applyVersionRef.current !== currentVersion) return;
 
@@ -391,12 +400,28 @@ export default function ClientDomTranslator() {
       queueMicrotask(flush);
     };
 
+    const unsubscribeRetry = subscribeDomTranslationRetry(retryLocale => {
+      if (disposed || retryLocale !== normalizedLocale) return;
+      translationReporter.resetFailures();
+      queueApply(document.body, false);
+    });
+
     void runApply([document.body], shouldBlockFirstPaint);
 
     const observer = new MutationObserver((mutations) => {
       if (disposed || applying) return;
 
       mutations.forEach((mutation) => {
+        // Status controls/menus are not translation input. In particular, a
+        // portal opening directly under body must not rescan the entire admin.
+        const ignored = (node: Node) => Boolean(
+          (node instanceof Element ? node : node.parentElement)?.closest("[data-no-translate='1']"),
+        );
+        if (ignored(mutation.target)) return;
+        if (mutation.type === "childList") {
+          const changed = [...mutation.addedNodes, ...mutation.removedNodes];
+          if (changed.length && changed.every(ignored)) return;
+        }
         if (mutation.type === "characterData" && mutationGuard?.consumeTextMutation(mutation.target as MerchantTextNode)) {
           return;
         }
@@ -433,6 +458,8 @@ export default function ClientDomTranslator() {
 
     return () => {
       disposed = true;
+      unsubscribeRetry();
+      translationReporter.dispose();
       requests.abort();
       if (progressFrame !== null) window.cancelAnimationFrame(progressFrame);
       progressRoots.clear();

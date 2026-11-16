@@ -1,6 +1,8 @@
 ﻿"use client";
 
 import { parseMerchantOrderAttentionSummary } from "@/lib/merchantOrderAttention";
+import { languageFlagImageUrl } from "@/lib/languageFlags";
+import LanguageTranslationFeedback from "@/components/LanguageTranslationFeedback";
 import {
   useCallback,
   useEffect,
@@ -436,9 +438,6 @@ const BACKGROUND_POSITION_OPTIONS = [
   "right bottom",
 ];
 
-function languageFlagImageUrl(countryCode: string) {
-  return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
-}
 
 const BLOCK_TYPE_LABELS: Record<Block["type"], string> = {
   common: "通用",
@@ -17161,7 +17160,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
           </button>
         ) : null}
         <div className="absolute right-4 top-[calc(var(--faolla-mobile-safe-top)+0.7rem)] z-20">
-          <div ref={supportSelfLanguageRootRef} className="relative">
+          <div ref={supportSelfLanguageRootRef} className="relative" data-no-translate="1">
             <button
               type="button"
               className="faolla-mobile-language-button block h-6 w-[35px] overflow-hidden rounded-[3px] border border-slate-300/80 bg-transparent p-0 transition hover:brightness-105"
@@ -17180,6 +17179,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 loading="eager"
               />
             </button>
+            <LanguageTranslationFeedback />
             {supportSelfLanguageMenuOpen ? (
               <div
                 ref={supportSelfLanguageMenuRef}
