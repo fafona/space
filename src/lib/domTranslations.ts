@@ -239,15 +239,15 @@ function setCachedTranslation(locale: string, source: string, translated: string
   schedulePersist();
 }
 
-function parseTranslateResponse(json: unknown, fallback: string) {
-  if (!Array.isArray(json) || !Array.isArray(json[0])) return fallback;
+function parseTranslateResponse(json: unknown) {
+  if (!Array.isArray(json) || !Array.isArray(json[0])) return null;
   const segments = json[0] as unknown[];
   const translated = segments
     .map((segment) => (Array.isArray(segment) ? segment[0] : ""))
     .filter((item): item is string => typeof item === "string")
     .join("")
     .trim();
-  return translated || fallback;
+  return translated || null;
 }
 
 async function requestTranslation(source: string, locale: string, signal?: AbortSignal) {
@@ -279,7 +279,7 @@ async function requestTranslation(source: string, locale: string, signal?: Abort
     if (!response.ok) return null;
     const json = await response.json();
     if (controller.signal.aborted) return null;
-    return parseTranslateResponse(json, source);
+    return parseTranslateResponse(json);
   } catch {
     return null;
   } finally {

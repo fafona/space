@@ -3,6 +3,8 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { CategoryIconGlyph, normalizeCategoryIconName } from "./CategoryIconGlyph";
 import { useI18n } from "@/components/I18nProvider";
+import LanguageTranslationFeedback from "@/components/LanguageTranslationFeedback";
+import { languageFlagImageUrl as flagImageUrl } from "@/lib/languageFlags";
 import {
   getMerchantCouponDiscountLabel,
   getMerchantCouponDisplayTitle,
@@ -193,9 +195,6 @@ function rechargeRecordStatusLabel(status: Exclude<RechargeRecordStatusFilter, "
   return "完成";
 }
 
-function flagImageUrl(countryCode: string) {
-  return `https://flagcdn.com/${countryCode.toLowerCase()}.svg`;
-}
 
 const EMPTY_MEMBER_INSIGHT: MerchantMembershipInsight = {
   pointBalance: 0,
@@ -5581,6 +5580,7 @@ export default function MerchantPointRedemptionCashier({
                 height={18}
               />
             </button>
+            <LanguageTranslationFeedback />
             {languageMenuOpen ? (
               <div ref={languageMenuRef} className="language-dropdown-menu" role="menu">
                 {LANGUAGE_OPTIONS.map((item) => (
