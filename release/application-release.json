@@ -1,8 +1,8 @@
 {
   "schemaVersion": 5,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "c8982294231187f732e9d3f902af84c4a9a5d20c",
-  "purpose": "Progressive translation without blocking usable pages and local locale flags",
+  "baseline": "dadbced2d579b991a62f83edde6cc87bc964a280",
+  "purpose": "Backend startup CPU reduction and deferred editor/QR resources without changing login, permissions or drafts",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,420 +10,36 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
+      "file": ".github/workflows/ci.yml",
+      "role": "verification",
+      "before": [
+        "100644",
+        "598ead243c7842ef509900e76c207b2f3cc64aef"
+      ],
+      "after": [
+        "100644",
+        "069506b9e422cd61f366c73a26dc8bf44749810f"
+      ]
+    },
+    {
       "file": "docs/locale-feedback-and-backend-loading-20261116.md",
       "role": "verification",
-      "before": null,
-      "after": [
+      "before": [
         "100644",
         "01a8e8b17e497867b7ad21527726d0f8f8ac47e7"
-      ]
-    },
-    {
-      "file": "middleware.ts",
-      "role": "application",
-      "before": [
-        "100644",
-        "c6e80f1bdd750c2a6ad8bc1289fbef80c0b62126"
       ],
       "after": [
         "100644",
-        "90480f9b39118b7e4b47565d4ca0b76b0786176f"
+        "5814a484ec76c2dc34a084f501867711a9a9295f"
       ]
     },
     {
-      "file": "public/flags/al.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "e1f19f3751ae476a0b4d502392882aee6f84526b"
-      ]
-    },
-    {
-      "file": "public/flags/ba.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "61ab0e8db15df7dad8d681457d53534c0a5ac17c"
-      ]
-    },
-    {
-      "file": "public/flags/bg.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "d56c585bed16897e66ac5b2e2718cc85ca447ef7"
-      ]
-    },
-    {
-      "file": "public/flags/by.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "7d0bc653f05f49f5ead6ff18e39a24723c614f50"
-      ]
-    },
-    {
-      "file": "public/flags/cn.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "e8fc1bdac0ca0a6f42174cb049a455098b618322"
-      ]
-    },
-    {
-      "file": "public/flags/cz.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "b38bd2ad5476e480156690d679422dfdcd79cc54"
-      ]
-    },
-    {
-      "file": "public/flags/de.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "0e771aaffaa1caa50d74a0607117bf49433fed9b"
-      ]
-    },
-    {
-      "file": "public/flags/dk.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "446abf19dbc55e2cbac8daee31dfa1c08c4004d2"
-      ]
-    },
-    {
-      "file": "public/flags/ee.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "b07b2f6e7dfd673be5e0af25a6be461638cc08b5"
-      ]
-    },
-    {
-      "file": "public/flags/es.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "d3b4e7b4cb93fedd55d937e03fff24034fb754c7"
-      ]
-    },
-    {
-      "file": "public/flags/fi.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "c128b88af353c22ab15d071498c97fa870523a4c"
-      ]
-    },
-    {
-      "file": "public/flags/fr.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "6dc2c580fd732a3a9cd45140efa2dd94de2f03ea"
-      ]
-    },
-    {
-      "file": "public/flags/gb.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "a5d0f33b998fab3206557291f434a5482b098312"
-      ]
-    },
-    {
-      "file": "public/flags/gr.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "d79498865699c437111f48bf6767b14a5ceab08a"
-      ]
-    },
-    {
-      "file": "public/flags/hr.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "47eb30c42484284721c4bdd2ddef2056c4a39001"
-      ]
-    },
-    {
-      "file": "public/flags/hu.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "249ecdc5a03b8cd90a8191aa2a885c25b1ace70e"
-      ]
-    },
-    {
-      "file": "public/flags/ie.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "8630c9a92d006c57344fe894d9c507a13a5de511"
-      ]
-    },
-    {
-      "file": "public/flags/is.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "275f6de367d390d8a4627a53ebb358606f35c5f2"
-      ]
-    },
-    {
-      "file": "public/flags/it.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "8a469862ea6b0908e91bb1d022484a675b68653e"
-      ]
-    },
-    {
-      "file": "public/flags/jp.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "d54f85632e58c42d41691a9dcfed6b509469ed49"
-      ]
-    },
-    {
-      "file": "public/flags/kr.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "e80b8631121dee8787abfdffa11d93283b9445ac"
-      ]
-    },
-    {
-      "file": "public/flags/lt.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "7f17855c990154e04808d351499c8757ee95c5bb"
-      ]
-    },
-    {
-      "file": "public/flags/lu.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "9dbfb6a3a22591a56654879120329d4f4a8c4cdd"
-      ]
-    },
-    {
-      "file": "public/flags/lv.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "510c270da68b2b6187acdb249c58396d870ffd1c"
-      ]
-    },
-    {
-      "file": "public/flags/mk.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "0fab583c6492feb09358a72d37fb839289f05ed4"
-      ]
-    },
-    {
-      "file": "public/flags/mt.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "50b8c2b92838f47e817dc6e0de5db64a524d7794"
-      ]
-    },
-    {
-      "file": "public/flags/nl.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "b68b5a1488ee3afd4973997f8ffe81e535faad00"
-      ]
-    },
-    {
-      "file": "public/flags/no.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "490bac8bfcb529e1087ded81695d84c4b1f8d4ce"
-      ]
-    },
-    {
-      "file": "public/flags/pl.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "2cd6439570b0ebf2aebbbba121e8d12f468a4030"
-      ]
-    },
-    {
-      "file": "public/flags/pt.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "369275755242a8b5b2dc700920b3f652cd8a081d"
-      ]
-    },
-    {
-      "file": "public/flags/ro.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "e9a5ed8f611ea57ca2c75156e19e4e4564613fbb"
-      ]
-    },
-    {
-      "file": "public/flags/rs.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "ebfb163ee3ca79f98d311728474e96a8b7a66ec5"
-      ]
-    },
-    {
-      "file": "public/flags/ru.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "8c4c870dc96d8a433a9fcbd27c337534e91eb22a"
-      ]
-    },
-    {
-      "file": "public/flags/se.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "fbd19d1c70052310f351d89cae30edd6ff3a208d"
-      ]
-    },
-    {
-      "file": "public/flags/si.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "2298f7f518cc1d3b8b80459a0f1765f97ae29494"
-      ]
-    },
-    {
-      "file": "public/flags/sk.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "2a69cba213d4bff45721b549e67d7017bc6dffd5"
-      ]
-    },
-    {
-      "file": "public/flags/sources.json",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "3e923ab9b9789c0e7f4b9c8de292a67f3a05d0b8"
-      ]
-    },
-    {
-      "file": "public/flags/tr.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "6bd6687dd5b267914bbc4c916bc7483512645615"
-      ]
-    },
-    {
-      "file": "public/flags/tw.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "f9045e9eee8220d183a6063bc03b7d35176eb01e"
-      ]
-    },
-    {
-      "file": "public/flags/ua.svg",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "d91f13098f53a8b5fb260ecbb2874cc1d4bd2a5e"
-      ]
-    },
-    {
-      "file": "scripts/locale-switch-browser-acceptance.mjs",
+      "file": "scripts/admin-startup-browser-acceptance.mjs",
       "role": "verification",
-      "before": [
-        "100644",
-        "d06324b88539e506d7a64128317954f400304b42"
-      ],
+      "before": null,
       "after": [
         "100644",
-        "c3a301ec7b82cc514908e4ff9e5f0796c5d56049"
-      ]
-    },
-    {
-      "file": "scripts/public-utility-controls-browser-acceptance.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "abad10d0b8c312015d6682433298c4edb5a12b30"
-      ],
-      "after": [
-        "100644",
-        "bcf44c0707d7f2dbe9f5a5df0017b52da6dddf54"
-      ]
-    },
-    {
-      "file": "scripts/redemption-pending-cart-browser-acceptance.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "ed7ced878c5bbbd46420c9dc761cd60938c6c8f0"
-      ],
-      "after": [
-        "100644",
-        "8fddf197cc7db793554d06acd8956e5dfab27799"
+        "ba5aa64339e20df8225d3f66b2ec672d99d28e69"
       ]
     },
     {
@@ -431,162 +47,133 @@
       "role": "application",
       "before": [
         "100644",
-        "6db7a13773a651e1153312548f1a2cba6baf5779"
-      ],
-      "after": [
-        "100644",
         "8f7cfcfbc4688ce468e2eb16e774fa845112e159"
-      ]
-    },
-    {
-      "file": "src/app/globals.css",
-      "role": "application",
-      "before": [
-        "100644",
-        "0698308e79e0199f359b15f5c404de583a579fdf"
       ],
       "after": [
         "100644",
-        "97899963eb3a1b7b924220b7f676a58977cc9f6c"
+        "29ef2f94ed7f07daa43351fd718eb3d6b7b8c8e5"
       ]
     },
     {
-      "file": "src/app/me/page.tsx",
-      "role": "application",
+      "file": "src/data/platformControlStore.test.ts",
+      "role": "verification",
       "before": [
         "100644",
-        "4d0009c68180bdceb5c2e018d332c32ee84560f0"
+        "e1745282ef22b08754b12a0a0760143b0ad9d600"
       ],
       "after": [
         "100644",
-        "ae8d85786ef1d3298354591ec28ad0ed90a7fcfc"
+        "fe7c30d599a3bc7a6e1b408dba4257a479372d84"
       ]
     },
     {
-      "file": "src/components/ClientDomTranslator.tsx",
+      "file": "src/data/platformControlStore.ts",
       "role": "application",
       "before": [
         "100644",
-        "646859f0ad03db6233260d45bc4b330bcf7eb763"
+        "d74314997bb5d057c2b3739125724b2c9531b739"
       ],
       "after": [
         "100644",
-        "d6572e001f772e75df872d29f628316c8c0f695e"
+        "ff21ec49223ab0525b6ce96950d621d185fc992f"
       ]
     },
     {
-      "file": "src/components/GlobalLanguageSwitcher.tsx",
+      "file": "src/lib/editorSystemDefaults.test.ts",
+      "role": "verification",
+      "before": [
+        "100644",
+        "fec17918785dcb984b3a9503376d1e6568f6019b"
+      ],
+      "after": [
+        "100644",
+        "9cb57b3f3b6812f1033faabafa9b5126153f147f"
+      ]
+    },
+    {
+      "file": "src/lib/editorSystemDefaults.ts",
       "role": "application",
       "before": [
         "100644",
-        "8733a4b272994550931de391f3f5b1ce069f1a97"
+        "a75d7d81b19840cb4bb3614145d4d4697dc6c2c8"
       ],
       "after": [
         "100644",
-        "c459e1f0d08e4c04252c1a59739b93382e6b00ee"
+        "c77ef234af6619a30898c71d3fc08aff9de24261"
       ]
     },
     {
-      "file": "src/components/LanguageTranslationFeedback.tsx",
+      "file": "src/lib/merchantBusinessCardQr.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "13edef52e89994498fa1f7ea8e5465c0aa4cf861"
+      ],
+      "after": [
+        "100644",
+        "89c657eb3b3948d7ec7e90f29ab6598faac52c58"
+      ]
+    },
+    {
+      "file": "src/lib/merchantBusinessCardQrDecorations.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "bf4c29ca0f7e779dba0804b87895b68b7d1d0bab"
+      ],
+      "after": [
+        "100644",
+        "67d524c3f2cc31ba087203103046165b90d1b0ad"
+      ]
+    },
+    {
+      "file": "src/lib/merchantBusinessCardQrPresetIds.ts",
       "role": "application",
       "before": null,
       "after": [
         "100644",
-        "2f83e6dabb3ac504d03f683181da6d482513faca"
+        "794f39e8517ad6c3c09ee1ede89415faa64994df"
       ]
     },
     {
-      "file": "src/components/admin/MerchantPointRedemptionCashier.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "53ea07d81d3bd0e283b92093fea21edbe13b61c6"
-      ],
-      "after": [
-        "100644",
-        "776d14c2b353bb15a16f1ba0927251a7bc7e1844"
-      ]
-    },
-    {
-      "file": "src/lib/domTranslationStatus.test.ts",
+      "file": "src/lib/merchantBusinessCardQrSettings.test.ts",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
-        "747e3a92217aacb3b327cc04df859b8bc3a59951"
+        "a74228a0e3f4f5f1211006c8fff632d148da2b57"
       ]
     },
     {
-      "file": "src/lib/domTranslationStatus.ts",
+      "file": "src/lib/merchantBusinessCardQrSettings.ts",
       "role": "application",
       "before": null,
       "after": [
         "100644",
-        "360ce58a66f54fe01879866d34d12d1561101444"
+        "8eb88f4af827537def974d1529dac3029238f382"
       ]
     },
     {
-      "file": "src/lib/domTranslations.performance.test.ts",
-      "role": "verification",
-      "before": [
-        "100644",
-        "8a4bd2e28d065a2f201ed03507fd384503de3589"
-      ],
-      "after": [
-        "100644",
-        "d1845fce352824ca1d12b2127ff486717111c747"
-      ]
-    },
-    {
-      "file": "src/lib/domTranslations.ts",
+      "file": "src/lib/merchantBusinessCards.ts",
       "role": "application",
       "before": [
         "100644",
-        "7a5b2f760578b9b285b19273f9a94c03f95882c6"
+        "0e17de6c7d32fdb79328d76a11dfe3bdcffd85e5"
       ],
       "after": [
         "100644",
-        "41ca7cfcfea2fdbd98c4eab10c55494d976551f8"
-      ]
-    },
-    {
-      "file": "src/lib/languageFlags.test.ts",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "79a7239649e1850747cbfb38d0099459e79cee0b"
-      ]
-    },
-    {
-      "file": "src/lib/languageFlags.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "2c008eb048b01fd4d146fbae0102f74805960bda"
-      ]
-    },
-    {
-      "file": "src/middleware.test.ts",
-      "role": "verification",
-      "before": [
-        "100644",
-        "516b3b03de515f60f680221fa53eac567d21023f"
-      ],
-      "after": [
-        "100644",
-        "2acf9bbaf37a714a0d5a3d7a1cde72339976afbb"
+        "a0650ffc09e533d308659e0e99874cf5f2bf7bbe"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/domTranslationStatus.test.ts",
-    "src/lib/languageFlags.test.ts",
-    "src/lib/domTranslations.performance.test.ts",
-    "src/lib/i18n.test.ts",
-    "src/lib/merchantServiceLocale.test.ts",
-    "src/middleware.test.ts"
+    "src/data/platformControlStore.test.ts",
+    "src/lib/editorSystemDefaults.test.ts",
+    "src/lib/planTemplateRuntime.test.ts",
+    "src/lib/merchantBusinessCardQrSettings.test.ts",
+    "src/lib/merchantBusinessCards.test.ts",
+    "src/app/admin/AdminClient.contract.test.ts",
+    "src/data/blockStore.test.ts"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
