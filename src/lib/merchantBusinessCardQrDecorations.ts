@@ -1,4 +1,5 @@
 import { BUSINESS_CARD_QR_INDUSTRY_ICONS } from "./merchantBusinessCardQrIndustry";
+export { normalizeBusinessCardQrIcon, normalizeBusinessCardQrFrame, normalizeBusinessCardQrDecoration } from "./merchantBusinessCardQrSettings";
 import { BUSINESS_CARD_QR_CRAFTED_FRAMES, businessCardQrCraftedFrameGeometry, renderBusinessCardQrCraftedFrame } from "./merchantBusinessCardQrCraftedFrames";
 import { BUSINESS_CARD_QR_EXPANDED_FRAMES, businessCardQrStudioFrameGeometry, renderBusinessCardQrExpandedFrame } from "./merchantBusinessCardQrExpandedFrames";
 // Legacy IDs and their renderer stay stable. New artwork uses separate IDs.
@@ -61,16 +62,7 @@ export type BusinessCardQrDecoration = {
   frame?: BusinessCardQrFrame; frameColor?: string; frameBackgroundColor?: string;
   frameWidth?: number; framePadding?: number;
 };
-export const normalizeBusinessCardQrIcon = (v: unknown): BusinessCardQrIcon => BUSINESS_CARD_QR_ICONS.find(i => i.id === v)?.id ?? "none";
-export const normalizeBusinessCardQrFrame = (v: unknown): BusinessCardQrFrame => BUSINESS_CARD_QR_FRAMES.find(i => i.id === v)?.id ?? "none";
 const hex = (v: unknown, fallback: string) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : fallback;
-const bounded = (v: unknown, fallback: number, min: number, max: number) => typeof v === "number" && Number.isFinite(v) ? Math.max(min, Math.min(max, Math.round(v))) : fallback;
-export function normalizeBusinessCardQrDecoration(input: BusinessCardQrDecoration | null = {}): Required<BusinessCardQrDecoration> {
-  const v = input && typeof input === "object" ? input : {};
-  return { icon: normalizeBusinessCardQrIcon(v.icon), iconColor: hex(v.iconColor, "#000000"), iconFollowColor: v.iconFollowColor !== false,
-    frame: normalizeBusinessCardQrFrame(v.frame), frameColor: hex(v.frameColor, "#1e3a8a"), frameBackgroundColor: hex(v.frameBackgroundColor, "#ffffff"),
-    frameWidth: bounded(v.frameWidth, 2, 1, 4), framePadding: bounded(v.framePadding, 16, 8, 32) };
-}
 
 export function renderBusinessCardQrIcon(icon: BusinessCardQrIcon, color: string): string {
   const preset = BUSINESS_CARD_QR_ICONS.find(i => i.id === icon);

@@ -2839,7 +2839,7 @@ function createBuiltinOrganizationPlanConfig(): PagePlanConfig {
   };
 }
 
-function createBuiltinPlanTemplates(): PlanTemplate[] {
+function buildBuiltinPlanTemplates(): PlanTemplate[] {
   const serviceConfig = createBuiltinServiceStarterPlanConfig();
   const restaurantConfig: PagePlanConfig = {
     activePlanId: "plan-1",
@@ -2905,6 +2905,17 @@ function createBuiltinPlanTemplates(): PlanTemplate[] {
       updatedAt: BUILTIN_NEW_MERCHANT_TEMPLATE_TIMESTAMP,
     },
   ];
+}
+
+let builtinPlanTemplateSeed: PlanTemplate[] | null = null;
+
+function createBuiltinPlanTemplates(): PlanTemplate[] {
+  // Built-in definitions are static, but every caller must still own an
+  // independent editable snapshot. Never return the cached seed itself.
+  builtinPlanTemplateSeed ??= buildBuiltinPlanTemplates();
+  return typeof structuredClone === "function"
+    ? structuredClone(builtinPlanTemplateSeed)
+    : JSON.parse(JSON.stringify(builtinPlanTemplateSeed)) as PlanTemplate[];
 }
 
 function normalizeIndustryCategories(input: unknown): IndustryCategory[] {
@@ -2974,7 +2985,7 @@ function normalizePlanTemplatePreviewImages(value: unknown) {
   );
 }
 
-function normalizePlanTemplate(value: unknown): PlanTemplate | null {
+function normalizePlanTemplate(value: unknown, builtinMetadataOnly = false): PlanTemplate | null {
   const source = value && typeof value === "object" ? (value as Partial<PlanTemplate>) : null;
   if (!source) return null;
   const id = normalizeText(source.id);
@@ -2988,25 +2999,28 @@ function normalizePlanTemplate(value: unknown): PlanTemplate | null {
     sourceSiteName: normalizeText(source.sourceSiteName),
     sourceSiteDomain: normalizeText(source.sourceSiteDomain),
     sourceIndustry: normalizeSiteIndustry(source.sourceIndustry),
-    coverImageUrl: normalizeText(source.coverImageUrl) || extractPlanTemplateCoverImage(source.blocks),
+    coverImageUrl: builtinMetadataOnly ? "" : normalizeText(source.coverImageUrl) || extractPlanTemplateCoverImage(source.blocks),
     previewImageUrl: normalizeText(source.previewImageUrl),
     planPreviewImageUrls: normalizePlanTemplatePreviewImages(source.planPreviewImageUrls),
     previewVariant: normalizeText((source as { previewVariant?: unknown }).previewVariant),
-    blocks: normalizePlanTemplateBlocks(source.blocks),
+    blocks: builtinMetadataOnly ? [] : normalizePlanTemplateBlocks(source.blocks),
     createdAt: normalizeText(source.createdAt) || current,
     updatedAt: normalizeText(source.updatedAt) || normalizeText(source.createdAt) || current,
   };
 }
 
 function normalizePlanTemplates(value: unknown): PlanTemplate[] {
+  const builtinTemplates = createBuiltinPlanTemplates();
+  const builtinById = new Map(builtinTemplates.map((item) => [item.id, item] as const));
   const rows = Array.isArray(value)
     ? value
-        .map((item) => normalizePlanTemplate(item))
+        // Existing policy restores built-in content from code below. Only its
+        // editable label/category/timestamps survive, so don't derive and clone
+        // the stored content that would immediately be discarded.
+        .map((item) => normalizePlanTemplate(item, builtinById.has(normalizeText(item?.id))))
         .filter((item): item is PlanTemplate => !!item)
     : [];
   const unique = new Map<string, PlanTemplate>();
-  const builtinTemplates = createBuiltinPlanTemplates();
-  const builtinById = new Map(builtinTemplates.map((item) => [item.id, item] as const));
   for (const row of builtinTemplates) {
     unique.set(row.id, row);
   }
