@@ -1,8 +1,8 @@
 {
   "schemaVersion": 5,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "61c0c93a9935b642fbee94ecc28353512c8b79a5",
-  "purpose": "Publish reviewed mobile and isolated visitor chat fixes with redacted cache drift diagnostics; retain all cleanup and release guards",
+  "baseline": "6d3144b6368531778112b209aedf23c3547550b3",
+  "purpose": "Remove repeated glossary scans causing public mobile scroll and chat freezes; preserve translation, visitor delivery and account semantics",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,419 +10,92 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
-      "file": ".github/workflows/ci.yml",
-      "role": "verification",
-      "before": [
-        "100644",
-        "82130c047f2873eefc1617198a31b56425299abc"
-      ],
-      "after": [
-        "100644",
-        "598ead243c7842ef509900e76c207b2f3cc64aef"
-      ]
-    },
-    {
-      "file": ".github/workflows/merchant-guest-chat-online.yml",
+      "file": "docs/historical-application-artifact-maintenance.md",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
-        "59baba7fd402e8070596b172ecb363ea0f4cfe66"
+        "eb186817412c0124bdd1c015dacf86b5f690dc25"
       ]
     },
     {
-      "file": "docs/guest-chat-online-release.md",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "1b587b0c000d51f1190198913ed8e381f0ee1e40"
-      ]
-    },
-    {
-      "file": "scripts/application-release-compatibility.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "8e654ed22127ff8e5f1350ce0fa09921c2baa35b"
-      ],
-      "after": [
-        "100644",
-        "43291d86b52455b7935036f76cc46715a8fac347"
-      ]
-    },
-    {
-      "file": "scripts/application-release-guest-chat-contract.mjs",
+      "file": "scripts/application-release-artifact-maintenance-policy.mjs",
       "role": "release-tool",
       "before": null,
       "after": [
         "100644",
-        "3debcc089232c65ab4a14c9ae8047bbb87a67e77"
+        "c0a1b54ec49ff8642905c58cd64d2794c841cd9e"
       ]
     },
     {
-      "file": "scripts/application-release-guest-chat-database.mjs",
+      "file": "scripts/application-release-artifact-maintenance.mjs",
       "role": "release-tool",
       "before": null,
       "after": [
         "100644",
-        "a6de1fa8010fb82987dc5c8de7cd728adf5e22f2"
+        "59cfd7169d4b3ea85ad71dba9bae2cf99ab3cd49"
       ]
     },
     {
-      "file": "scripts/application-release-guest-chat-manifest.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "0e06ad67b4a79672cc188d4aeb9651ad57f0df44"
-      ]
-    },
-    {
-      "file": "scripts/application-release-guest-chat-migrate.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "6f02fd1335439272f6be0d8af4ffd132e16ea2e4"
-      ]
-    },
-    {
-      "file": "scripts/application-release-guest-chat-workflow.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "cf7adc15906aa26018cfc4b526dbcca9ff69b054"
-      ]
-    },
-    {
-      "file": "scripts/application-release-guest-chat.test.mjs",
+      "file": "scripts/application-release-artifact-maintenance.test.mjs",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
-        "82b088b281d6e21684c4edd809403555f4c4c5d2"
+        "9b2ac5ebda876a8616f0f8c884ea077e2340b9a8"
       ]
     },
     {
-      "file": "scripts/ci-workflow-contract.test.mjs",
+      "file": "scripts/locale-switch-browser-acceptance.mjs",
       "role": "verification",
       "before": [
         "100644",
-        "5d0c16525d5c35b4311b4de4d0fdcf4be70b4ffe"
+        "0911b5a964ebf4776302f0bd1e2ea0b82e0c9041"
       ],
       "after": [
         "100644",
-        "afb95f87b6db1a26466c19037305ef4f1195c3f1"
+        "d06324b88539e506d7a64128317954f400304b42"
       ]
     },
     {
-      "file": "scripts/guest-chat-browser-acceptance.mjs",
-      "role": "verification",
-      "before": null,
+      "file": "src/lib/domTranslations.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "7552ea19260b43700155d42c1ce7bc4f3d287335"
+      ],
       "after": [
         "100644",
-        "fbefd83d42eb647ed44c5ea5b182a222edd9d6db"
+        "7a5b2f760578b9b285b19273f9a94c03f95882c6"
       ]
     },
     {
-      "file": "scripts/guest-chat-db-acceptance.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "3978bd58b0f4a51ce8dd0c35697ec7b185719e7c"
-      ]
-    },
-    {
-      "file": "scripts/guest-chat-db-acceptance.sql",
+      "file": "src/lib/uiGlossary.test.ts",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
-        "d8002d739e1ade3ee2ae30cbae9213dc7dcea0a4"
+        "a53dfa622f74a2b7304e0bbd1dcbbdb879c5cbbb"
       ]
     },
     {
-      "file": "scripts/leisure-presentation-browser-acceptance.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "23e22b75906c6325197d43a337902487f253ee1a"
-      ],
-      "after": [
-        "100644",
-        "b0a148a495ff9211f911bbf114c6c5e8714272a9"
-      ]
-    },
-    {
-      "file": "scripts/merchant-service-center-browser-acceptance.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "6be53f589bc07f9bfc735857a06d3f7e801726e4"
-      ],
-      "after": [
-        "100644",
-        "e371a04d5dea37023b0c8c69dc814c33627af430"
-      ]
-    },
-    {
-      "file": "scripts/online-release-cache-cleanup.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "9d5e1c6f6640f18e37513b56aa529a7a2109bda0"
-      ],
-      "after": [
-        "100644",
-        "b3696516925e526399f14ac838c612afdf56fbb5"
-      ]
-    },
-    {
-      "file": "scripts/online-release-cache-cleanup.test.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "e4627f009d85d099f0fc0b6195e0dccfa853bf80"
-      ],
-      "after": [
-        "100644",
-        "f33aa000bfb1aff839e1eebfcb65dd7594679427"
-      ]
-    },
-    {
-      "file": "scripts/online-traffic-release.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "ccfc575351ce07531d7491a7422ff20fc369bd47"
-      ],
-      "after": [
-        "100644",
-        "d0fee1ae2ea537fb1c33da6aa2337918d4637e19"
-      ]
-    },
-    {
-      "file": "scripts/online-unpublished-candidate.test.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "c0a28b7f825d03feac9780dcf23fe8f7fffcee98"
-      ],
-      "after": [
-        "100644",
-        "4c656b298d08dd0d3034ac514c7b2b549f9a4a82"
-      ]
-    },
-    {
-      "file": "scripts/pwa-startup-browser-acceptance.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "f62a9006d29a6eff238c9cd6146e76b23040f0bf"
-      ]
-    },
-    {
-      "file": "scripts/supabase-migrations/202611160215_merchant_guest_chat.sql",
-      "role": "already-applied-guest-chat-schema",
-      "before": null,
-      "after": [
-        "100644",
-        "d81b6f511546c1d993b900d6a5c114fa7328d60a"
-      ]
-    },
-    {
-      "file": "src/app/admin/AdminClient.tsx",
+      "file": "src/lib/uiGlossary.ts",
       "role": "application",
       "before": [
         "100644",
-        "e4c125b9b4f44b2d23a8836bd143a9b6a97e02e0"
+        "097fd64209afd46f4860fba3469d7846facd8209"
       ],
       "after": [
         "100644",
-        "6db7a13773a651e1153312548f1a2cba6baf5779"
-      ]
-    },
-    {
-      "file": "src/app/api/guest-chat/route.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "346b2d0da324a1b6db02409faed975ddde5cd496"
-      ]
-    },
-    {
-      "file": "src/app/api/merchant-guest-chat/route.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "225a0654ab2b625ef34cfcca69dfd2e45969e710"
-      ]
-    },
-    {
-      "file": "src/app/globals.css",
-      "role": "application",
-      "before": [
-        "100644",
-        "6eadfbfba1539c9c2963336ed7d2456596dbd31e"
-      ],
-      "after": [
-        "100644",
-        "0698308e79e0199f359b15f5c404de583a579fdf"
-      ]
-    },
-    {
-      "file": "src/components/PublicWebsiteActions.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "3220cae49e2d69fc50a78afdf22dc114c80e8cd5"
-      ],
-      "after": [
-        "100644",
-        "4a492a528233e409f2c43ec3ed0bdc8285a96a88"
-      ]
-    },
-    {
-      "file": "src/components/PwaBootstrap.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "b6fb8471a00e04c8e5180ece3b2752b505201f0e"
-      ],
-      "after": [
-        "100644",
-        "d591ddf4061ab4c8a88fb16d9dfac9cbac5f00ff"
-      ]
-    },
-    {
-      "file": "src/components/blocks/leisurePresentation.css",
-      "role": "application",
-      "before": [
-        "100644",
-        "927c030c38be114aea947604d4cb3b19819b634a"
-      ],
-      "after": [
-        "100644",
-        "a32869c7250c7d38170c225ad5f7f6b585d1feab"
-      ]
-    },
-    {
-      "file": "src/components/enterprise/MerchantEmployeeConversationPanel.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "78d75fce7904b9610780e3b0720c525a3dfb5469"
-      ],
-      "after": [
-        "100644",
-        "2e53e4e0c3e81ed549bb6772e5e971761ab7d0cd"
-      ]
-    },
-    {
-      "file": "src/components/service-center/GuestChatPanel.tsx",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "e77d4e77b08636f05a988e960c2d8a897ec0814f"
-      ]
-    },
-    {
-      "file": "src/components/service-center/MerchantConversationTabs.tsx",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "797f546145adae0e418af5515274a58b443d372b"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceConversations.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "20cc071e17749e1a10b6802582a98babe248425b"
-      ],
-      "after": [
-        "100644",
-        "331395623a2827658d832d79613d63f8884cfa9e"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceFrameClient.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "47347f947aa5d9720d98c0ea5a9e111413138421"
-      ],
-      "after": [
-        "100644",
-        "532ab3a6133e611b41a6ce402054787700f98d51"
-      ]
-    },
-    {
-      "file": "src/lib/guestChat.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "40bf195ee0f9f569bec818a75b2ecbe93ab417cb"
-      ]
-    },
-    {
-      "file": "src/lib/guestChatHandlers.server.test.ts",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "3e70a1766eb2917abf467281adb27ace4959ba9e"
-      ]
-    },
-    {
-      "file": "src/lib/guestChatHandlers.server.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "1b5563790bac577a804b0c3205f4273093588431"
-      ]
-    },
-    {
-      "file": "src/lib/guestChatStore.server.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "305f77519bc5a18a57cb6f1338f7581ba1d7c42a"
-      ]
-    },
-    {
-      "file": "src/middleware.test.ts",
-      "role": "verification",
-      "before": [
-        "100644",
-        "c41e5c4534efc0d7cab3b3c78667f259aa6dd3ae"
-      ],
-      "after": [
-        "100644",
-        "516b3b03de515f60f680221fa53eac567d21023f"
+        "a6a1d175c56b3fa80fe5128d1c1ee8a2c0a41151"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/guestChatHandlers.server.test.ts",
-    "src/lib/merchantBusinessApiClient.test.ts",
-    "src/middleware.test.ts",
-    "src/lib/merchantServiceFrame.test.ts",
-    "src/lib/leisurePresentation.test.ts",
-    "src/lib/faollaServiceWorker.test.ts",
-    "src/lib/pwaRecentRoutes.test.ts"
+    "src/lib/uiGlossary.test.ts",
+    "src/lib/domTranslations.performance.test.ts",
+    "src/lib/domTranslations.brand.test.ts",
+    "src/lib/guestChatHandlers.server.test.ts"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
