@@ -2,7 +2,7 @@
   "schemaVersion": 5,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "61c0c93a9935b642fbee94ecc28353512c8b79a5",
-  "purpose": "Publish mobile startup and chat responsiveness, readable mobile hero video, and isolated visitor-to-merchant text conversations after separately audited additive migration",
+  "purpose": "Publish reviewed mobile and isolated visitor chat fixes with redacted cache drift diagnostics; retain all cleanup and release guards",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -166,6 +166,30 @@
       "after": [
         "100644",
         "e371a04d5dea37023b0c8c69dc814c33627af430"
+      ]
+    },
+    {
+      "file": "scripts/online-release-cache-cleanup.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "9d5e1c6f6640f18e37513b56aa529a7a2109bda0"
+      ],
+      "after": [
+        "100644",
+        "b3696516925e526399f14ac838c612afdf56fbb5"
+      ]
+    },
+    {
+      "file": "scripts/online-release-cache-cleanup.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "e4627f009d85d099f0fc0b6195e0dccfa853bf80"
+      ],
+      "after": [
+        "100644",
+        "f33aa000bfb1aff839e1eebfcb65dd7594679427"
       ]
     },
     {
