@@ -39,7 +39,8 @@ create index merchant_guest_chat_messages_rate_idx on public.merchant_guest_chat
 alter table public.merchant_guest_chat_sessions enable row level security;
 alter table public.merchant_guest_chat_threads enable row level security;
 alter table public.merchant_guest_chat_messages enable row level security;
-revoke all on public.merchant_guest_chat_sessions, public.merchant_guest_chat_threads, public.merchant_guest_chat_messages from public, anon, authenticated;
+revoke all on public.merchant_guest_chat_sessions, public.merchant_guest_chat_threads, public.merchant_guest_chat_messages from public, anon, authenticated, service_role;
+revoke all on sequence public.merchant_guest_chat_messages_sequence_seq from public, anon, authenticated, service_role;
 grant select on public.merchant_guest_chat_sessions, public.merchant_guest_chat_threads, public.merchant_guest_chat_messages to service_role;
 
 create function public.merchant_guest_chat_create_session(p_token_hash text, p_ip_hash text)

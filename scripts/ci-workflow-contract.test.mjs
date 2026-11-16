@@ -42,25 +42,28 @@ function stepBlock(job, name) {
 test("Quality preserves its required name and rejects every non-success partition result", () => {
   const quality = jobBlock("quality");
   assert.match(quality, /name: Quality\n/);
-  assert.match(quality, /needs: \[quality-core, maintenance-contracts, guest-chat-database\]/);
+  assert.match(quality, /needs: \[quality-core, maintenance-contracts\]/);
   assert.match(quality, /if: \$\{\{ always\(\) \}\}/);
   assert.match(quality, /timeout-minutes: 3\n/);
   assert.match(quality, /shell: bash\n/);
   assert.match(quality, /CORE_RESULT: \$\{\{ needs\['quality-core'\]\.result \}\}/);
   assert.match(quality, /MAINTENANCE_RESULT: \$\{\{ needs\['maintenance-contracts'\]\.result \}\}/);
-  assert.match(quality, /GUEST_CHAT_RESULT: \$\{\{ needs\['guest-chat-database'\]\.result \}\}/);
   assert.equal((quality.match(/- name:/g) || []).length, 1);
   assert.doesNotMatch(quality, /continue-on-error|uses:|secrets\.|checkout|download-artifact|\|\|\s*true/);
   const script = quality.split("        run: |\n")[1]?.trimEnd().split("\n")
     .map((line) => line.replace(/^          /, "")).join("\n");
-  assert.equal(script, 'set -euo pipefail\ntest "$CORE_RESULT" = success\ntest "$MAINTENANCE_RESULT" = success\ntest "$GUEST_CHAT_RESULT" = success');
+  assert.equal(script, 'set -euo pipefail\ntest "$CORE_RESULT" = success\ntest "$MAINTENANCE_RESULT" = success');
 });
 
-test("guest chat SQL acceptance is a mandatory isolated PostgreSQL job and refuses accidental local execution", () => {
-  const job=jobBlock("guest-chat-database");
-  assert.match(job,/image: postgres:15/);assert.match(job,/POSTGRES_DB: faolla_guest_chat_test/);
-  assert.match(job,/FAOLLA_GUEST_CHAT_DISPOSABLE_DB: "1"/);
-  assert.match(job,/run: node scripts\/guest-chat-db-acceptance\.mjs/);
+test("guest chat SQL acceptance remains mandatory inside the required identity-bound PostgreSQL job and refuses accidental local execution", () => {
+  const job=jobBlock("pages-acl-database"),step=stepBlock(job,"Run isolated guest chat schema and delivery acceptance");
+  assert.match(job,/image: postgres:15/);assert.match(job,/run: node scripts\/ci-postgres-service-identity\.mjs/);
+  assert.match(step,/FAOLLA_GUEST_CHAT_DISPOSABLE_DB: "1"/);
+  assert.match(step,/run: node scripts\/guest-chat-db-acceptance\.mjs/);
+  assert.match(step,/FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID: \$\{\{ job.services.postgres.id \}\}/);
+  assert.ok(job.indexOf(step)>job.indexOf('run: node scripts/application-release-template-postgres-acceptance.mjs'));
+  const admission=readFileSync(new URL('./release-toolchain-source.mjs',import.meta.url),'utf8');
+  assert.ok(admission.includes("'Pages Client Write ACL PostgreSQL Acceptance'"));
   assert.doesNotMatch(job,/continue-on-error|secrets\.|SUPABASE_SERVICE_ROLE_KEY|\.env\.local/);
   const result=spawnSync(process.execPath,["scripts/guest-chat-db-acceptance.mjs"],{
     cwd:fileURLToPath(new URL("..",import.meta.url)),encoding:"utf8",timeout:5000,windowsHide:true,
@@ -79,7 +82,6 @@ test("actual Quality shell fails on failed, cancelled, skipped, missing or malfo
   for (const core of outcomes) for (const maintenance of outcomes) {
     const result = spawnSync(gateBash, ["--noprofile", "--norc", "-c", script], {
       env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
-        GUEST_CHAT_RESULT: "success",
         ...(core === undefined ? {} : { CORE_RESULT: core }),
         ...(maintenance === undefined ? {} : { MAINTENANCE_RESULT: maintenance }) },
       encoding: "utf8", timeout: 5000, windowsHide: true,
@@ -88,17 +90,6 @@ test("actual Quality shell fails on failed, cancelled, skipped, missing or malfo
     assert.equal(result.signal, null);
     assert.equal(result.status === 0, core === "success" && maintenance === "success",
       JSON.stringify({ core, maintenance, stderr: result.stderr }));
-  }
-  // Preserve the entire original 81-case matrix and additionally prove the new
-  // SQL gate cannot be skipped, cancelled, absent or treated as successful.
-  for (const guest of outcomes) {
-    const result = spawnSync(gateBash, ["--noprofile", "--norc", "-c", script], {
-      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, CORE_RESULT: "success", MAINTENANCE_RESULT: "success",
-        ...(guest === undefined ? {} : { GUEST_CHAT_RESULT: guest }) },
-      encoding: "utf8", timeout: 5000, windowsHide: true,
-    });
-    assert.equal(result.error, undefined); assert.equal(result.signal, null);
-    assert.equal(result.status === 0, guest === "success", JSON.stringify({ guest, stderr: result.stderr }));
   }
 });
 
@@ -168,7 +159,7 @@ test("real PM2 acceptance follows the unchanged serial proofs in an independent 
   assert.match(step, /run:\s*node scripts\/production-maintenance-pm2-acceptance\.mjs/);
   assert.doesNotMatch(step, /continue-on-error|\bif:|secrets\.|PM2_HOME:|SUPABASE_SERVICE_ROLE_KEY|\.env\.local/);
   const jobs = [...workflow.slice(workflow.indexOf("jobs:\n")).matchAll(/^  ([a-z0-9-]+):$/gm)].map((match) => match[1]);
-  assert.deepEqual(jobs, ["quality", "maintenance-contracts", "quality-core", "browser", "guest-chat-database", "qr-database", "transaction-database", "redemption-database",
+  assert.deepEqual(jobs, ["quality", "maintenance-contracts", "quality-core", "browser", "qr-database", "transaction-database", "redemption-database",
     "checkout-database", "pages-acl-database", "recovery-database", "maintenance-ingress", "maintenance-supabase-scheduler"]);
 });
 
@@ -189,7 +180,7 @@ test("moving maintenance to its own runner preserves all four reviewed step bodi
 });
 
 test("independent jobs have no artifact dependency, optional condition or failure suppression", () => {
-  for (const name of ["quality-core", "maintenance-contracts", "browser", "guest-chat-database", "qr-database", "transaction-database",
+  for (const name of ["quality-core", "maintenance-contracts", "browser", "qr-database", "transaction-database",
     "redemption-database", "checkout-database", "pages-acl-database", "recovery-database", "maintenance-ingress",
     "maintenance-supabase-scheduler"]) {
     assert.doesNotMatch(jobBlock(name), /\bneeds:|\bif:|continue-on-error|download-artifact|self-hosted/, name);
@@ -621,13 +612,14 @@ test("pages ACL acceptance uses isolated PostgreSQL 15 with bound identity and n
 test("container-network PostgreSQL jobs bind their exact trusted service identity before database acceptance", () => {
   for (const jobName of ["checkout-database", "recovery-database", "pages-acl-database"]) {
     const job = jobBlock(jobName);
-    assert.equal((job.match(/FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID:\s*\$\{\{ job\.services\.postgres\.id \}\}/g) || []).length, jobName === "pages-acl-database" ? 3 : 2);
+    assert.equal((job.match(/FAOLLA_CI_POSTGRES_SERVICE_CONTAINER_ID:\s*\$\{\{ job\.services\.postgres\.id \}\}/g) || []).length, jobName === "pages-acl-database" ? 4 : 2);
     const bindAt = job.indexOf("node scripts/ci-postgres-service-identity.mjs");
     const runAt = job.indexOf(`node scripts/${jobName.replace("-database", "")}-integration/run.mjs`);
     assert.ok(bindAt >= 0 && runAt > bindAt);
     if (jobName === "pages-acl-database") {
       assert.ok(job.indexOf("node scripts/application-release-template-postgres-acceptance.mjs") > runAt);
       assert.match(job, /WEBSITE_TEMPLATE_INTEGRATION_ALLOW_DISPOSABLE_DATABASE: "1"/);
+      assert.ok(job.indexOf('node scripts/guest-chat-db-acceptance.mjs')>job.indexOf('node scripts/application-release-template-postgres-acceptance.mjs'));
     }
     assert.doesNotMatch(job, /FAOLLA_CI_POSTGRES_SERVER_IPV4:\s*\S|continue-on-error/);
   }

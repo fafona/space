@@ -1,17 +1,41 @@
-// Fails closed outside one disposable GitHub-hosted PostgreSQL service.
-import {execFileSync,execFile} from 'node:child_process';import{promisify}from'node:util';import fs from'node:fs';
-import assert from'node:assert/strict';
+// CI-only independent database on the existing identity-bound PG15 service.
+import {execFileSync,execFile} from 'node:child_process';import{promisify}from'node:util';import fs from'node:fs';import assert from'node:assert/strict';
+import {resolvePagesAclIntegrationConfig} from './pages-acl-integration/run.mjs';
+import {guestMigrationSql} from './application-release-guest-chat-migrate.mjs';
+import {guestSqlBytes,GUEST_SCHEMA_EXPRESSION,assertGuestSchema} from './application-release-guest-chat-contract.mjs';
 assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.RUNNER_ENVIRONMENT,'github-hosted');assert.equal(process.env.FAOLLA_GUEST_CHAT_DISPOSABLE_DB,'1');
-const args=['-X','--set','ON_ERROR_STOP=1','-h','127.0.0.1','-p','5432','-U','postgres','-d','faolla_guest_chat_test','-qAt'];
-const options={encoding:'utf8',timeout:30000,maxBuffer:1024*1024,env:{PATH:process.env.PATH,PGPASSFILE:'/dev/null'}};
-const run=sql=>execFileSync('psql',[...args,'-c',sql],options).trim();
-assert.equal(run('select current_database() || \'|\' || current_user;'),'faolla_guest_chat_test|postgres');
-run('create role anon;create role authenticated;create role service_role bypassrls;create table public.faolla_schema_migrations(version bigint primary key,name text not null);');
-run(fs.readFileSync('scripts/supabase-migrations/202611160215_merchant_guest_chat.sql','utf8'));
+assert.equal(fs.existsSync('/var/lib/faolla-online-release/active.json'),false);
+const config=resolvePagesAclIntegrationConfig(process.env,process.argv.slice(2));
+const options={encoding:'utf8',timeout:30000,maxBuffer:2*1024*1024,env:config.env};
+const args=config.args.map(a=>a.startsWith('--dbname=')?'--dbname=faolla_guest_chat_test':a);
+const run=(sql,argv=args)=>execFileSync('psql',[...argv,'-c',sql],options).trim();
+const identity=JSON.parse(run("select jsonb_build_object('database',current_database(),'user',current_user,'address',host(inet_server_addr()),'major',current_setting('server_version_num')::int/10000,'directory',current_setting('data_directory'),'newdb',(select count(*) from pg_database where datname='faolla_guest_chat_test'));",config.args));
+assert.deepEqual(identity,{database:config.database,user:'postgres',address:config.serverAddress,major:15,directory:'/var/lib/postgresql/data',newdb:0});
+run('create database faolla_guest_chat_test;',config.args);
+const registry=Array.from({length:213},(_,i)=>({version:i===212?'202611100214':String(202600000000+i),name:i===212?'website_template_library':'synthetic_'+i}));
+// Realistic inherited default grants must not leak visitor tables or sequence.
+run(`grant usage,create on schema public to supabase_admin;grant usage on schema public to anon,authenticated,service_role;
+ alter default privileges for role supabase_admin in schema public grant all on tables to anon,authenticated,service_role;
+ alter default privileges for role supabase_admin in schema public grant all on sequences to anon,authenticated,service_role;
+ set role supabase_admin;create table public.faolla_schema_migrations(version bigint primary key,name text not null);
+ insert into public.faolla_schema_migrations select (r->>'version')::bigint,r->>'name' from jsonb_array_elements('${JSON.stringify(registry)}'::jsonb)r;
+ create table public.faolla_booking_atomic_control(singleton boolean,active boolean,protocol int);insert into public.faolla_booking_atomic_control values(true,true,2);
+ create function public.faolla_booking_atomic_commit_v1(text,text,text,jsonb)returns void language sql as $$ select $$;`);
+const bytes=guestSqlBytes(),guarded=guestMigrationSql(bytes,registry);
+// Only this CI fixture substitutes the digest of its deliberately empty booking stand-in.
+const standin=run("select md5(replace(prosrc,chr(13),'')) from pg_proc where oid='public.faolla_booking_atomic_commit_v1(text,text,text,jsonb)'::regprocedure;");
+const testGuard=guarded.replace("'09fa13e69856221d61b6eaa544927b2a'","'"+standin+"'");assert.notEqual(testGuard,guarded);
+assert.throws(()=>run('set role supabase_admin;'+testGuard.replace('select pg_advisory_xact_lock(20260731,1);','select pg_advisory_xact_lock(20260731,1);select 1/0;')));
+assert.equal(run("select to_regclass('public.merchant_guest_chat_sessions') is null;"),'t');
+run('set role supabase_admin;'+testGuard);
+const snapshot=JSON.parse(run('select '+GUEST_SCHEMA_EXPRESSION+';'));assertGuestSchema(snapshot);
+assert.deepEqual(JSON.parse(run("select jsonb_agg(jsonb_build_object('version',version::text,'name',name)order by version)from public.faolla_schema_migrations;")),[...registry,{version:'202611160215',name:'merchant_guest_chat'}]);
+assert.throws(()=>run('set role supabase_admin;'+testGuard));
 run(fs.readFileSync('scripts/guest-chat-db-acceptance.sql','utf8'));
 run("select public.merchant_guest_chat_create_session(repeat('d',64),repeat('4',64));");
 const command="select public.merchant_guest_chat_send('99990001',null,repeat('d',64),'guest','11111111-1111-4111-8111-111111111111','concurrent-safe',null);";
 await Promise.all(Array.from({length:6},()=>promisify(execFile)('psql',[...args,'-c',command],options)));
 assert.equal(run("select count(*) from public.merchant_guest_chat_messages where text='concurrent-safe';"),'1');
 assert.equal(run("set role service_role;select count(*)>0 from public.merchant_guest_chat_messages;reset role;"),'t');
-console.log('Guest chat PostgreSQL: all SQL/ACL assertions and six-process idempotency passed.');
+assert.deepEqual(JSON.parse(run('select '+GUEST_SCHEMA_EXPRESSION+';')),snapshot,'messaging cannot mutate schema, ACLs or definitions');
+console.log('Guest chat PostgreSQL: all SQL/ACL assertions, guarded installation/replay rejection and six-process idempotency passed.');

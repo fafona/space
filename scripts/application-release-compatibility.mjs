@@ -8,6 +8,8 @@ import {assertRecordedSchemaDatabase as assertSchemaDatabase} from './applicatio
 import {TEMPLATE_SCHEMA,templateNeed,templateGitBlob,assertTemplateSql} from './application-release-template-contract.mjs';
 import {readFileSync} from 'node:fs';
 import {createVerificationApplicationManifest,assertVerificationApplicationManifest,verificationSchemaManifest} from './application-release-verification.mjs';
+import {createGuestManifest,assertGuestManifest} from './application-release-guest-chat-manifest.mjs';
+import {assertGuestSchemaDatabase} from './application-release-guest-chat-database.mjs';
 
 export const RECORDED_APPLICATION_SCHEMA=Object.freeze({
  kind:'already-applied-booking-safeupdate-v1',version:'202611050213',
@@ -104,13 +106,16 @@ function assertSchemaApplicationManifest(value,input){
 }
 // Website-only verification classification stays outside the byte-pinned policy
 // loaded by the immutable booking worker. All previous schema guards still run.
-export function createApplicationReleaseManifest(input){
+function createVerifiedApplicationManifest(input){
  return createVerificationApplicationManifest(input,createSchemaApplicationManifest,assertSchemaApplicationManifest);
 }
-export function assertApplicationReleaseManifest(value,input){
+function assertVerifiedApplicationManifest(value,input){
  return assertVerificationApplicationManifest(value,input,createSchemaApplicationManifest,assertSchemaApplicationManifest);
 }
+export function createApplicationReleaseManifest(input){return createGuestManifest(input,createVerifiedApplicationManifest,assertVerifiedApplicationManifest);}
+export function assertApplicationReleaseManifest(value,input){return assertGuestManifest(value,input,createVerifiedApplicationManifest,assertVerifiedApplicationManifest);}
 export function assertRecordedSchemaDatabase(value){
+ if(value?.schemaVersion===5)return assertGuestSchemaDatabase(value);
  // Run the original read-only database proof with its exact nested schema,
  // never let a new outer manifest version turn an existing proof into a no-op.
  return assertSchemaDatabase(verificationSchemaManifest(value));
