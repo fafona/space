@@ -87,6 +87,7 @@ const MANUAL_DOM_TRANSLATIONS: Record<string, Record<string, string>> = {
     es: "Estadísticas",
   },
 };
+const manualReverseByLocale = new Map<string, Map<string, string>>();
 
 function toApiTarget(locale: string) {
   const normalized = resolveSupportedLocale(locale).toLowerCase();
@@ -109,12 +110,17 @@ function getManualDomReverseSource(translated: string, locale: string) {
   const glossarySource = findUiGlossarySource(translated, locale);
   if (glossarySource) return glossarySource;
   const normalized = normalizeDomLocale(locale).toLowerCase();
-  const language = normalized.split("-")[0] || normalized;
-  for (const [source, entry] of Object.entries(MANUAL_DOM_TRANSLATIONS)) {
-    const candidate = entry[normalized] ?? entry[language];
-    if (candidate === translated) return source;
+  let reverse = manualReverseByLocale.get(normalized);
+  if (!reverse) {
+    const language = normalized.split("-")[0] || normalized;
+    reverse = new Map<string, string>();
+    for (const [source, entry] of Object.entries(MANUAL_DOM_TRANSLATIONS)) {
+      const candidate = entry[normalized] ?? entry[language];
+      if (candidate !== undefined && !reverse.has(candidate)) reverse.set(candidate, source);
+    }
+    manualReverseByLocale.set(normalized, reverse);
   }
-  return null;
+  return reverse.get(translated) ?? null;
 }
 
 export function normalizeDomLocale(locale: string | null | undefined): DomLocale {

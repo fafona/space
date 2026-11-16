@@ -2817,12 +2817,16 @@ const UI_GLOSSARY_OVERRIDES: Partial<Record<UiGlossarySource | string, Partial<R
   },
 };
 
-function getUiGlossaryRow(source: UiGlossarySource | string): Record<string, string> {
-  const key = String(source) as UiGlossarySource;
-  const baseRow = UI_GLOSSARY_TRANSLATIONS[key] ? { ...UI_GLOSSARY_TRANSLATIONS[key] } : {};
-  const overrideRow = UI_GLOSSARY_OVERRIDES[key] ?? {};
-  return { ...baseRow, ...overrideRow };
-}
+// These authored tables are static. Merge once, not for every phrase/DOM node.
+// Keep source insertion order: reverse collisions historically chose the first.
+const glossaryRows = new Map<string, Record<string, string | undefined>>(
+  [...new Set([...Object.keys(UI_GLOSSARY_TRANSLATIONS), ...Object.keys(UI_GLOSSARY_OVERRIDES)])]
+    .map(source => [source, {
+      ...UI_GLOSSARY_TRANSLATIONS[source as UiGlossarySource],
+      ...UI_GLOSSARY_OVERRIDES[source],
+    }]),
+);
+const reverseGlossaries = new Map<string, Map<string, string>>();
 
 export function getUiGlossaryLocale(locale: string | null | undefined) {
   const normalized = resolveSupportedLocale(locale).toLowerCase();
@@ -2833,21 +2837,20 @@ export function getUiGlossaryLocale(locale: string | null | undefined) {
 export function getUiGlossaryText(source: UiGlossarySource | string, locale: string | null | undefined) {
   const normalizedLocale = getUiGlossaryLocale(locale);
   if (normalizedLocale === "zh-cn") return String(source);
-  const row = getUiGlossaryRow(source);
-  if (!Object.keys(row).length) return String(source);
-  return row[normalizedLocale] ?? row.en ?? String(source);
+  const row = glossaryRows.get(String(source));
+  return row?.[normalizedLocale] ?? row?.en ?? String(source);
 }
 
 export function findUiGlossarySource(translated: string, locale: string | null | undefined) {
   const normalizedLocale = getUiGlossaryLocale(locale);
-  const sourceKeys = new Set<string>([
-    ...Object.keys(UI_GLOSSARY_TRANSLATIONS),
-    ...Object.keys(UI_GLOSSARY_OVERRIDES),
-  ]);
-  for (const source of sourceKeys) {
-    const row = getUiGlossaryRow(source);
-    const candidate = row[normalizedLocale] ?? row.en;
-    if (candidate === translated) return source;
+  let reverse = reverseGlossaries.get(normalizedLocale);
+  if (!reverse) {
+    reverse = new Map<string, string>();
+    for (const [source, row] of glossaryRows) {
+      const candidate = row[normalizedLocale] ?? row.en;
+      if (candidate !== undefined && !reverse.has(candidate)) reverse.set(candidate, source);
+    }
+    reverseGlossaries.set(normalizedLocale, reverse);
   }
-  return null;
+  return reverse.get(translated) ?? null;
 }

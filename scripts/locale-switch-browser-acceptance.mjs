@@ -10,7 +10,7 @@ const chinese=['欢迎来体验数字运动','和朋友一起开启快乐挑战'
 const entry=`import React from 'react';import{createRoot}from'react-dom/client';
 import{I18nProvider,useI18n}from'./src/components/I18nProvider';import Translator from'./src/components/ClientDomTranslator';
 import LoadingProgressScreen from'./src/components/LoadingProgressScreen';
-import{isDomTranslationCached}from'./src/lib/domTranslations';window.__translationCached=isDomTranslationCached;
+import{isDomTranslationCached,reverseTranslateDomText}from'./src/lib/domTranslations';window.__translationCached=isDomTranslationCached;window.__qaReverseText=reverseTranslateDomText;
 const query=new URLSearchParams(location.search);
 const original=query.get('source')==='es'?${JSON.stringify(spanish)}:${JSON.stringify(source)};
 if(query.has('many'))original.push(...Array.from({length:15},(_,i)=>'更多数字活动介绍 '+i));
@@ -119,5 +119,22 @@ test('completed Spanish survives a page reload without requesting the same phras
   await f.page.waitForFunction(texts=>Object.entries(localStorage).some(([key,value])=>key.includes('dom-i18n-cache')&&texts.every(text=>Object.hasOwn(JSON.parse(value),text))),[...source,'Customer draft']);
   const before=f.requests.length;await f.page.reload();await f.page.getByText(spanish[0],{exact:true}).waitFor();
   assert.equal(f.requests.length,before,'warm persisted phrases must be painted locally');
+ }finally{await f.close();await browser.close();}
+});
+
+test('slow-mobile reverse translation lookups stay bounded across repeated unknown DOM phrases',{timeout:30000},async()=>{
+ const browser=await chromium.launch({headless:true}),f=await fixture(browser,390);try{
+  const session=await f.context.newCDPSession(f.page);await session.send('Emulation.setCPUThrottlingRate',{rate:4});
+  const result=await f.page.evaluate(()=>{
+   window.__qaReverseText('unknown authored public phrase','es-ES');
+   const started=performance.now();let mismatches=0;
+   for(let i=0;i<8000;i++){
+    if(window.__qaReverseText('Unknown authored public phrase '+i,'es-ES')!==null)mismatches++;
+    if(window.__qaReverseText('Sr.','es-ES')!=='先生')mismatches++;
+   }
+   return {duration:performance.now()-started,mismatches};
+  });
+  assert.equal(result.mismatches,0);
+  assert.ok(result.duration<1000,`reverse lookup monopolized the mobile main thread for ${Math.round(result.duration)} ms`);
  }finally{await f.close();await browser.close();}
 });
