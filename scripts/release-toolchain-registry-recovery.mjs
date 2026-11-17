@@ -33,6 +33,21 @@ const ROOT='/var/lib/faolla-booking-registry-recovery',RELEASE='/var/lib/faolla-
 const need=(v,c)=>{if(!v)throw Error('booking_registry_recovery_'+c);},same=(a,b)=>need(isDeepStrictEqual(a,b),'changed');
 const read=p=>JSON.parse(bookingHostRead(p)),seal=(d,n,v)=>bookingHostWriteOnce(d+'/'+n,retentionCanonicalText(v)),pause=ms=>new Promise(r=>setTimeout(r,ms));
 const boot=()=>fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();
+const diagnosticFacts=new WeakMap();
+const PHASES=new Set(['invocation','admission','manager-witness','application-attestation','locks','attempt-absence','history','physical','incident','process-binding','gate-binding','official-ci','capacity-binding','protected-file-plan','file-continuity','protected-host','retention-head','context','before-record','preparation-validation','final-preflight','readonly-complete','recovery-directory','preflight','worker-source-transition','settlement','persistence','natural-cycles']);
+const SYSTEM_CODES=new Set(['ENOENT','EACCES','EPERM','EEXIST','ENOSPC','EMFILE','ENFILE','EIO','ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENOTFOUND','EAI_AGAIN','ABORT_ERR','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_SOCKET']);
+const ERROR_NAMES=new Set(['Error','TypeError','RangeError','SyntaxError','AbortError','TimeoutError','ToolchainError']);
+// Fixed guard-code families, never arbitrary messages, paths, RPC output,
+// registry rows, environment values or stacks. Digits in PM2 codes matter.
+export function registryRecoveryFailureReport(error,{action='unknown',phase='unobserved'}={}){
+ const message=typeof error?.message==='string'?error.message:'',code=/^(?:booking_registry_recovery|release_toolchain|release_proc_directory_witness|release_static_attestation|online_retention|online_rolling|booking_host|booking_ready_backup|booking_dependency|booking_atomic_worker|booking_ready_worker|booking_handoff|booking_worker_release|host_reboot_manager)_[a-z0-9_]{1,120}$/.test(message)?message:'unconfirmed';
+ return{kind:'booking-registry-recovery-refused',code,action:['inspect','publish','audit','finish'].includes(action)?action:'unknown',phase:PHASES.has(phase)?phase:'unobserved',errorName:ERROR_NAMES.has(error?.name)?error.name:'Error',...(SYSTEM_CODES.has(error?.code)?{systemCode:error.code}:{}),...(SYSTEM_CODES.has(error?.cause?.code)?{causeCode:error.cause.code}:{}),errorSha256:hash(message),automaticRetryAllowed:false,mailEnabled:false};
+}
+async function diagnosed(action,work){
+ let phase='invocation';
+ const progress=next=>{need(PHASES.has(next),'diagnostic_phase');phase=next;if(process.argv[1]===source+'/scripts/release-toolchain-registry-recovery.mjs')console.error(JSON.stringify({kind:'booking-registry-recovery-step',action,phase,at:new Date().toISOString()}));};
+ try{return await work(progress);}catch(error){if(error&&typeof error==='object')diagnosticFacts.set(error,{action,phase});throw error;}
+}
 function raw(pid){return Object.fromEntries(fs.readFileSync('/proc/'+pid+'/environ','utf8').split('\0').filter(Boolean).map(r=>{const i=r.indexOf('=');need(i>0,'environment');return[r.slice(0,i),r.slice(i+1)];}));}
 function identity(pid){const p=captureProcessFact(pid);return{pid:p.pid,uid:p.uid,startTicks:p.startTicks,parentPid:p.parentPid,cwd:p.cwd,executable:p.executable,commandSha256:p.commandLineDigest,environmentSha256:hash(fs.readFileSync('/proc/'+pid+'/environ'))};}
 function physical(){
@@ -60,35 +75,62 @@ async function admission(action){
  const inputs=assertRegistryRecoverySourceDelta(parseSourceTree(sourceGit('/www/wwwroot/merchant-space',['ls-tree','-r','-z',P.target])),inventory.rows);
  return{review,inventory,inputs};
 }
-export async function inspectRegistryRecovery(){
- const admitted=await admission('inspect');return withPinnedFormalPm2Process(()=>{
-  const history=readOnlineRetentionHistory(),actual=physical(),gate=read(HANDOFF+'/worker-enabled.json');
-  need(boot()===P.bootId&&hash(bookingHostRead(RELEASE+'/active.json'))===P.activeSha256&&hash(bookingHostRead(RELEASE+'/'+P.target+'/state.json'))===P.failedStateSha256&&hash(bookingHostRead(HANDOFF+'/worker-enabled.json'))===P.gateSha256,'incident');
-  assertOnlineRetentionHistory(history);inspectOnlineRetentionWindow({history,actualActive:read(RELEASE+'/active.json'),current:actual.processes});
+// The exact pre-mutation checks are shared by inspect and publish. This helper
+// is private: callers cannot supply facts, reuse its result or acquire authority
+// from a green inspection report. It cannot lock, write, restart or persist.
+async function prepareRegistryRecoveryPreflight(admitted,verifyDaemon,progress){
+  progress('attempt-absence');
+  const directory=ROOT+'/'+revision;need(!fs.existsSync(directory),'attempt_replay_forbidden');
+  progress('history');const history=readOnlineRetentionHistory();assertOnlineRetentionHistory(history);
+  progress('physical');const original=physical();
+  progress('incident');const gateText=bookingHostRead(HANDOFF+'/worker-enabled.json'),gate=JSON.parse(gateText);
+  need(boot()===P.bootId&&hash(gateText)===P.gateSha256&&hash(bookingHostRead(RELEASE+'/active.json'))===P.activeSha256&&hash(bookingHostRead(RELEASE+'/'+P.target+'/state.json'))===P.failedStateSha256,'incident');
+  progress('process-binding');
+  same(original.processes,history.entries.at(-1).processes);inspectOnlineRetentionWindow({history,actualActive:read(RELEASE+'/active.json'),current:original.processes});
+  progress('gate-binding');
   assertBookingWorkerExecutionRevision({gate,history,toolRevision:P.priorToolRevision});
-  assertBookingAtomicWorkerGate({gate,history,actualActive:read(RELEASE+'/active.json'),current:actual.processes,toolRevision:gate.toolRevision});
-  const priorWorker=actual.processes.find(p=>p.name===NAME),r={version:2,registryAdapter:registryAdapterContext(),priorToolRevision:P.priorToolRevision,priorWorker,gateSha256:P.gateSha256};assertRegistryRecoveryHistory(history,r);
-  return{kind:'booking-registry-recovery-inspected',revision,historyHead:history.headSha256,workerPid:actual.worker.pid,workerRestarts:actual.worker.pm2_env.restart_time,rows:actual.processes.length,maximumFrameBytes:4194304,inputs:admitted.inputs,sourceInventorySha256:admitted.inventory.inventorySha256,mutationPerformed:false};
+  assertBookingAtomicWorkerGate({gate,history,actualActive:read(RELEASE+'/active.json'),current:original.processes,toolRevision:gate.toolRevision});
+  progress('official-ci');
+  const ci=await verifyWorkerEntryCiArtifact({revision,review:admitted.review,file:'/var/lib/faolla-booking-worker-admissions/'+revision+'/ci-evidence.zip',source});
+  progress('capacity-binding');
+  const capacity=ci.report.registryCapacity;need(capacity?.kind==='real-pm2-large-registry-capacity-verified'&&capacity.toolRevision===revision&&capacity.rawBytes>1048576&&capacity.rawBytes<=4194304&&capacity.maximumFrameBytes===4194304&&capacity.actualPrivatePm2===true&&capacity.completeRegistryRead===true&&capacity.originalReaderRefused===true&&capacity.allOriginalRowsUnchanged===true&&capacity.rawEnvironmentsNotLogged===true&&capacity.formalHostTouched===false&&capacity.publicationAuthority===false,'native_capacity_evidence');
+  same(capacity.sourceHashes,Object.fromEntries(['release-toolchain-registry-capacity.py','release-toolchain-pm2-observation.mjs','production-maintenance-pm2-control.py'].map(n=>[n,hash(fs.readFileSync(source+'/scripts/'+n))])));
+  progress('protected-file-plan');const files=protectedFiles(history);
+  progress('file-continuity');const continuity=captureFileContinuity({files:[...files.map(p=>p.file),...admitted.inventory.rows.filter(p=>!p.file.startsWith('public/downloads/')).map(p=>source+'/'+p.file)]}),protectedHash=()=>hash(retentionCanonicalText({files:files.map(p=>[p.file,hash(bookingHostRead(p.file,{privateMode:p.privateMode}))]),others:physical().others}));
+  progress('protected-host');const protectedHostSha256=protectedHash();
+  progress('retention-head');const initialHeadHash=hash(bookingHostRead('/var/lib/faolla-online-retention.head.json')),startedAt=new Date().toISOString(),window={id:randomUUID(),startedAt,deadlineAt:new Date(Date.parse(startedAt)+600000).toISOString()};
+  const verifyPrepared=committed=>{verifyDaemon();assertReviewFresh(admitted.review,revision);continuity.assertUnchanged();need(boot()===P.bootId&&Date.now()<Date.parse(window.deadlineAt),'window');same(protectedHash(),protectedHostSha256);same(hash(bookingHostRead('/var/lib/faolla-online-retention.head.json')),committed?hash(retentionCanonicalText(onlineRetentionHeadRecord(committed))):initialHeadHash);};
+  progress('context');
+  const context={version:2,kind:'booking-worker-source-only',candidate:gate.candidate,toolRevision:revision,priorToolRevision:P.priorToolRevision,priorWorker:original.processes.find(p=>p.name===NAME),gateSha256:P.gateSha256,publicationCertificateSha256:gate.certificateSha256,inventorySha256:admitted.inventory.inventorySha256,nativeEvidenceSha256:hash(retentionCanonicalText(ci)),protectedHostSha256,window,mailEnabled:false,registryAdapter:registryAdapterContext()};
+  assertRegistryRecoveryHistory(history,context);
+  progress('before-record');
+  const prior=history.entries.at(-1),before={...Object.fromEntries(['version','policy','legacySha256','rollingHeadSha256','rollingHistorySha256','active','rollback','victim'].map(k=>[k,structuredClone(prior[k])])),kind:'booking-worker',sequence:history.entries.length+1,previousSha256:history.headSha256,toolRevision:revision,workerRelease:context,processes:original.processes,workerIdentity:original.workerIdentity,protectedHostSha256,persistenceSha256:null};
+  progress('preparation-validation');buildOnlineRetentionPreparation(before,{version:2,process:null},history,new Date().toISOString());
+  progress('final-preflight');verifyPrepared(null);
+  return{directory,history,original,gate,protectedHostSha256,startedAt,window,context,before,verifyPrepared};
+}
+export async function inspectRegistryRecovery(){
+ return diagnosed('inspect',async progress=>{
+  progress('admission');const admitted=await admission('inspect');
+  progress('manager-witness');return withPinnedFormalPm2Process(verifyDaemon=>{
+   progress('application-attestation');return withRetainedApplicationAttestation(async()=>{
+    const prepared=await prepareRegistryRecoveryPreflight(admitted,verifyDaemon,progress),{history,original}=prepared;
+    progress('readonly-complete');
+    return{kind:'booking-registry-recovery-inspected',revision,historyHead:history.headSha256,workerPid:original.worker.pid,workerRestarts:original.worker.pm2_env.restart_time,rows:original.processes.length,maximumFrameBytes:4194304,inputs:admitted.inputs,sourceInventorySha256:admitted.inventory.inventorySha256,completePreflightVerified:true,readOnly:true,mutationPerformed:false,publicationAuthority:false};
+   });
+  });
  });
 }
 export async function publishRegistryRecovery(){
- const admitted=await admission('publish');
- return withPinnedFormalPm2Process(verifyDaemon=>withRetainedApplicationAttestation(()=>withOnlineRetentionLocks(async lock=>{
-  const directory=ROOT+'/'+revision;need(!fs.existsSync(directory),'attempt_replay_forbidden');
-  const history=readOnlineRetentionHistory(),original=physical(),gateText=bookingHostRead(HANDOFF+'/worker-enabled.json'),gate=JSON.parse(gateText);
-  need(boot()===P.bootId&&hash(gateText)===P.gateSha256&&hash(bookingHostRead(RELEASE+'/active.json'))===P.activeSha256&&hash(bookingHostRead(RELEASE+'/'+P.target+'/state.json'))===P.failedStateSha256,'incident');
-  same(original.processes,history.entries.at(-1).processes);inspectOnlineRetentionWindow({history,actualActive:read(RELEASE+'/active.json'),current:original.processes});
-  assertBookingWorkerExecutionRevision({gate,history,toolRevision:P.priorToolRevision});
-  const ci=await verifyWorkerEntryCiArtifact({revision,review:admitted.review,file:'/var/lib/faolla-booking-worker-admissions/'+revision+'/ci-evidence.zip',source});
-  const capacity=ci.report.registryCapacity;need(capacity?.kind==='real-pm2-large-registry-capacity-verified'&&capacity.toolRevision===revision&&capacity.rawBytes>1048576&&capacity.rawBytes<=4194304&&capacity.maximumFrameBytes===4194304&&capacity.actualPrivatePm2===true&&capacity.completeRegistryRead===true&&capacity.originalReaderRefused===true&&capacity.allOriginalRowsUnchanged===true&&capacity.rawEnvironmentsNotLogged===true&&capacity.formalHostTouched===false&&capacity.publicationAuthority===false,'native_capacity_evidence');
-  same(capacity.sourceHashes,Object.fromEntries(['release-toolchain-registry-capacity.py','release-toolchain-pm2-observation.mjs','production-maintenance-pm2-control.py'].map(n=>[n,hash(fs.readFileSync(source+'/scripts/'+n))])));
-  const files=protectedFiles(history),continuity=captureFileContinuity({files:[...files.map(p=>p.file),...admitted.inventory.rows.filter(p=>!p.file.startsWith('public/downloads/')).map(p=>source+'/'+p.file)]}),protectedHash=()=>hash(retentionCanonicalText({files:files.map(p=>[p.file,hash(bookingHostRead(p.file,{privateMode:p.privateMode}))]),others:physical().others}));
-  const protectedHostSha256=protectedHash(),initialHeadHash=hash(bookingHostRead('/var/lib/faolla-online-retention.head.json')),startedAt=new Date().toISOString(),window={id:randomUUID(),startedAt,deadlineAt:new Date(Date.parse(startedAt)+600000).toISOString()};
+ return diagnosed('publish',async progress=>{
+  progress('admission');const admitted=await admission('publish');
+  progress('manager-witness');return withPinnedFormalPm2Process(verifyDaemon=>{
+   progress('application-attestation');return withRetainedApplicationAttestation(()=>{
+    progress('locks');return withOnlineRetentionLocks(async lock=>{
+  const {directory,history,original,gate,startedAt,window,context,before,verifyPrepared}=await prepareRegistryRecoveryPreflight(admitted,verifyDaemon,progress);
   let attempted=false,committed=null,phase='preflight';
-  const check=()=>{assertOnlineRetentionHeldLocks(lock);verifyDaemon();assertReviewFresh(admitted.review,revision);continuity.assertUnchanged();need(boot()===P.bootId&&Date.now()<Date.parse(window.deadlineAt),'window');same(protectedHash(),protectedHostSha256);same(hash(bookingHostRead('/var/lib/faolla-online-retention.head.json')),committed?hash(retentionCanonicalText(onlineRetentionHeadRecord(committed))):initialHeadHash);};
-  const context={version:2,kind:'booking-worker-source-only',candidate:gate.candidate,toolRevision:revision,priorToolRevision:P.priorToolRevision,priorWorker:original.processes.find(p=>p.name===NAME),gateSha256:P.gateSha256,publicationCertificateSha256:gate.certificateSha256,inventorySha256:admitted.inventory.inventorySha256,nativeEvidenceSha256:hash(retentionCanonicalText(ci)),protectedHostSha256,window,mailEnabled:false,registryAdapter:registryAdapterContext()};
-  assertRegistryRecoveryHistory(history,context);
-  const prior=history.entries.at(-1),before={...Object.fromEntries(['version','policy','legacySha256','rollingHeadSha256','rollingHistorySha256','active','rollback','victim'].map(k=>[k,structuredClone(prior[k])])),kind:'booking-worker',sequence:history.entries.length+1,previousSha256:history.headSha256,toolRevision:revision,workerRelease:context,processes:original.processes,workerIdentity:original.workerIdentity,protectedHostSha256,persistenceSha256:null};
+  const check=()=>{assertOnlineRetentionHeldLocks(lock);verifyPrepared(committed);};
+  progress('recovery-directory');
   if(!fs.existsSync(ROOT)){ownedReleasePath('/var/lib',{directory:true});fs.mkdirSync(ROOT,{mode:0o700});bookingHostSync('/var/lib');}ownedReleasePath(ROOT,{directory:true,privateMode:true});fs.mkdirSync(directory,{mode:0o700});bookingHostSync(ROOT);
   try{
    check();seal(directory,'intent.json',{kind:P.kind,revision,historyHead:history.headSha256,context,before,inputs:admitted.inputs,at:startedAt});
@@ -98,23 +140,26 @@ export async function publishRegistryRecovery(){
    const preparation=buildOnlineRetentionPreparation(before,{version:2,process:null},history,new Date().toISOString()),journal=createOnlineRetentionJournal(history);
    journal.begin();journal.write('prepared.json',preparation.preparedText);journal.write('before.json',preparation.beforeText);journal.write('recovery-pm2.json',preparation.recoveryText);
    const expected=bookingLegacyRpcExpected({...original.worker,pm2_env:{...original.worker.pm2_env,args:original.worker.pm2_env.args??[],node_args:original.worker.pm2_env.node_args??[]}}),attempt={kind:'booking-registry-capacity-restart-attempt',revision,context,expected,controller:captureProcessFact(process.pid),at:new Date().toISOString()};
-   check();seal(directory,'worker-attempt.json',attempt);attempted=true;phase='worker-source-transition';
+   check();seal(directory,'worker-attempt.json',attempt);attempted=true;phase='worker-source-transition';progress(phase);
    const python=captureTrustedPython();verifyTrustedPython(python);const result=spawnSync(python.target.path,['-I','-S','-B',source+'/scripts/release-toolchain-registry-recovery-pm2.py'],{input:JSON.stringify({daemon:original.snapshot.daemonPeer,process:processPeer(original.worker.pid),expected,revision,attemptSha256:hash(bookingHostRead(directory+'/worker-attempt.json'))}),encoding:'utf8',timeout:35000,killSignal:'SIGKILL',maxBuffer:524288,cwd:source,env:bookingHostEnvironment(),stdio:['pipe','pipe','pipe',lock.deployFd]});verifyTrustedPython(python);
    need(result.status===0&&!result.error&&!result.signal&&result.stderr==='','restart_unconfirmed');seal(directory,'worker-ack.json',JSON.parse(result.stdout));
-   let settled;phase='settlement';
+   let settled;phase='settlement';progress(phase);
    for(let i=0;i<100;i++){check();const actual=physical();try{assertBookingWorkerOnlyDelta(original.processes,actual.processes,context);assertBookingReadyWorkerRawTransition(original.raw,actual.raw,original.configured,actual.configured);settled=actual;break;}catch{await pause(100);}}
    need(settled,'worker_unsettled');
    const {commandLine,...daemon}=captureProcessFact(original.snapshot.daemon.pid),bootId=boot();same(commandLine,['PM2 v6.0.14: God Daemon (/root/.pm2)']);
-   phase='persistence';const registry=await inspectCapacityPm2Registry(daemon,bootId);same(registry,settled.snapshot.filteredRegistry);assertCompletePm2DumpSet(settled.snapshot.rows,registry);const target=await captureCapacityPm2DumpTarget(daemon,bootId);check();
+   phase='persistence';progress(phase);const registry=await inspectCapacityPm2Registry(daemon,bootId);same(registry,settled.snapshot.filteredRegistry);assertCompletePm2DumpSet(settled.snapshot.rows,registry);const target=await captureCapacityPm2DumpTarget(daemon,bootId);check();
    const persisted=await persistCapacityPm2Dump(daemon,bootId,registry,target);seal(directory,'persistence.json',persisted);need(await verifyCapacityPm2Dump(daemon,bootId,registry,persisted),'persistence');check();
    const after={...before,processes:settled.processes,workerIdentity:settled.workerIdentity,persistenceSha256:hash(bookingHostRead(directory+'/persistence.json'))};
-   const receipt=buildOnlineRetentionReceipt(before,after,{version:2,process:null},history,{preparedAt:JSON.parse(preparation.preparedText).preparedAt,completedAt:new Date().toISOString()});journal.write('after.json',receipt.files.get('after.json'));journal.write('certificate.json',receipt.files.get('certificate.json'));committed=journal.complete(receipt.certificate);phase='natural-cycles';
+   const receipt=buildOnlineRetentionReceipt(before,after,{version:2,process:null},history,{preparedAt:JSON.parse(preparation.preparedText).preparedAt,completedAt:new Date().toISOString()});journal.write('after.json',receipt.files.get('after.json'));journal.write('certificate.json',receipt.files.get('certificate.json'));committed=journal.complete(receipt.certificate);phase='natural-cycles';progress(phase);
    let natural=null;const naturalStart=Date.now();while(Date.now()-naturalStart<160000){check();same(physical().processes,settled.processes);natural=readNaturalWorkerCycle(settled.worker,Date.parse(receipt.certificate.completedAt),2);if(natural)break;await pause(5000);}need(natural,'natural_cycles_unconfirmed');
    const publicProof=await proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target:P.baseline,operationId:window.id,verify:check,deadlineAtMs:Math.min(Date.now()+30000,Date.parse(window.deadlineAt))});
    check();same(readOnlineRetentionHistory(),committed);need(await verifyCapacityPm2Dump(daemon,bootId,registry,persisted),'persistence');assertBookingWorkerExecutionRevision({gate,history:committed,toolRevision:revision});assertBookingAtomicWorkerGate({gate,history:committed,actualActive:read(RELEASE+'/active.json'),current:physical().processes,toolRevision:gate.toolRevision});
    const completed={kind:'booking-registry-recovery-completed',revision,certificateSha256:retentionHash(receipt.certificate),workerPid:settled.worker.pid,workerRestarts:settled.worker.pm2_env.restart_time,naturalCycle:natural,publicProof,originalGateUnchanged:true,websiteUnchanged:true,otherProcessesUnchanged:true,applicationRebuilt:false,mailEnabled:false,at:new Date().toISOString()};seal(directory,'completed.json',completed);return completed;
   }catch(error){seal(directory,'unconfirmed.json',{kind:'booking-registry-recovery-unconfirmed',revision,phase,attempted,certificateCommitted:!!committed,errorSha256:hash(String(error?.message)),automaticRetryAllowed:false,mailEnabled:false,at:new Date().toISOString()});throw error;}
- })));
+    });
+   });
+  });
+ });
 }
 // Read-only re-audit, or completion-only sealing after an interrupted observer.
 // Neither action can invoke a restart, persist a dump, change history or retry
@@ -145,5 +190,5 @@ export async function auditRegistryRecovery(action='audit'){
 }
 function processPeer(pid){const p=captureProcessFact(pid),s=fs.statSync('/proc/'+pid+'/exe',{bigint:true});return{pid,uid:p.uid,startTicks:p.startTicks,bootId:boot(),executable:p.executable,executableIdentity:['dev','ino','size','mtimeNs','ctimeNs','nlink','uid','mode'].map(k=>String(s[k])).join(':')};}
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
- const action=process.argv[2];Promise.resolve().then(()=>{need(['inspect','publish','audit','finish'].includes(action),'action');return action==='inspect'?inspectRegistryRecovery():action==='publish'?publishRegistryRecovery():auditRegistryRecovery(action);}).then(v=>console.log(JSON.stringify(v)),e=>{console.error(JSON.stringify({kind:'booking-registry-recovery-refused',code:/^[a-z_]{1,160}$/.test(e?.message??'')?e.message:'unconfirmed',automaticRetryAllowed:false,mailEnabled:false}));process.exitCode=1;});
+ const action=process.argv[2];Promise.resolve().then(()=>{need(['inspect','publish','audit','finish'].includes(action),'action');return action==='inspect'?inspectRegistryRecovery():action==='publish'?publishRegistryRecovery():auditRegistryRecovery(action);}).then(v=>console.log(JSON.stringify(v)),e=>{console.error(JSON.stringify(registryRecoveryFailureReport(e,diagnosticFacts.get(e)??{action})));process.exitCode=1;});
 }
