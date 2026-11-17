@@ -241,6 +241,22 @@ try{
  let stoppedEntry;for(let i=0;i<100;i++){const stoppedEntryRows=python({action:'registry',daemon:daemonPeer,root,socket:home+'/rpc.sock'});need(stoppedEntryRows.length===4,'esm_cleanup_cohort');for(const row of esmProtectedRows)assert.deepEqual(stablePm2RegistryRow(stoppedEntryRows.find(item=>item.pm_id===row.pm_id)),row);stoppedEntry=stoppedEntryRows.find(row=>row.pm_id===3);need(stoppedEntry?.name==='owned-esm-worker-entry'&&stoppedEntry.pm2_env.pm_exec_path===esmScript&&stoppedEntry.pm2_env.pm_cwd===release,'esm_stopped_identity');if(stoppedEntry.pid===0&&stoppedEntry.pm2_env.status==='stopped')break;await sleep(25);}need(stoppedEntry?.pid===0&&stoppedEntry.pm2_env.status==='stopped','esm_stopped_registry');
  const compilerCleanup={kind:'owned-application-compiler-cleanup',parentPid:esmIdentity.pid,parentIdentityVerified:true,parentExited:true,compilerChildren,compilerBinarySha256:sha(fs.readFileSync(compilerBinary)),compilerChildrenExited:true,compilerChildrenSignalled:false,otherThreeProcessesUnchanged:true,formalHostTouched:false};
  seal('booking-worker-esm-entry-verified.json',{kind:'real-pm2-esm-booking-worker-entry-acceptance',toolRevision:revision,realPm2Version:'6.0.14',actualPm2Wrapper:true,argvUnchanged:true,entryMode:entry.mode,closedGatePaused:true,openedGateCompletedCycles:ticks,closedAgainNoDispatch:true,syntheticTickOnly:true,missingDatabaseCredentialRefused:true,databaseClientConfigured:true,unrelatedSettingsNotImported:true,databaseContinuationKernel,compilerCleanup,applicationSourceVerified:applicationInputs.applicationSourceVerified,applicationProof:entryRows().filter(v=>v.kind==='synthetic-tick').at(-1).applicationProof,applicationOrDatabaseLoaded:true,formalDatabaseLoaded:false,formalHostTouched:false,publicationAuthority:false,sourceHashes:Object.fromEntries(['release-toolchain-worker-entry.mjs','booking-atomic-worker.mjs','release-toolchain-worker-release-contract.mjs','release-toolchain-worker-application-acceptance.mjs'].map(name=>[name,sha(fs.readFileSync(source+'/scripts/'+name))]))});passed=true;
+ // Isolated capacity proof AFTER all original process/ESM assertions. Add only
+ // this owned synthetic child; final cleanup still enumerates every actual PID.
+ passed=false;stage='large-registry-read';
+ const originalCapacityRows=collectOwnedCiPm2Registry(root).rows.map(stablePm2RegistryRow);
+ const capacityFile=root+'/capacity.config.cjs',capacityEnv=Object.fromEntries(Array.from({length:10},(_,i)=>['SYNTHETIC_CAPACITY_'+i,'x'.repeat(60000)]));
+ fs.writeFileSync(capacityFile,'module.exports='+JSON.stringify({apps:[{name:'eq-large-registry',script:release+'/scripts/unrelated.cjs',cwd:release,interpreter:'/usr/bin/node',exec_mode:'fork',watch:false,autorestart:false,env:capacityEnv}]})+';\n',{mode:0o600,flag:'wx'});
+ run('/usr/bin/node',[pm2+'/bin/pm2','start',capacityFile]);
+ await withOwnedCiPm2ProcessWitness(root,async verify=>{
+  verify();const full=collectOwnedCiPm2Registry(root),synthetic=full.rows.find(p=>p.name==='eq-large-registry'),rawBytes=Buffer.byteLength(JSON.stringify(full.rows));
+  need(synthetic?.pid>0&&rawBytes>1048576&&rawBytes<=4194304,'large_registry_fixture');
+  assert.deepEqual(full.rows.filter(p=>p.name!=='eq-large-registry').map(stablePm2RegistryRow),originalCapacityRows);
+  await assert.rejects(inspectPm2Registry(dumpDaemon,dumpBoot));verify();
+  const afterCapacity=collectOwnedCiPm2Registry(root);assert.deepEqual(afterCapacity.rows.map(stablePm2RegistryRow),full.rows.map(stablePm2RegistryRow));
+  seal('registry-capacity-verified.json',{kind:'real-pm2-large-registry-capacity-verified',toolRevision:revision,rawBytes,maximumFrameBytes:4194304,actualPrivatePm2:true,completeRegistryRead:true,originalReaderRefused:true,allOriginalRowsUnchanged:true,rawEnvironmentsNotLogged:true,formalHostTouched:false,publicationAuthority:false,sourceHashes:Object.fromEntries(['release-toolchain-registry-capacity.py','release-toolchain-pm2-observation.mjs','production-maintenance-pm2-control.py'].map(n=>[n,sha(fs.readFileSync(source+'/scripts/'+n))]))});
+ });
+ passed=true;
 }catch(e){
  // Synthetic fixture only: neither this isolated HOME nor these two generated
  // programs inherit server/CI credentials. Keep actual startup error evidence.
