@@ -26,16 +26,16 @@
     height: min(calc(var(--faolla-service-visible-height, 100dvh) * .82), 920px);
     max-height: calc(var(--faolla-service-visible-height, 100dvh) * .82);
   }
-  .faolla-service-sheet[data-service-view="conversations"][data-keyboard-open="true"] {
+  .faolla-service-sheet[data-service-view="conversations"][data-chat-compact="true"] {
     animation: none;
     top: calc(var(--faolla-service-visible-top, 0px) + 24px);
     height: calc(var(--faolla-service-visible-height, 100dvh) - 24px);
     max-height: calc(var(--faolla-service-visible-height, 100dvh) - 24px);
   }
-  .faolla-service-sheet[data-keyboard-open="true"] [data-service-sheet-header] { padding: 8px 12px; }
-  .faolla-service-sheet[data-keyboard-open="true"] [data-service-sheet-description],
-  .faolla-service-sheet[data-keyboard-open="true"] [data-guest-chat-notice] { display: none; }
-  .faolla-service-sheet[data-keyboard-open="true"] [data-chat-thread-header] { min-height: 44px; padding-top: 4px; padding-bottom: 4px; }
+  .faolla-service-sheet[data-chat-compact="true"] [data-service-sheet-header] { padding: 8px 12px; }
+  .faolla-service-sheet[data-chat-compact="true"] [data-service-sheet-description],
+  .faolla-service-sheet[data-chat-compact="true"] [data-guest-chat-notice] { display: none; }
+  .faolla-service-sheet[data-chat-compact="true"] [data-chat-thread-header] { min-height: 44px; padding-top: 4px; padding-bottom: 4px; }
 }
 .faolla-public-chat-launcher { position: fixed; right: max(18px,env(safe-area-inset-right)); bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 90; }
 .faolla-service-loading { position: fixed; right: max(18px,env(safe-area-inset-right)); bottom: calc(82px + env(safe-area-inset-bottom)); z-index: 20001; }

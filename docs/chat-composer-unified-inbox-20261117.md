@@ -19,7 +19,8 @@
 
 The old service composer placed send below the textarea. The sheet used layout
 viewport units only, which do not necessarily shrink when a mobile keyboard
-opens. In the account iframe, a 112 px multiline input plus fixed header and
+opens. Browsers that resize the layout viewport also use the compact chat
+layout whenever the remaining viewport is short. In the account iframe, a 112 px multiline input plus fixed header and
 message padding could overflow a 225 px document even after the host sheet was
 correctly sized. The input now has an additional document-viewport height cap.
 

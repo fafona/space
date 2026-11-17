@@ -17,6 +17,7 @@ export function useConversationViewport(active: boolean) {
       element.style.setProperty("--faolla-service-visible-height", `${bounds.height}px`);
       element.style.setProperty("--faolla-service-visible-top", `${bounds.top}px`);
       element.dataset.keyboardOpen = String(bounds.keyboardOpen);
+      element.dataset.chatCompact = String(bounds.compact);
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(sync); };
     sync();
@@ -31,6 +32,7 @@ export function useConversationViewport(active: boolean) {
       element.style.removeProperty("--faolla-service-visible-height");
       element.style.removeProperty("--faolla-service-visible-top");
       delete element.dataset.keyboardOpen;
+      delete element.dataset.chatCompact;
     };
   }, [active]);
   return dialog;

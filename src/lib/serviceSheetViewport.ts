@@ -6,5 +6,6 @@ export function serviceSheetViewport(height: number, offsetTop: number, layoutHe
     height: Math.round(height),
     top: Math.max(0, Math.round(Number.isFinite(offsetTop) ? offsetTop : 0)),
     keyboardOpen: layoutHeight - height > 120,
+    compact: layoutHeight - height > 120 || height < 500,
   };
 }

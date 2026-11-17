@@ -163,6 +163,12 @@ test('guest and account composers stay beside send inside a keyboard-only visual
    await f.page.evaluate(()=>{window.__chatVisual={height:900,top:0};visualViewport.dispatchEvent(new Event('resize'));});
    await f.page.waitForFunction(()=>document.querySelector('dialog')?.dataset.keyboardOpen==='false');
    assert.equal(await input.inputValue(),'Keep this draft while the keyboard changes height.\nSecond line.');
+   await f.page.evaluate(()=>{delete visualViewport.height;delete visualViewport.offsetTop;});
+   await f.page.setViewportSize({width,height:360});
+   await f.page.waitForFunction(()=>document.querySelector('dialog')?.style.getPropertyValue('--faolla-service-visible-height')==='360px');
+   const resizedSend=await surface.getByRole('button',{name:'发送',exact:true}).boundingBox();
+   assert.ok(resizedSend.y+resizedSend.height<=361,'send also fits when a browser resizes the layout viewport '+JSON.stringify({logged,width,resizedSend}));
+   assert.equal(await input.inputValue(),'Keep this draft while the keyboard changes height.\nSecond line.');
    assert.deepEqual(f.state.writes,[]);
   }finally{await f.close();}
  }}finally{await browser.close();}
