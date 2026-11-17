@@ -75,7 +75,7 @@
       "before": null,
       "after": [
         "100644",
-        "a0244871ed79df097f43a3e0b64aa259d1f030ea"
+        "ed2773f78d213954d524dcb19779d263da258bb3"
       ]
     },
     {
@@ -190,6 +190,18 @@
       "after": [
         "100644",
         "9eb8a9ff5b03c67917a770aa2dc79d9c4fee85be"
+      ]
+    },
+    {
+      "file": "scripts/online-unpublished-candidate.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "18aba48106b915d060926d65828b5aac2f251f84"
+      ],
+      "after": [
+        "100644",
+        "744f49d4e41049de2263ab88b160b6c7fcb6831b"
       ]
     },
     {
@@ -418,7 +430,8 @@
   "focusedTests": [
     "scripts/application-release-chat-policy.test.mjs",
     "scripts/application-release-chat-continuation.test.mjs",
-    "scripts/application-release-finalization-diagnostics.test.mjs"
+    "scripts/application-release-finalization-diagnostics.test.mjs",
+    "scripts/online-unpublished-candidate.test.mjs"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
