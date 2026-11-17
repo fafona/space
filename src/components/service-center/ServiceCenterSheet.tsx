@@ -7,6 +7,7 @@ import { resolveSupportedLocale } from "@/lib/i18n";
 import { normalizeMerchantMembershipProfileDraft } from "@/lib/merchantMemberships";
 import { buildServiceFrameUrl, isServiceFrameMessage, isServiceSection, SERVICE_FRAME_EVENT, servicePortalOrigin, type ServiceSection } from "@/lib/merchantServiceFrame";
 import { serviceButton, type ServiceIdentity } from "./serviceCenterClient";
+import { useConversationViewport } from "./useConversationViewport";
 
 const LocalOrders = dynamic(() => import("./ServiceOrders"));
 const LocalConversations = dynamic(() => import("./ServiceConversations"));
@@ -29,8 +30,8 @@ export default function ServiceCenterSheet(props: { siteId: string; siteName: st
 }) {
   const { open, onClose, siteId } = props;
   const { locale, setLocale } = useI18n();
-  const dialog = useRef<HTMLDialogElement>(null), frame = useRef<HTMLIFrameElement>(null);
   const [section, setSection] = useState<Section>(props.favoriteRequested ? "favorite" : props.conversationRequested ? "conversations" : "menu");
+  const dialog = useConversationViewport(open && section === "conversations"), frame = useRef<HTMLIFrameElement>(null);
   const [local, setLocal] = useState(false);
   const [localVisited, setLocalVisited] = useState<Set<Section>>(new Set());
   const [frameInitialSection, setFrameInitialSection] = useState<ServiceSection | null>(null);
@@ -52,7 +53,7 @@ export default function ServiceCenterSheet(props: { siteId: string; siteName: st
     if (!element.open) element.showModal();
     const previous = document.body.style.overflow; document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = previous; };
-  }, [open]);
+  }, [open, dialog]);
   useEffect(() => {
     if (open) select(props.favoriteRequested ? "favorite" : props.conversationRequested ? "conversations" : "menu");
     // Reopening chooses the entry requested by the user, not an identity refresh.
@@ -86,7 +87,7 @@ export default function ServiceCenterSheet(props: { siteId: string; siteName: st
   const localFeature = section !== "favorite" && (props.authenticated === false || local);
   const title = props.conversationRequested ? "联系商户" : section === "menu" ? "服务中心" : section === "favorite" ? "收藏本店" : sections.find(item => item.id === section)?.title;
   const visibleFrame = isServiceSection(section) && !localFeature;
-  return createPortal(<dialog ref={dialog} aria-labelledby="merchant-service-title" data-service-center data-chat-window={props.conversationRequested ? "true" : undefined}
+  return createPortal(<dialog ref={dialog} aria-labelledby="merchant-service-title" data-service-center data-service-view={section} data-chat-window={props.conversationRequested ? "true" : undefined}
     className="faolla-service-sheet m-0 mt-auto w-full max-w-none overflow-hidden rounded-t-[28px] border-0 bg-slate-50 p-0 text-slate-900 shadow-2xl"
     onCancel={event => {
       // A file input's picker also emits `cancel`; React delegates that event
@@ -98,10 +99,10 @@ export default function ServiceCenterSheet(props: { siteId: string; siteName: st
       const bounds = event.currentTarget.getBoundingClientRect(); if (event.clientY < bounds.top || event.clientY > bounds.bottom || event.clientX < bounds.left || event.clientX > bounds.right) onClose(); }}>
     <div className="mx-auto flex h-full max-w-6xl flex-col">
       <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-slate-300" aria-hidden="true" />
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+      <header data-service-sheet-header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
         <div className="flex min-w-0 items-center gap-3">{section !== "menu" && !props.conversationRequested ? <button type="button" className={serviceButton} onClick={() => select("menu")} aria-label="返回服务中心">←</button> : null}
-          <div><h2 id="merchant-service-title" className="text-lg font-semibold">{title}</h2><p className="truncate text-xs text-slate-500">{props.siteName || "商户网站"} · 点击上方网页可返回</p></div></div>
-        <button type="button" className={serviceButton} onClick={onClose} aria-label={props.conversationRequested ? "关闭会话" : "关闭服务中心"}>关闭</button>
+          <div className="min-w-0"><h2 id="merchant-service-title" className="truncate text-lg font-semibold">{title}</h2><p data-service-sheet-description className="truncate text-xs text-slate-500">{props.siteName || "商户网站"} · 点击上方网页可返回</p></div></div>
+        <button type="button" className={serviceButton + " shrink-0"} onClick={onClose} aria-label={props.conversationRequested ? "关闭会话" : "关闭服务中心"}>关闭</button>
       </header>
       <div className={`min-h-0 flex-1 overscroll-contain p-3 sm:p-5 ${section === "conversations" ? "overflow-hidden" : "overflow-y-auto"}`} hidden={visibleFrame}>
         {section === "menu" ? <div className="grid gap-3 sm:grid-cols-3">{sections.filter(item => item.id !== "conversations").map(item => <button key={item.id} type="button"

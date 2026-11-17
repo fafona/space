@@ -1,8 +1,8 @@
 {
   "schemaVersion": 5,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "dadbced2d579b991a62f83edde6cc87bc964a280",
-  "purpose": "Backend startup CPU reduction and deferred editor/QR resources without changing login, permissions or drafts",
+  "baseline": "4963116f54bcab64ae397e06ecf323838fe2e3be",
+  "purpose": "Keyboard-safe same-row chat composer and unified merchant account/visitor inbox; preserve message identities and drafts",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,36 +10,318 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
-      "file": ".github/workflows/ci.yml",
-      "role": "verification",
-      "before": [
-        "100644",
-        "598ead243c7842ef509900e76c207b2f3cc64aef"
-      ],
-      "after": [
-        "100644",
-        "069506b9e422cd61f366c73a26dc8bf44749810f"
-      ]
-    },
-    {
-      "file": "docs/locale-feedback-and-backend-loading-20261116.md",
-      "role": "verification",
-      "before": [
-        "100644",
-        "01a8e8b17e497867b7ad21527726d0f8f8ac47e7"
-      ],
-      "after": [
-        "100644",
-        "5814a484ec76c2dc34a084f501867711a9a9295f"
-      ]
-    },
-    {
-      "file": "scripts/admin-startup-browser-acceptance.mjs",
+      "file": "docs/booking-registry-capacity-recovery-20261117.md",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
-        "ba5aa64339e20df8225d3f66b2ec672d99d28e69"
+        "ee0cc5ecb7b1438ee999553773651e270732d835"
+      ]
+    },
+    {
+      "file": "docs/chat-composer-unified-inbox-20261117.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "2da496f5760716301257ef742e429d09968e09d5"
+      ]
+    },
+    {
+      "file": "docs/startup-retained-continuation-20261117.md",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "9f0a2973fddc73135fd3e8f5180bcdce77520948"
+      ]
+    },
+    {
+      "file": "scripts/application-release-audit.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "d5581f109a046d56879951d7e2f194ddf50dece7"
+      ],
+      "after": [
+        "100644",
+        "24edfbb959020b0a2c71a56dd31f782b64283d67"
+      ]
+    },
+    {
+      "file": "scripts/application-release-authority.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "f1c40bd99ec3d6b40a5c9c4165e548b4868f80c3"
+      ],
+      "after": [
+        "100644",
+        "d4ae39e88b233d00947e00d7cf6d447db2d97438"
+      ]
+    },
+    {
+      "file": "scripts/application-release-startup-continuation.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "84a0c449534c04cbb4e69eb4c24683d32e80a76a"
+      ]
+    },
+    {
+      "file": "scripts/application-release-startup-continuation.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "697840a3025998e4a248c73ca1ad051593d9ab27"
+      ]
+    },
+    {
+      "file": "scripts/application-release-startup-native.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c94e69c8f3a5020c1a21c8e8a12f1a8ee40ea950"
+      ]
+    },
+    {
+      "file": "scripts/application-release-startup-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "b015f87d0027d09a86aed67dfe09904fb89a56f5"
+      ]
+    },
+    {
+      "file": "scripts/application-release-startup-policy.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "d269d7611dcc3b6f5b930a8d23d1453dc095c55a"
+      ]
+    },
+    {
+      "file": "scripts/application-release-startup-source.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "94c87dd33506fcb875c54808caa67a906c0e9e17"
+      ]
+    },
+    {
+      "file": "scripts/attendance-staged-tool-repair.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "be972925b7ebc70bc8ccf5de561ca66a511ddc3f"
+      ],
+      "after": [
+        "100644",
+        "c86a376a75fee3716abf09f8e7d7d339dbbcdfa0"
+      ]
+    },
+    {
+      "file": "scripts/guest-chat-browser-acceptance.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "fbefd83d42eb647ed44c5ea5b182a222edd9d6db"
+      ],
+      "after": [
+        "100644",
+        "ab8d5e1b513f9b546151cc38450523cdc12ae6d4"
+      ]
+    },
+    {
+      "file": "scripts/merchant-service-center-browser-acceptance.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "e371a04d5dea37023b0c8c69dc814c33627af430"
+      ],
+      "after": [
+        "100644",
+        "3a0eaf3337d3aa8c37c2509b217b64ec79b94492"
+      ]
+    },
+    {
+      "file": "scripts/merchant-unified-conversation-owner-browser-acceptance.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "dc4b0f8ca33bdc7d6f323ccea9dd295d404ac382"
+      ]
+    },
+    {
+      "file": "scripts/online-release-retention-writer.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "31e14c7d0ba6c12fc080f75377f40af778fa66aa"
+      ],
+      "after": [
+        "100644",
+        "ce8cc313e1086e33652e2f9f2c29dd958bc00513"
+      ]
+    },
+    {
+      "file": "scripts/online-traffic-release.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "d0fee1ae2ea537fb1c33da6aa2337918d4637e19"
+      ],
+      "after": [
+        "100644",
+        "7848e1291bab21c0ff63449629e6188cd85a729e"
+      ]
+    },
+    {
+      "file": "scripts/online-unpublished-candidate.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "4c656b298d08dd0d3034ac514c7b2b549f9a4a82"
+      ],
+      "after": [
+        "100644",
+        "18aba48106b915d060926d65828b5aac2f251f84"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pm2-observation.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "796ae4ee6cc3fe780deca994172d0bb2b20256b4"
+      ],
+      "after": [
+        "100644",
+        "f179642dbace4d32da44e0369ca9f3e1e2ac8177"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-pm2-real-acceptance.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "2a544573bb10a567fe0e931d79c5c30081cd9a7d"
+      ],
+      "after": [
+        "100644",
+        "5f0f1b33a74e4645790a5c4449bb7e5d823b687f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-registry-capacity-adapter.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "c6ad7df94a481d42f12e13c65d6c350233c73a2d"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-registry-capacity-dump.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "d90d7a72d84b116aca9862e009e3c37b96a04f3c"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-registry-capacity-native.test.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "1de0219549c04e48128fdee2036056106054be93"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-registry-capacity.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "697893c62dad9bdcff1799a217393ea44072b130"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-registry-capacity.test.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "696609b215d3399c46695e75de906d3329590623"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-registry-recovery-pm2.py",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "cec849b6c1a7370c15fc3c11735dc9362473aff3"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-registry-recovery-policy.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "72211de626ed392a506a7d98767f9379849926ec"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-registry-recovery.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "bfeaa8f6b77ad66f5cfe5059873ae1acfb09600f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-registry-recovery.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "ddcf2ecaa6889e79065ed136398126c3a2285e69"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-release-ci.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "ad73675b134431baba7be821f00ea5992fa56973"
+      ],
+      "after": [
+        "100644",
+        "50e28a2644299060fbf3a87fef75707f3fa4fb1f"
+      ]
+    },
+    {
+      "file": "scripts/release-toolchain-worker-release-contract.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "50716f51b61d6261a6339687b1cef6002264f8b0"
+      ],
+      "after": [
+        "100644",
+        "7adda61c2fbe86ca78d789844403cc23d33e6f1f"
       ]
     },
     {
@@ -47,133 +329,160 @@
       "role": "application",
       "before": [
         "100644",
-        "8f7cfcfbc4688ce468e2eb16e774fa845112e159"
-      ],
-      "after": [
-        "100644",
         "29ef2f94ed7f07daa43351fd718eb3d6b7b8c8e5"
-      ]
-    },
-    {
-      "file": "src/data/platformControlStore.test.ts",
-      "role": "verification",
-      "before": [
-        "100644",
-        "e1745282ef22b08754b12a0a0760143b0ad9d600"
       ],
       "after": [
         "100644",
-        "fe7c30d599a3bc7a6e1b408dba4257a479372d84"
+        "7448b0e04657802bef91251473f5a6caf9e38db0"
       ]
     },
     {
-      "file": "src/data/platformControlStore.ts",
+      "file": "src/app/globals.css",
       "role": "application",
       "before": [
         "100644",
-        "d74314997bb5d057c2b3739125724b2c9531b739"
+        "97899963eb3a1b7b924220b7f676a58977cc9f6c"
       ],
       "after": [
         "100644",
-        "ff21ec49223ab0525b6ce96950d621d185fc992f"
+        "3df173a6063222c840c09d26612f91e3dfb5ab84"
       ]
     },
     {
-      "file": "src/lib/editorSystemDefaults.test.ts",
-      "role": "verification",
-      "before": [
-        "100644",
-        "fec17918785dcb984b3a9503376d1e6568f6019b"
-      ],
-      "after": [
-        "100644",
-        "9cb57b3f3b6812f1033faabafa9b5126153f147f"
-      ]
-    },
-    {
-      "file": "src/lib/editorSystemDefaults.ts",
+      "file": "src/components/enterprise/MerchantEmployeeConversationPanel.tsx",
       "role": "application",
       "before": [
         "100644",
-        "a75d7d81b19840cb4bb3614145d4d4697dc6c2c8"
+        "2e53e4e0c3e81ed549bb6772e5e971761ab7d0cd"
       ],
       "after": [
         "100644",
-        "c77ef234af6619a30898c71d3fc08aff9de24261"
+        "44d19ba06608897b4e7bc0928865169c750b9a25"
       ]
     },
     {
-      "file": "src/lib/merchantBusinessCardQr.ts",
-      "role": "application",
-      "before": [
-        "100644",
-        "13edef52e89994498fa1f7ea8e5465c0aa4cf861"
-      ],
-      "after": [
-        "100644",
-        "89c657eb3b3948d7ec7e90f29ab6598faac52c58"
-      ]
-    },
-    {
-      "file": "src/lib/merchantBusinessCardQrDecorations.ts",
-      "role": "application",
-      "before": [
-        "100644",
-        "bf4c29ca0f7e779dba0804b87895b68b7d1d0bab"
-      ],
-      "after": [
-        "100644",
-        "67d524c3f2cc31ba087203103046165b90d1b0ad"
-      ]
-    },
-    {
-      "file": "src/lib/merchantBusinessCardQrPresetIds.ts",
+      "file": "src/components/service-center/ChatComposer.tsx",
       "role": "application",
       "before": null,
       "after": [
         "100644",
-        "794f39e8517ad6c3c09ee1ede89415faa64994df"
+        "9179a0666040cf2c8adcaa74b3818decc3c679c4"
       ]
     },
     {
-      "file": "src/lib/merchantBusinessCardQrSettings.test.ts",
+      "file": "src/components/service-center/GuestChatPanel.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "e77d4e77b08636f05a988e960c2d8a897ec0814f"
+      ],
+      "after": [
+        "100644",
+        "647478dff956cd66ab74d67e740febb7e1be7274"
+      ]
+    },
+    {
+      "file": "src/components/service-center/MerchantConversationTabs.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "797f546145adae0e418af5515274a58b443d372b"
+      ],
+      "after": null
+    },
+    {
+      "file": "src/components/service-center/MerchantGuestInboxStatus.tsx",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "215d6b8e0ef9e139043d2c2cede938c598b58637"
+      ]
+    },
+    {
+      "file": "src/components/service-center/ServiceCenterSheet.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "14a56fec85ccab6e00b72745f195348431752316"
+      ],
+      "after": [
+        "100644",
+        "ef84ae7df283db319cb89e154b0d338e9ff09645"
+      ]
+    },
+    {
+      "file": "src/components/service-center/ServiceConversations.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "331395623a2827658d832d79613d63f8884cfa9e"
+      ],
+      "after": [
+        "100644",
+        "d9ef57c573a4163e5d9fea2c8574c82fb090a0df"
+      ]
+    },
+    {
+      "file": "src/components/service-center/useConversationViewport.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "39f7df7b3530ef12b294f67c79e615fdfff666dd"
+      ]
+    },
+    {
+      "file": "src/components/service-center/useMerchantGuestInbox.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "868ab55f34aeb430b3be7cf33714f0cbae418c56"
+      ]
+    },
+    {
+      "file": "src/lib/merchantConversationList.test.ts",
       "role": "verification",
       "before": null,
       "after": [
         "100644",
-        "a74228a0e3f4f5f1211006c8fff632d148da2b57"
+        "dada78ff79799944b7b80ca6d360eb3474cf6043"
       ]
     },
     {
-      "file": "src/lib/merchantBusinessCardQrSettings.ts",
+      "file": "src/lib/merchantConversationList.ts",
       "role": "application",
       "before": null,
       "after": [
         "100644",
-        "8eb88f4af827537def974d1529dac3029238f382"
+        "6561299c1b0da8fba22957ae195231aec7ce36e9"
       ]
     },
     {
-      "file": "src/lib/merchantBusinessCards.ts",
-      "role": "application",
-      "before": [
-        "100644",
-        "0e17de6c7d32fdb79328d76a11dfe3bdcffd85e5"
-      ],
+      "file": "src/lib/serviceSheetViewport.test.ts",
+      "role": "verification",
+      "before": null,
       "after": [
         "100644",
-        "a0650ffc09e533d308659e0e99874cf5f2bf7bbe"
+        "98256645a8dbd0a579bfbf070629bc09c481d5ca"
+      ]
+    },
+    {
+      "file": "src/lib/serviceSheetViewport.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "f9917791e01982ddaa8f6493cd190f6353002ae0"
       ]
     }
   ],
   "focusedTests": [
-    "src/data/platformControlStore.test.ts",
-    "src/lib/editorSystemDefaults.test.ts",
-    "src/lib/planTemplateRuntime.test.ts",
-    "src/lib/merchantBusinessCardQrSettings.test.ts",
-    "src/lib/merchantBusinessCards.test.ts",
-    "src/app/admin/AdminClient.contract.test.ts",
-    "src/data/blockStore.test.ts"
+    "src/lib/merchantConversationList.test.ts",
+    "src/lib/serviceSheetViewport.test.ts",
+    "src/lib/guestChatHandlers.server.test.ts",
+    "src/lib/personalGuestSession.test.ts"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
