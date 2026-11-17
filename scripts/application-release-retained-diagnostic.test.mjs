@@ -74,4 +74,6 @@ test('the production inspector has no control, filesystem write, database mutati
  assert.match(source,/assertUnchangedApplicationSource\(TARGET,application.rows,tool.rows\)/);
  assert.match(source,/assertRecordedSchemaDatabase\(manifest\)/);
  assert.match(source,/privateNetworkVerified===true/);
+ assert.ok(source.includes("{file:state.directory+'/.next/BUILD_ID',privateMode:false}"));
+ assert.match(source,/protectedFilesAndProcessesUnchanged:true/);
 });

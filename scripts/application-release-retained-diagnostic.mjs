@@ -102,6 +102,7 @@ export async function runRetainedDiagnostic(){
     same(active,state.previousActive??{target:BASELINE,port:state.oldPort,directory:state.oldDirectory,name:state.oldName},'active');need(active.target===BASELINE&&!state.applicationCompletion,'state');
     witness=fileWitness([
      ...[OP+'/state.json',ROOT+'/active.json','/var/lib/faolla-online-retention.head.json','/root/.pm2/dump.pm2',OP+'/attendance-build-proof.json',OP+'/runtime.json',state.directory+'/.env.local',gateFile].map(file=>({file})),
+     {file:state.directory+'/.next/BUILD_ID',privateMode:false},
      ...WEB_RELEASE_FILES.flatMap(file=>[{file:WEB_RELEASE_PROXY+'/'+file,privateMode:false},{file:OP+'/before-'+file},{file:OP+'/after-'+file}]),
     ]);
     assertRetainedObservationBinding({state,active},{state:read(OP+'/state.json'),active:read(ROOT+'/active.json')});
@@ -156,7 +157,7 @@ export async function runRetainedDiagnostic(){
    'private-version':async()=>{const value=await probeRetainedVersion(state.port);need(value.buildId===TARGET,'private_version');return value;},
    'public-version':()=>proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target:BASELINE,operationId:randomUUID(),verify:operations.verify,deadlineAtMs:Date.now()+30000}),
    'worker-cycles':async()=>{const value=readNaturalWorkerCycle(worker,Date.parse(certificate.completedAt),2);need(value,'worker_cycles');return value;},
-   'final-witness':async()=>{historyObservation.finish();historyObservation=null;witness();verifyPeer();inspectPinnedExecutionSource({revision:invocation.toolRevision,directory:invocation.directory});inspectPinnedExecutionSource({revision:TARGET,directory:SOURCES+'/'+TARGET});need(!fs.existsSync('/var/lib/faolla-maintenance/merchant-space/operation.lock'),'busy');return{allObservedFilesAndProcessesUnchanged:true};},
+   'final-witness':async()=>{historyObservation.finish();historyObservation=null;witness();verifyPeer();inspectPinnedExecutionSource({revision:invocation.toolRevision,directory:invocation.directory});inspectPinnedExecutionSource({revision:TARGET,directory:SOURCES+'/'+TARGET});need(!fs.existsSync('/var/lib/faolla-maintenance/merchant-space/operation.lock'),'busy');return{protectedFilesAndProcessesUnchanged:true};},
    verify:async()=>{verifyPeer();witness?.();historyObservation?.verify();if(current)same(collectFormalBookingPm2Registry().rows.map(normalizeProcess),current,'runtime');},
   };
   return executeRetainedDiagnostic(operations,{emit:value=>console.error(JSON.stringify(value))});
