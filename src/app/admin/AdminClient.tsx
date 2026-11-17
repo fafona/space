@@ -19,12 +19,15 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import DeferredFaollaFrame from "@/components/admin/DeferredFaollaFrame";
-import MerchantConversationTabs from "@/components/service-center/MerchantConversationTabs";
+import { useMerchantGuestInbox } from "@/components/service-center/useMerchantGuestInbox";
+import MerchantGuestInboxStatus from "@/components/service-center/MerchantGuestInboxStatus";
+import { guestConversationId, mergeMerchantConversations, type MerchantConversationRow } from "@/lib/merchantConversationList";
 import LeisurePageLayout from "@/components/blocks/LeisurePageLayout";
 import { getLeisureBlockStyle, getLeisurePresentation, getLeisureRole } from "@/lib/leisurePresentation";
 import dynamic from "next/dynamic";
 import { installWebsiteTemplate, type WebsiteTemplate } from "@/lib/websiteTemplateLibrary";
 const WebsiteTemplateLibrary = dynamic(() => import("@/components/admin/WebsiteTemplateLibrary"), { ssr: false });
+const MerchantGuestThread = dynamic(() => import("@/components/service-center/GuestChatPanel"), { ssr: false });
 import { canShowMerchantWorkspaceBeforeEditor } from "@/lib/merchantWorkspaceLoading";
 import { startVisiblePolling } from "@/lib/visiblePolling";
 import {
@@ -3457,20 +3460,7 @@ const SUPPORT_SYSTEM_EMOJIS = [
   "🪪",
 ];
 
-type SupportContactRow = {
-  key: string;
-  name: string;
-  badge?: string;
-  unreadCount: number;
-  subtitle: string;
-  preview: string;
-  updatedAt: string;
-  unread: boolean;
-  avatarLabel: string;
-  avatarImageUrl?: string;
-  accountType?: "merchant" | "personal";
-  isOfficial: boolean;
-};
+type SupportContactRow = MerchantConversationRow;
 
 type SupportMobileHomeTab = "conversations" | "business" | "enterprise" | "faolla" | "self";
 type SupportSelfSectionView = "home" | "profile" | "cards" | "coupons" | "tools" | "games" | "qr" | FaollaMobileSettingsView;
@@ -10908,6 +10898,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const supportDesktopPanelOpen =
     !isPlatformEditor && (forceDesktopEditorSidebar || isDesktopEditorSidebar) && merchantDesktopSection === "support";
   const supportInterfaceOpen = supportDialogOpen || isMobileMerchantSupportOnlyMode || supportDesktopPanelOpen;
+  const supportGuestSiteId = editingSiteId || merchantSiteIdOverride || supportReadMerchantId;
+  const supportGuestInbox = useMerchantGuestInbox({ siteId: supportGuestSiteId, active: !isPlatformEditor && supportInterfaceOpen });
+  const refreshGuestConversations = supportGuestInbox.refresh;
+  const selectedGuestThreadId = !isPlatformEditor ? guestConversationId(supportSelectedContactKey) : "";
   const isMobileSupportDialog = supportInterfaceOpen && !supportDesktopPanelOpen && !isPlatformEditor && !isDesktopEditorSidebar;
   const isIosSupportBrowser =
     typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(String(navigator.userAgent ?? ""));
@@ -11016,7 +11010,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const merchantBusinessAttentionCount = merchantBookingAttentionSummary.count + merchantOrderAttentionSummary.count;
   const merchantBusinessAttentionHydrated =
     merchantBusinessAttentionHydrationState.booking && merchantBusinessAttentionHydrationState.orders;
-  const supportUnreadBadgeCount = supportUnreadOfficialMessageCount + supportUnreadPeerMessageCount;
+  const supportUnreadBadgeCount = supportUnreadOfficialMessageCount + supportUnreadPeerMessageCount + supportGuestInbox.threads.reduce((count, thread) => count + thread.unread, 0);
   const supportTotalBadgeCount = supportUnreadBadgeCount + merchantBusinessAttentionCount;
   const supportUnreadStateHydrated =
     supportUnreadHydrationState.official &&
@@ -11132,7 +11126,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     return latestKey;
   }, [currentSupportMerchantId, latestMerchantBusinessAttention, latestSupportAdminMessage, supportPeerThreads]);
   const supportHasUnreadMessages = supportUnreadBadgeCount > 0;
-  const supportContactRows: SupportContactRow[] = [
+  const supportContactRows: SupportContactRow[] = mergeMerchantConversations([
     {
       key: SUPPORT_OFFICIAL_CONTACT_KEY,
       name: supportOfficialName,
@@ -11174,9 +11168,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         isOfficial: false,
       };
     }),
-  ];
+  ], supportGuestInbox.threads);
   const supportUnreadConversationCount =
-    (supportHasUnreadOfficialMessages ? 1 : 0) + supportPeerUnreadContactIds.size;
+    supportContactRows.filter(row => row.unread).length;
   const supportUnreadBadgeLabel = supportUnreadBadgeCount > 99 ? "99+" : String(supportUnreadBadgeCount);
   const mobileSupportContactListSummary =
     supportUnreadConversationCount > 0
@@ -11187,7 +11181,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
   const showMobileSupportThread =
     isMobileSupportDialog &&
     supportMobileView === "thread" &&
-    (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact);
+    (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY || !!selectedSupportPeerContact || !!selectedGuestThreadId);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleMobileSwipeBack = (event: Event) => {
@@ -12872,8 +12866,9 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
     await Promise.all([
       loadSupportThread({ silent: false, suppressError: false }),
       loadSupportPeerInbox({ silent: false, suppressError: false }),
+      refreshGuestConversations(),
     ]);
-  }, [loadSupportPeerInbox, loadSupportThread]);
+  }, [loadSupportPeerInbox, loadSupportThread, refreshGuestConversations]);
 
   useEffect(() => {
     if (!selectedSupportPeerContact?.merchantId) return;
@@ -13440,9 +13435,10 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
 
   useEffect(() => {
     if (supportSelectedContactKey === SUPPORT_OFFICIAL_CONTACT_KEY) return;
+    if (selectedGuestThreadId) return;
     if (selectedSupportPeerContact) return;
     setSupportSelectedContactKey(SUPPORT_OFFICIAL_CONTACT_KEY);
-  }, [selectedSupportPeerContact, supportSelectedContactKey]);
+  }, [selectedSupportPeerContact, selectedGuestThreadId, supportSelectedContactKey]);
 
   useEffect(() => {
     if (!supportPendingDeepLink || typeof window === "undefined") return;
@@ -16994,6 +16990,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
               </button>
             );
           })}
+          <MerchantGuestInboxStatus inbox={supportGuestInbox} />
         </div>
       </div>
     </>
@@ -18643,9 +18640,14 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     </div>
   );
 
-  const supportMobileDialogContent = isPlatformEditor ? legacySupportMobileDialogContent : (
-    <MerchantConversationTabs key={editingSiteId || merchantSiteIdOverride || supportReadMerchantId} siteId={editingSiteId || merchantSiteIdOverride || supportReadMerchantId}>{legacySupportMobileDialogContent}</MerchantConversationTabs>
-  );
+  const supportGuestThreadContent = <MerchantGuestThread key={supportGuestSiteId} siteId={supportGuestSiteId} merchant
+    active={supportInterfaceOpen && !!selectedGuestThreadId && (!isMobileSupportDialog || supportMobileView === "thread")}
+    conversationId={selectedGuestThreadId} inboxThread={supportGuestInbox.threads.find(thread => thread.id === selectedGuestThreadId)}
+    onThreadUpdated={supportGuestInbox.updateThread} onBack={closeMobileSupportThread} />;
+  const supportMobileDialogContent = <>
+    <div className={selectedGuestThreadId && supportMobileView === "thread" ? "hidden" : "contents"}>{legacySupportMobileDialogContent}</div>
+    {!isPlatformEditor ? <div className={selectedGuestThreadId && supportMobileView === "thread" ? "flex h-full min-h-0 flex-1 flex-col pt-[var(--faolla-mobile-safe-top)]" : "hidden"}>{supportGuestThreadContent}</div> : null}
+  </>;
   const supportSelfCardPickerOverlay =
     supportSelfCardPickerOpen && supportInterfaceOpen
       ? renderTopMostOverlay(
@@ -19498,7 +19500,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     }`}
                     onClick={() => {
                       setSupportSelectedContactKey(contactRow.key);
-                      focusSupportInput();
+                      if (!guestConversationId(contactRow.key)) focusSupportInput();
                     }}
                   >
                     <div className="flex items-start gap-3">
@@ -19554,6 +19556,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                   </button>
                 );
               })}
+              <MerchantGuestInboxStatus inbox={supportGuestInbox} />
             </div>
           ) : (
             <div className="rounded border border-dashed px-3 py-4 text-xs text-slate-500">还没有联系人，请先精确搜索商户ID或邮箱。</div>
@@ -19561,7 +19564,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         </div>
       </div>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#edf4f7]">
+      {!isPlatformEditor ? <div className={selectedGuestThreadId ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" : "hidden"}>{supportGuestThreadContent}</div> : null}
+      <div className={selectedGuestThreadId ? "hidden" : "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#edf4f7]"}>
         <div className="flex min-h-[64px] min-w-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3">
           <div className="flex min-w-0 items-center gap-3">
             {selectedSupportIsOfficial ? (
@@ -19927,9 +19931,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
     </div>
   );
-  const supportDesktopSurfaceContent = isPlatformEditor ? legacySupportDesktopSurfaceContent : (
-    <MerchantConversationTabs key={editingSiteId || merchantSiteIdOverride || supportReadMerchantId} siteId={editingSiteId || merchantSiteIdOverride || supportReadMerchantId}>{legacySupportDesktopSurfaceContent}</MerchantConversationTabs>
-  );
+  const supportDesktopSurfaceContent = legacySupportDesktopSurfaceContent;
   const desktopMerchantWorkspaceContent =
     isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
       <div

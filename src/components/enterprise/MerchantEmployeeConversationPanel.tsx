@@ -9,7 +9,10 @@ import {
 } from "react";
 import type { MerchantBusinessApiClient } from "@/lib/merchantBusinessApiClient";
 import { getMerchantConversationFrontendAccess } from "@/lib/merchantConversationFrontendAccess";
-import MerchantConversationTabs from "@/components/service-center/MerchantConversationTabs";
+import GuestChatPanel from "@/components/service-center/GuestChatPanel";
+import { useMerchantGuestInbox } from "@/components/service-center/useMerchantGuestInbox";
+import MerchantGuestInboxStatus from "@/components/service-center/MerchantGuestInboxStatus";
+import { guestConversationId, mergeMerchantConversations } from "@/lib/merchantConversationList";
 import type {
   MerchantPeerContactSummary,
   MerchantPeerMessage,
@@ -206,7 +209,18 @@ export default function MerchantEmployeeConversationPanel({
   const [query, setQuery] = useState("");
   const [searchResult, setSearchResult] = useState<PeerSearchResult | null>(null);
   const [draft, setDraft] = useState("");
+  const [selectedGuestId, setSelectedGuestId] = useState("");
+  const [mobileThread, setMobileThread] = useState(false);
+  const [mobile, setMobile] = useState(false);
+  const guestInbox = useMerchantGuestInbox({ siteId, active: access.view, apiClient, onAuthorizationInvalid });
   const requestGenerationRef = useRef(0);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 767px)");
+    const sync = () => setMobile(query.matches);
+    sync(); query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+  useEffect(() => { setSelectedGuestId(""); setMobileThread(false); setDraft(""); }, [siteId, apiClient]);
 
   const requestJson = useCallback(
     async (path: string, init?: RequestInit) => {
@@ -303,8 +317,16 @@ export default function MerchantEmployeeConversationPanel({
       (thread.merchantBId === currentMerchantId &&
         thread.merchantAId === selectedContactId),
   );
+  const conversationRows = mergeMerchantConversations(contacts.map(contact => ({
+    key: `merchant:${contact.merchantId}`, name: contact.merchantName,
+    unreadCount: isUnread(contact, currentMerchantId, peerLastRead) ? 1 : 0,
+    subtitle: `账号 ${contact.merchantId}`, preview: contact.lastMessage?.text || "暂无消息。",
+    updatedAt: contact.updatedAt, unread: isUnread(contact, currentMerchantId, peerLastRead),
+    avatarLabel: (contact.merchantName || contact.merchantId).slice(0, 1), isOfficial: false,
+  })), guestInbox.threads);
 
   useEffect(() => {
+    if (selectedGuestId || mobile && !mobileThread) return;
     const latestIncoming = [...(activeThread?.messages ?? [])]
       .reverse()
       .find((message) => message.senderMerchantId !== currentMerchantId);
@@ -345,6 +367,9 @@ export default function MerchantEmployeeConversationPanel({
     peerLastRead,
     requestJson,
     siteId,
+    selectedGuestId,
+    mobile,
+    mobileThread,
   ]);
 
   async function searchPeer() {
@@ -389,6 +414,7 @@ export default function MerchantEmployeeConversationPanel({
       });
       applyInbox(payload);
       setSelectedContactId(searchResult.merchantId);
+      setSelectedGuestId(""); setMobileThread(true);
       setQuery("");
       setSearchResult(null);
     } catch (requestError) {
@@ -403,6 +429,7 @@ export default function MerchantEmployeeConversationPanel({
   }
 
   async function sendMessage() {
+    if (selectedGuestId) return;
     const nextText = draft.trim();
     if (!access.send || !activeContact || !nextText || busy) return;
     setBusy(true);
@@ -441,27 +468,26 @@ export default function MerchantEmployeeConversationPanel({
   }
 
   return (
-    <MerchantConversationTabs key={siteId} siteId={siteId} apiClient={apiClient} canSend={access.send} onAuthorizationInvalid={onAuthorizationInvalid}>
-    <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+    <section data-merchant-conversations className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <header className={`${mobileThread ? "hidden md:flex" : "flex"} flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4`}>
         <div>
           <h2 className="text-lg font-semibold text-slate-950">会话</h2>
           <p className="mt-1 text-xs text-slate-500">
-            仅包含普通客户与商户会话；Faolla 官方支持会话不会显示在员工工作台。
+            客户、商户和游客消息统一显示；Faolla 官方支持会话不会显示在员工工作台。
           </p>
         </div>
         <button
           type="button"
           className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-45"
           disabled={loading || busy}
-          onClick={() => void refreshInbox()}
+          onClick={() => { void refreshInbox(); void guestInbox.refresh(); }}
         >
           {loading ? "刷新中..." : "刷新"}
         </button>
       </header>
 
       {access.search ? (
-        <div className="border-b border-slate-200 bg-slate-50 px-5 py-3">
+        <div className={`${mobileThread ? "hidden md:block" : ""} border-b border-slate-200 bg-slate-50 px-5 py-3`}>
           <div className="flex flex-wrap gap-2">
             <label htmlFor="employee-conversation-search" className="sr-only">
               精确搜索账号 ID 或邮箱
@@ -519,59 +545,70 @@ export default function MerchantEmployeeConversationPanel({
         </div>
       ) : null}
 
-      <div className="grid min-h-[520px] md:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="border-b border-slate-200 md:border-b-0 md:border-r">
+      <div className="grid h-[min(720px,80dvh)] min-h-[420px] md:grid-cols-[280px_minmax(0,1fr)]">
+        <aside aria-label="会话对象列表" className={`${mobileThread ? "hidden md:flex" : "flex"} min-h-0 flex-col border-b border-slate-200 md:border-b-0 md:border-r`}>
           <div className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-            联系人 {contacts.length}
+            聊天列表 {conversationRows.length}
           </div>
-          <div className="max-h-72 overflow-y-auto md:max-h-[480px]">
-            {contacts.length === 0 && !loading ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {conversationRows.length === 0 && !loading && !guestInbox.loading ? (
               <div className="px-4 py-8 text-center text-sm text-slate-500">
-                暂无普通会话。
+                暂无会话。
               </div>
             ) : null}
-            {contacts.map((contact) => {
-              const unread = isUnread(contact, currentMerchantId, peerLastRead);
-              const selected = contact.merchantId === selectedContactId;
+            {conversationRows.map((contact) => {
+              const unread = contact.unread;
+              const selected = selectedGuestId ? guestConversationId(contact.key) === selectedGuestId : contact.key === `merchant:${selectedContactId}`;
               return (
                 <button
-                  key={contact.merchantId}
+                  key={contact.key}
+                  data-conversation-id={contact.key}
                   type="button"
                   className={`flex w-full items-start gap-3 border-t border-slate-100 px-4 py-3 text-left ${
                     selected ? "bg-blue-50" : "hover:bg-slate-50"
                   }`}
-                  onClick={() => setSelectedContactId(contact.merchantId)}
+                  onClick={() => { const id = guestConversationId(contact.key); setSelectedGuestId(id); if (!id) setSelectedContactId(contact.key.slice("merchant:".length)); setMobileThread(true); }}
                 >
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-900 text-xs font-bold text-white">
-                    {(contact.merchantName || contact.merchantId).slice(0, 1)}
+                    {contact.avatarLabel}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center justify-between gap-2">
                       <span className="truncate text-sm font-semibold text-slate-900">
-                        {contact.merchantName}
+                        <span data-no-translate="1">{contact.name}</span>
                       </span>
                       {unread ? (
                         <span className="h-2 w-2 shrink-0 rounded-full bg-blue-600" aria-label="有新消息" />
                       ) : null}
                     </span>
                     <span className="mt-0.5 block truncate text-xs text-slate-500">
-                      {contact.lastMessage?.text || `账号 ${contact.merchantId}`}
+                      <span data-no-translate="1">{contact.preview}</span>
                     </span>
                   </span>
                 </button>
               );
             })}
+            <MerchantGuestInboxStatus inbox={guestInbox} />
           </div>
         </aside>
 
-        <div className="flex min-w-0 flex-col">
+        <div className={selectedGuestId ? `${mobileThread ? "flex" : "hidden md:flex"} min-h-0 min-w-0 flex-col` : "hidden"}>
+          <GuestChatPanel key={siteId} siteId={siteId} merchant active={!!selectedGuestId && (!mobile || mobileThread)}
+            conversationId={selectedGuestId} inboxThread={guestInbox.threads.find(thread => thread.id === selectedGuestId)}
+            apiClient={apiClient} canSend={access.send} onAuthorizationInvalid={onAuthorizationInvalid}
+            onThreadUpdated={guestInbox.updateThread} onBack={() => setMobileThread(false)} />
+        </div>
+        <div className={selectedGuestId ? "hidden" : `${mobileThread ? "flex" : "hidden md:flex"} min-h-0 min-w-0 flex-col`}>
           {activeContact ? (
             <>
-              <div className="border-b border-slate-200 px-5 py-3">
+              <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
+                <button type="button" className="rounded-xl border px-3 py-2 md:hidden" aria-label="返回会话列表" onClick={() => setMobileThread(false)}>←</button>
+                <div>
                 <div className="font-semibold text-slate-950">{activeContact.merchantName}</div>
                 <div className="text-xs text-slate-500">账号 {activeContact.merchantId}</div>
+                </div>
               </div>
-              <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50/60 px-4 py-5 md:max-h-[390px]">
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50/60 px-4 py-5">
                 {(activeThread?.messages ?? []).length === 0 ? (
                   <div className="py-10 text-center text-sm text-slate-500">
                     暂无消息。
@@ -636,12 +673,11 @@ export default function MerchantEmployeeConversationPanel({
             </>
           ) : (
             <div className="grid flex-1 place-items-center p-8 text-sm text-slate-500">
-              请选择一个普通会话。
+              请选择一个会话。
             </div>
           )}
         </div>
       </div>
     </section>
-    </MerchantConversationTabs>
   );
 }

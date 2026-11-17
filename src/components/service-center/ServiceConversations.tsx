@@ -5,6 +5,7 @@ import type { PlatformSupportThread } from "@/lib/platformSupportInbox";
 import { parseSupportMessageAttachmentPreview, formatSupportConversationPreview } from "@/lib/supportMessageAttachments";
 import { serviceButton, serviceInput, serviceRequest, type ServicePanelProps } from "./serviceCenterClient";
 import GuestChatPanel from "./GuestChatPanel";
+import ChatComposer, { ChatAttachmentIcon, chatAttachmentButton } from "./ChatComposer";
 
 const subscribeDesktop = (notify: () => void) => {
   const query = window.matchMedia("(min-width: 768px)");
@@ -172,7 +173,7 @@ function AccountConversations({ active, identity, siteId, siteName, compact = fa
         </nav>
       </aside>
       <section aria-label="当前会话" className={`${mobileChatOpen ? "flex" : "hidden"} min-h-0 min-w-0 flex-col ${compact ? "" : "md:flex"}`}>
-        <header className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-3 py-3 sm:px-4">
+        <header data-chat-thread-header className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-3 py-3 sm:px-4">
           <button type="button" className={serviceButton + (compact ? " !px-3" : " !px-3 md:hidden")} aria-label="返回会话列表" onClick={() => setMobileChatOpen(false)}>←</button>
           <ConversationAvatar name={selectedRow?.name || selected} image={selectedRow?.image} official={selected === "official"} />
           <div className="min-w-0"><h3 className="truncate text-sm font-semibold" data-no-translate="1">{selectedRow?.name || selected}</h3><p className="mt-1 text-xs text-slate-500">{selected === "official" ? "Faolla 官方服务" : "会话消息"}</p></div>
@@ -188,9 +189,8 @@ function AccountConversations({ active, identity, siteId, siteName, compact = fa
               <p className="mt-1 text-[10px] text-slate-500">{message.createdAt.replace("T", " ").slice(0, 19)}</p>
             </div></div>; })}
         </div>
-        <form className="shrink-0 space-y-2 border-t border-slate-200 bg-white p-3" onSubmit={event => { event.preventDefault(); void send(); }}><textarea className={serviceInput + " block h-16 resize-none"} aria-label="输入消息" placeholder="输入消息…" maxLength={5000} value={draft} onChange={event => setDraft(event.target.value)} />
-          <div className="flex items-center justify-between gap-2"><label className={serviceButton + " cursor-pointer focus-within:outline-2 focus-within:outline-teal-700"}>图片 / 文件<input aria-label="图片 / 文件" type="file" className="sr-only" disabled={busy} onChange={event => { void attach(event.target.files?.[0]); event.target.value = ""; }} /></label>
-            <button type="submit" className={serviceButton + " !border-teal-700 !bg-teal-700 !px-5 !text-white hover:!bg-teal-800"} disabled={busy || !draft.trim()}>{busy ? "处理中…" : "发送"}</button></div></form>
+        <ChatComposer value={draft} onChange={setDraft} onSend={send} busy={busy}
+          attachment={<label className={chatAttachmentButton} title="图片 / 文件"><ChatAttachmentIcon/><span className="sr-only">图片 / 文件</span><input aria-label="图片 / 文件" type="file" className="sr-only" disabled={busy} onChange={event => { void attach(event.target.files?.[0]); event.target.value = ""; }} /></label>}/>
       </section>
     </div>
   </div>;

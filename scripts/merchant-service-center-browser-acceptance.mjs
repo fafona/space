@@ -11,6 +11,7 @@ import tailwind from '@tailwindcss/postcss';
 import QRCode from 'qrcode';
 import './pwa-startup-browser-acceptance.mjs';
 import './guest-chat-browser-acceptance.mjs';
+import './merchant-unified-conversation-owner-browser-acceptance.mjs';
 
 const merchantOrigin='https://synthetic.faolla.com',portalOrigin='https://launch.faolla.com',siteId='99990001';
 const html='<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div>';
@@ -132,6 +133,41 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900,camer
  return {context,page,state,async open(){await page.goto(merchantOrigin+'/?uiLocale=es-ES');},async close(){await context.close();assert.deepEqual(state.errors,[]);assert.deepEqual(state.unexpected,[]);assert.deepEqual(state.history,originalHistory);}};
 }
 const serviceFrame=page=>page.frameLocator('iframe[data-isolated-service-frame]');
+
+test('guest and account composers stay beside send inside a keyboard-only visual viewport, including browser panning',{timeout:90000},async()=>{
+ const browser=await chromium.launch({headless:true});try{for(const logged of [false,true])for(const width of [320,390]){
+  const f=await setup(browser,width,{logged,height:900});try{
+   await f.open();await f.page.waitForResponse(r=>r.url().includes('/api/merchant-service/status'));
+   await f.page.locator('[data-public-chat-launcher]').click();
+   const surface=logged?serviceFrame(f.page):f.page;
+   const input=surface.getByLabel('输入消息');await input.fill('Keep this draft while the keyboard changes height.\nSecond line.');
+   await f.page.evaluate(()=>{
+    const v=window.visualViewport;window.__chatVisual={height:900,top:0};
+    Object.defineProperty(v,'height',{configurable:true,get:()=>window.__chatVisual.height});
+    Object.defineProperty(v,'offsetTop',{configurable:true,get:()=>window.__chatVisual.top});
+   });
+   for(const bounds of [{height:430,top:0},{height:320,top:80}]){
+    await f.page.evaluate(bounds=>{window.__chatVisual=bounds;visualViewport.dispatchEvent(new Event('resize'));visualViewport.dispatchEvent(new Event('scroll'));},bounds);
+    await f.page.waitForFunction(bounds=>{const sheet=document.querySelector('dialog');return sheet?.dataset.keyboardOpen==='true'&&sheet.style.getPropertyValue('--faolla-service-visible-height')===bounds.height+'px'&&sheet.style.getPropertyValue('--faolla-service-visible-top')===bounds.top+'px';},bounds);
+    const send=await surface.getByRole('button',{name:'发送',exact:true}).boundingBox(),box=await input.boundingBox(),sheet=await f.page.getByRole('dialog').boundingBox();
+    assert.ok(send.x>=box.x+box.width+4,'send is right of the input, never below it');
+    assert.ok(Math.abs(send.y+send.height-(box.y+box.height))<=2,'send and input share the same baseline');
+    assert.ok(send.y+send.height<=bounds.top+bounds.height+1,'send stays above the simulated keyboard '+JSON.stringify({logged,width,bounds,send,box,sheet,css:await f.page.getByRole('dialog').getAttribute('style'),layout:await surface.locator('[data-chat-composer]').evaluate(el=>{const rows=[];for(let node=el;node;node=node.parentElement){const r=node.getBoundingClientRect(),s=getComputedStyle(node);rows.push({tag:node.tagName,classes:node.className,height:r.height,top:r.top,minHeight:s.minHeight,padding:s.padding,overflow:s.overflow});}return rows;})}));
+    assert.ok(sheet.y>=bounds.top&&sheet.y+sheet.height<=bounds.top+bounds.height+1,'the whole sheet fits the visible viewport');
+    assert.equal(await surface.locator('[data-chat-composer]').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+   }
+   await surface.locator('input[type=file]').dispatchEvent('cancel',{bubbles:true});
+   assert.equal(await f.page.locator('dialog[open]').count(),1,'cancelling an attachment never closes the conversation');
+   assert.equal(await input.inputValue(),'Keep this draft while the keyboard changes height.\nSecond line.');
+   if(process.env.FAOLLA_SERVICE_QA_DIR)await f.page.screenshot({path:path.join(process.env.FAOLLA_SERVICE_QA_DIR,`keyboard-composer-${logged?'account':'guest'}-${width}.png`)});
+   await f.page.evaluate(()=>{window.__chatVisual={height:900,top:0};visualViewport.dispatchEvent(new Event('resize'));});
+   await f.page.waitForFunction(()=>document.querySelector('dialog')?.dataset.keyboardOpen==='false');
+   assert.equal(await input.inputValue(),'Keep this draft while the keyboard changes height.\nSecond line.');
+   assert.deepEqual(f.state.writes,[]);
+  }finally{await f.close();}
+ }}finally{await browser.close();}
+});
+
 async function menu(page){await page.getByRole('button',{name:'服务中心',exact:true}).click();await page.getByRole('dialog').waitFor();}
 async function choose(page,label){
  if(label==='会话'){
@@ -364,7 +400,7 @@ test('file-picker cancellation is not a request to dismiss the service dialog',{
    const surface=logged?serviceFrame(f.page):f.page;
    await openThread(surface);await surface.getByLabel('输入消息').fill('Keep this unsent draft');
    const input=surface.locator('input[type="file"]');
-   const chooser=f.page.waitForEvent('filechooser');await surface.getByText('图片 / 文件',{exact:true}).click();
+   const chooser=f.page.waitForEvent('filechooser');await surface.locator('label[title="图片 / 文件"]').click();
    await (await chooser).setFiles([]);
    // File inputs emit their own bubbling cancel event when their OS picker is
    // dismissed. React delegates this event through ancestors, including dialog.
