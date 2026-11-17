@@ -10,7 +10,7 @@ import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationR
 import {applicationPublicationProof} from './application-release-publication-proof.mjs';
 import {inspectPinnedExecutionSource,parseSourceTree,sourceGit,ownedReleasePath} from './release-toolchain-source.mjs';
 import {captureApplicationHistoryObservation} from './application-release-history-observation.mjs';
-import {reviewedNavigationApplicationSource} from './application-release-authority.mjs';
+import {reviewedNavigationApplicationSource,reviewedStartupApplicationSource} from './application-release-authority.mjs';
 import {withApplicationCliLifetime} from './application-release-cli-lifetime.mjs';
 import {inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
 import {assertOnlineRetentionPersistedProcesses} from './online-release-retention-writer.mjs';
@@ -33,7 +33,7 @@ const location=value=>Object.fromEntries(['target','name','directory','port'].ma
 export async function observeApplicationRelease(target,{requireCompletion=true}={}){
  need(process.platform==='linux'&&process.getuid?.()===0&&/^[a-f0-9]{40}$/.test(target??''),'invocation');
  const source=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
- const retained=reviewedNavigationApplicationSource();
+ const retained=reviewedNavigationApplicationSource()??reviewedStartupApplicationSource();
  need(source==='/var/lib/faolla-online-code/'+target||retained?.target===target&&source===retained.tool.directory,'source');
  const tool=retained?.application??inspectPinnedExecutionSource({revision:target,directory:source});
  return withPinnedFormalPm2Process(async verify=>{
