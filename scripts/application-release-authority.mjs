@@ -12,6 +12,8 @@ import {assertOnlineRetentionHeldLocks} from './online-release-retention-writer.
 import {bookingHostRead} from './booking-handoff-host-io.mjs';
 import {inspectReviewedNavigationSource,assertNavigationPreserved} from './application-release-navigation-source.mjs';
 import {NAVIGATION_TARGET,NAVIGATION_BASELINE} from './application-release-navigation-policy.mjs';
+import {inspectReviewedStartupSource,assertStartupPreserved} from './application-release-startup-source.mjs';
+import {STARTUP_TARGET,STARTUP_BASELINE} from './application-release-startup-policy.mjs';
 const active=new AsyncLocalStorage(),issued=new WeakSet(),ROOT='/var/lib/faolla-online-release',REPOSITORY='/www/wwwroot/merchant-space';
 const need=(value,reason)=>{if(!value)throw Error('application_release_authority_'+reason);};
 export function assertApplicationPriorStates(rows){
@@ -19,6 +21,33 @@ export function assertApplicationPriorStates(rows){
  for(const row of rows)need(/^[a-f0-9]{40}$/.test(row.target??'')&&/^[a-f0-9]{64}$/.test(row.sha256??'')&&
   Number.isSafeInteger(row.device)&&row.device>=0&&Number.isSafeInteger(row.inode)&&row.inode>0&&row.mode===0o100600&&row.uid===0&&row.links===1,'prior_states');
  return applicationReleaseHash(rows);
+}
+
+// Independent fixed startup context. Prior authority bodies are unchanged.
+export async function withReviewedStartupExecution({lock,readOnly=false},work){
+ need(typeof work==='function'&&typeof readOnly==='boolean','startup_invocation');
+ if(!readOnly)assertOnlineRetentionHeldLocks(lock);
+ const source=await inspectReviewedStartupSource();
+ need(readOnly?source.action==='audit':['run','recover'].includes(source.action),'startup_action');
+ const target=STARTUP_TARGET,baseline=STARTUP_BASELINE;
+ const manifest=JSON.parse(sourceGit(REPOSITORY,['show',target+':'+APPLICATION_RELEASE_MANIFEST]));
+ const proof=assertApplicationReleaseManifest(manifest,{baseline,baselineRows:parseSourceTree(sourceGit(REPOSITORY,['ls-tree','-r','-z',baseline])),targetRows:source.application.rows});
+ assertRecordedSchemaDatabase(manifest);
+ assertApplicationReleasePackage(JSON.parse(sourceGit(REPOSITORY,['show',baseline+':package.json'])),JSON.parse(sourceGit(REPOSITORY,['show',target+':package.json'])));
+ const prior=priorStates(target),state=JSON.parse(bookingHostRead(ROOT+'/'+target+'/state.json'));
+ need(state.applicationPriorStatesSha256===prior.sha256,'prior_states_changed');
+ assertStartupPreserved({originalState:false});
+ const context={target,lock,prior,readOnly,startup:source,public:Object.freeze({kind:APPLICATION_RELEASE_LANE,target,baseline,
+  manifestSha256:proof.manifestSha256,priorStatesSha256:prior.sha256,legacyStatesPreserved:true,legacyCandidatesResumed:false,
+  review:source.review,reviewedRevision:source.toolRevision,retainedStartup:true})};
+ issued.add(context);return active.run(context,()=>work(context.public));
+}
+export function reviewedStartupApplicationSource(){
+ const context=active.getStore();if(!context?.startup)return null;
+ need(issued.has(context)&&context.target===STARTUP_TARGET,'startup_context');
+ if(!context.readOnly)reviewedApplicationExecution(STARTUP_TARGET,STARTUP_TARGET);
+ else need(isDeepStrictEqual(priorStates(STARTUP_TARGET),context.prior),'prior_states_changed');
+ return context.startup;
 }
 function priorStates(target){
  ownedReleasePath(ROOT,{directory:true,privateMode:true});

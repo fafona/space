@@ -7,7 +7,9 @@ import {observeApplicationRelease} from './application-release-audit.mjs';
 import {captureApplicationHistoryObservation} from './application-release-history-observation.mjs';
 import {readNaturalWorkerCycle} from './release-toolchain-worker-release-host.mjs';
 import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
-import {withReviewedApplicationExecution,reviewedApplicationExecution,reviewedNavigationApplicationSource} from './application-release-authority.mjs';
+import {withReviewedApplicationExecution,reviewedApplicationExecution,reviewedNavigationApplicationSource,reviewedStartupApplicationSource} from './application-release-authority.mjs';
+import {STARTUP_TARGET,STARTUP_BASELINE,startupContinuationPhase,startupRollbackHeadBinding} from './application-release-startup-policy.mjs';
+import {bookingHostRead,bookingHostWriteOnce,bookingHostReplace} from './booking-handoff-host-io.mjs';
 import {NAVIGATION_TARGET,NAVIGATION_BASELINE,navigationContinuationPhase} from './application-release-navigation-policy.mjs';
 import {assertBookingReadyClosure as assertBookingHandoffToolClosure} from './booking-ready-policy.mjs';
 import {BOOKING_RELEASE_LANE,BOOKING_RELEASE_BASELINE,BOOKING_FOCUSED_TESTS,assertBookingReleaseClosure,bookingProtectedEnvironment,assertBookingCompatibilityEnvironment,bookingCandidateOverrides,buildBookingReleaseCandidate} from './booking-publication-policy.mjs';
@@ -58,8 +60,9 @@ import {BACKUP_RELEASE_LANE,BACKUP_RELEASE_BASELINE,BACKUP_FOCUSED_TESTS,assertB
 
 const app='/www/wwwroot/merchant-space', nginx='/www/server/nginx/sbin/nginx';
 const controllerModuleUrl=import.meta.url;
+const startupEntry=process.argv[1]?.endsWith('/scripts/application-release-startup-continuation.mjs');
 const navigationEntry=process.argv[1]?.endsWith('/scripts/application-release-navigation-continuation.mjs');
-const [requestedAction,target,baseline]=navigationEntry?[process.argv[2],NAVIGATION_TARGET,NAVIGATION_BASELINE]:process.argv.slice(2);
+const [requestedAction,target,baseline]=navigationEntry?[process.argv[2],NAVIGATION_TARGET,NAVIGATION_BASELINE]:startupEntry?[process.argv[2],STARTUP_TARGET,STARTUP_BASELINE]:process.argv.slice(2);
 const action=['stage-booking-reviewed-candidate','stage-application'].includes(requestedAction)?'stage':requestedAction;
 const envBase={...process.env,PM2_HOME:'/root/.pm2'};
 const read=p=>readFileSync(p,'utf8'),hash=v=>createHash('sha256').update(v).digest('hex');
@@ -140,7 +143,7 @@ async function settleOnlineRetention(s,heldLock){
   if(s.status!=='active')fail('application_release_not_active');
   const toolDirectory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');
   const toolRevision=run('git',['rev-parse','HEAD'],{cwd:toolDirectory}).trim();
-  if(reviewedNavigationApplicationSource()){
+  if(reviewedNavigationApplicationSource()??reviewedStartupApplicationSource()){
    const prior=readOnlineRetentionHistory(),publication=applicationPublicationProof(prior,s.target);
    if(publication.introduced.toolRevision!==s.target||publication.manifestSha256!==s.applicationManifestSha256||prior.headSha256!==s.retentionRollbackHeadSha256)fail('navigation_continuation_retention_changed');
   }else await commitApplicationRetention({target:s.target,operation,toolRevision,lock:heldLock});
@@ -665,7 +668,7 @@ function applicationReleaseClosure(releaseTarget,releaseBaseline){
 }
 function assertApplicationExecutionSource(){
  const directory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');
- const retained=reviewedNavigationApplicationSource();
+ const retained=reviewedNavigationApplicationSource()??reviewedStartupApplicationSource();
  if(retained){if(retained.target!==target||directory!==retained.tool.directory)fail('application_release_execution_source');return inspectPinnedExecutionSource({revision:retained.toolRevision,directory});}
  if(directory!==`/var/lib/faolla-online-code/${target}`)fail('application_release_execution_source');
  return inspectPinnedExecutionSource({revision:target,directory});
@@ -1008,7 +1011,7 @@ async function activateCandidate(s){
   // The retained certificate already names this candidate. Record explicit
   // activating intent before switching; only full smoke marks it active. The
   // dedicated recovery handles either physical route while this phase exists.
-  if(s.lane===APPLICATION_RELEASE_LANE&&reviewedNavigationApplicationSource())atomic(activeFile,JSON.stringify({target:s.target,port:s.port,directory:s.directory,name:s.name}));
+  if(s.lane===APPLICATION_RELEASE_LANE&&(reviewedNavigationApplicationSource()??reviewedStartupApplicationSource()))atomic(activeFile,JSON.stringify({target:s.target,port:s.port,directory:s.directory,name:s.name}));
   for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,saved?saved.get(file).after:safeFile(`${operation}/after-${file}`));run(nginx,['-t']);run(nginx,['-s','reload']);
   let verified=false;for(let i=0;i<8;i++){try{s.checkedAssets=await smoke(s,true);verified=true;break;}catch(error){console.error(`online_public_probe_failed:${error.message}`);await new Promise(r=>setTimeout(r,1500));}}if(!verified)fail('public_verification_failed');
   await request('https://launch.faolla.com/login');await verifyBase(s);verifyCandidate(s);configUnchanged(s,true);run('pm2',['save']);
@@ -1184,6 +1187,58 @@ export async function runRetainedNavigationUnderLock(lock,{recover=false}={}){
   // not a fabricated status projection or a relaxed publication grammar.
   if(JSON.parse(safeFile(activeFile)).target===baseline){
    const original=JSON.parse(safeFile('/var/lib/faolla-navigation-continuation/'+target+'/'+retained.toolRevision+'/original-state.json'));
+   verifyApplicationRelease(s,true);await verifyBase(original);
+  }else await verifyBase(s);
+  restoreConfigs(s);phase='restored';
+ }
+ if(phase==='restored'){
+  await verifyBase(s);configUnchanged(s);verifyCandidate(s);await smoke(s);
+  if(!recover)await activateCandidate(s);
+ }
+ if(!recover||phase==='active'){
+  try{const current=JSON.parse(safeFile(stateFile));await finishApplicationRelease(current,lock);return{actualTarget:target,proof:await observeApplicationRelease(target),replayed:false};}
+  catch(error){const current=JSON.parse(safeFile(stateFile));if(current.status==='active'){await verifyBase(current);restoreConfigs(current);}if(!recover)throw error;}
+ }
+ const witness=captureApplicationHistoryObservation();
+ const verify=async()=>{witness.verify();await verifyBase(JSON.parse(safeFile(stateFile)),witness);configUnchanged(JSON.parse(safeFile(stateFile)));};
+ const publicProof=await proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target:baseline,operationId:randomUUID(),verify,deadlineAtMs:Date.now()+30000});
+ witness.finish();return{actualTarget:baseline,publicProof,restored:true,replayed:false};
+}
+// Separate fixed startup entry; ordinary selector unchanged.
+export async function runRetainedStartupUnderLock(lock,{recover=false}={}){
+ const retained=reviewedStartupApplicationSource();
+ if(!retained||retained.target!==target||!startupEntry||requestedAction!==(recover?'recover':'run'))fail('startup_continuation_authority');
+ assertApplicationExecutionSource();let s=JSON.parse(safeFile(stateFile));
+ const continuationRoot='/var/lib/faolla-startup-continuation/'+target+'/'+retained.toolRevision;
+ const binding=startupRollbackHeadBinding(bookingHostRead(continuationRoot+'/original-state.json'),readOnlineRetentionHistory());
+ const {after,...intent}=binding,intentText=JSON.stringify(intent)+'\n',intentFile=continuationRoot+'/retention-rebind.intent.json';
+ if(s.retentionRollbackHeadSha256===binding.beforeHead){
+  // Validate real source, built proof, processes and unchanged owned routes
+  // before the one explicitly admitted metadata CAS. No process is restarted.
+  verifyApplicationRelease(s,true);configUnchanged(s);verifyCandidate(s);await smoke(s);
+  if(!existsSync(intentFile))bookingHostWriteOnce(intentFile,intentText);
+  if(bookingHostRead(intentFile)!==intentText)fail('startup_rebind_intent_changed');
+  bookingHostReplace(stateFile,bookingHostRead(continuationRoot+'/original-state.json'),after,'startup-head-binding');
+  if(!existsSync(continuationRoot+'/rebound-state.json'))bookingHostWriteOnce(continuationRoot+'/rebound-state.json',bookingHostRead(stateFile));
+  s=JSON.parse(bookingHostRead(stateFile));
+ }
+ if(s.retentionRollbackHeadSha256!==binding.afterHead||bookingHostRead(intentFile)!==intentText)fail('startup_rebind_unconfirmed');
+ // A crash after CAS but before this readback snapshot can only preserve the
+ // byte-exact admitted result; unknown metadata is never projected as valid.
+ if(!existsSync(continuationRoot+'/rebound-state.json')){
+  if(hash(bookingHostRead(stateFile))!==binding.afterSha256)fail('startup_rebind_readback_changed');
+  bookingHostWriteOnce(continuationRoot+'/rebound-state.json',bookingHostRead(stateFile));
+ }
+ if(hash(bookingHostRead(continuationRoot+'/rebound-state.json'))!==binding.afterSha256)fail('startup_rebound_snapshot_changed');
+ let phase=startupContinuationPhase(s,JSON.parse(safeFile(activeFile)));
+ if(phase==='partial'&&!recover)fail('startup_continuation_recovery_required');
+ if(phase==='completed')return{actualTarget:target,proof:await observeApplicationRelease(target),replayed:false};
+ if(recover&&phase==='partial'){
+  // A crash may happen between durable activating intent and active metadata.
+  // In that exact window validate the genuinely preserved rollback snapshot,
+  // not a fabricated status projection or a relaxed publication grammar.
+  if(JSON.parse(safeFile(activeFile)).target===baseline){
+   const original=JSON.parse(bookingHostRead(continuationRoot+'/rebound-state.json'));
    verifyApplicationRelease(s,true);await verifyBase(original);
   }else await verifyBase(s);
   restoreConfigs(s);phase='restored';
