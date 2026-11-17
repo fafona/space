@@ -2,13 +2,61 @@
   "schemaVersion": 5,
   "kind": "reviewed-application-code-only-v1",
   "baseline": "110b022d08d56d51aa86e650f83ced75e4b31cc6",
-  "purpose": "Localized guest identity, secure bidirectional chat attachments, and nonblocking chat translation controls",
+  "purpose": "readonly-retained-candidate-diagnostics-source-install-only",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
   "mail": "unchanged-off",
   "backgroundTasks": "retain-certified-worker",
   "changes": [
+    {
+      "file": "scripts/application-release-audit.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "24edfbb959020b0a2c71a56dd31f782b64283d67"
+      ],
+      "after": [
+        "100644",
+        "178bc59653f3ed9865b7095dbb41d75290958ed0"
+      ]
+    },
+    {
+      "file": "scripts/application-release-finalization-diagnostics.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "f095d9121a668180079f216affe22fbdf7f00d71"
+      ]
+    },
+    {
+      "file": "scripts/application-release-finalization-diagnostics.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "b8056f477e42dd6b4425ea64a85f0dd510b8dcea"
+      ]
+    },
+    {
+      "file": "scripts/application-release-retained-diagnostic.mjs",
+      "role": "release-tool",
+      "before": null,
+      "after": [
+        "100644",
+        "a0142ea7bec3936753a5cdfb1b2c097a069c3590"
+      ]
+    },
+    {
+      "file": "scripts/application-release-retained-diagnostic.test.mjs",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "1f5b9e8d44259ae4d2cf049c668c6ce438dd3129"
+      ]
+    },
     {
       "file": "scripts/guest-chat-browser-acceptance.mjs",
       "role": "verification",
@@ -43,6 +91,18 @@
       "after": [
         "100644",
         "afeb75debb60614b50d7998e65bf85fe96958eef"
+      ]
+    },
+    {
+      "file": "scripts/online-traffic-release.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "7848e1291bab21c0ff63449629e6188cd85a729e"
+      ],
+      "after": [
+        "100644",
+        "1da8c9a95ce2446e4f089be5b93d4b94da058a5d"
       ]
     },
     {
@@ -276,7 +336,9 @@
     "src/lib/guestChatHandlers.server.test.ts",
     "src/lib/merchantConversationList.test.ts",
     "src/lib/merchantBusinessApiClient.test.ts",
-    "scripts/merchant-conversation-employee-frontend-contract.test.mjs"
+    "scripts/merchant-conversation-employee-frontend-contract.test.mjs",
+    "scripts/application-release-finalization-diagnostics.test.mjs",
+    "scripts/application-release-retained-diagnostic.test.mjs"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {

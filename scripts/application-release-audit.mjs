@@ -12,6 +12,7 @@ import {inspectPinnedExecutionSource,parseSourceTree,sourceGit,ownedReleasePath}
 import {captureApplicationHistoryObservation} from './application-release-history-observation.mjs';
 import {reviewedNavigationApplicationSource,reviewedStartupApplicationSource} from './application-release-authority.mjs';
 import {withApplicationCliLifetime} from './application-release-cli-lifetime.mjs';
+import {observeApplicationFinalization} from './application-release-finalization-diagnostics.mjs';
 import {inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
 import {assertOnlineRetentionPersistedProcesses} from './online-release-retention-writer.mjs';
 import {withPinnedFormalPm2Process} from './release-toolchain-proc-witness.mjs';
@@ -32,33 +33,37 @@ const location=value=>Object.fromEntries(['target','name','directory','port'].ma
 
 export async function observeApplicationRelease(target,{requireCompletion=true}={}){
  need(process.platform==='linux'&&process.getuid?.()===0&&/^[a-f0-9]{40}$/.test(target??''),'invocation');
+ return observeApplicationFinalization(target,'audit',async mark=>{
+ mark('audit-source');
  const source=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
  const retained=reviewedNavigationApplicationSource()??reviewedStartupApplicationSource();
  need(source==='/var/lib/faolla-online-code/'+target||retained?.target===target&&source===retained.tool.directory,'source');
  const tool=retained?.application??inspectPinnedExecutionSource({revision:target,directory:source});
  return withPinnedFormalPm2Process(async verify=>{
+  mark('audit-history');
   const historyObservation=captureApplicationHistoryObservation();
+  mark('audit-state');
   const state=read(ROOT+'/'+target+'/state.json'),history=historyObservation.history,certificate=history.entries.at(-1),active=read(ROOT+'/active.json');
   need(state.target===target&&state.status==='active'&&state.lane===APPLICATION_RELEASE_LANE&&certificate?.active.target===target,'not_active');
   same(location(state),active,'metadata');
   need(sourceGit(state.directory,['rev-parse','HEAD']).toString().trim()===target&&
     !sourceGit(state.directory,['status','--porcelain=v1','--untracked-files=all']).toString().trim(),'candidate_source');
-  const build=read(ROOT+'/'+target+'/attendance-build-proof.json');
+  mark('audit-build');const build=read(ROOT+'/'+target+'/attendance-build-proof.json');
   need(digest(bookingHostRead(ROOT+'/'+target+'/attendance-build-proof.json'))===state.applicationBuildProofSha256&&build.target===target&&
     build.buildId===bookingHostRead(state.directory+'/.next/BUILD_ID',{privateMode:false}).trim()&&build.memoryBytes===4*1024**3&&
     build.heapMiB===3072&&build.cpuQuotaPercent===100&&build.tasks===128&&build.seconds===1200&&build.swapBytes===0&&build.privateNetworkVerified===true,'build_proof');
-  need(digest(bookingHostRead(ROOT+'/'+target+'/runtime.json'))===state.applicationRuntimeSha256&&
+  mark('audit-runtime');need(digest(bookingHostRead(ROOT+'/'+target+'/runtime.json'))===state.applicationRuntimeSha256&&
     digest(bookingHostRead(state.directory+'/.env.local'))===state.applicationEnvironmentFileSha256,'runtime');
-  const manifest=JSON.parse(sourceGit(REPOSITORY,['show',target+':'+APPLICATION_RELEASE_MANIFEST]));
+  mark('audit-manifest');const manifest=JSON.parse(sourceGit(REPOSITORY,['show',target+':'+APPLICATION_RELEASE_MANIFEST]));
   const proof=assertApplicationReleaseManifest(manifest,{baseline:state.baseline,baselineRows:parseSourceTree(sourceGit(REPOSITORY,['ls-tree','-r','-z',state.baseline])),targetRows:tool.rows});
   const recordedSchema=assertRecordedSchemaDatabase(manifest);
   const publication=applicationPublicationProof(history,target);
   need(publication.manifestSha256===proof.manifestSha256&&state.applicationManifestSha256===proof.manifestSha256,'manifest');
   if(requireCompletion)need(state.applicationCompletion?.status==='completed'&&publication.completionCertificates.includes(state.applicationCompletion.certificateSha256)&&state.applicationCompletion.workerPid>0,'completion_missing');
-  const snapshot=collectFormalBookingPm2Registry(),current=snapshot.rows.map(normalizeRetirementProcess);
+  mark('audit-retention');const snapshot=collectFormalBookingPm2Registry(),current=snapshot.rows.map(normalizeRetirementProcess);
   const window=inspectOnlineRetentionWindow({history,actualActive:active,current});
   need(window.phase==='stable'&&window.active.target===target&&window.stableRollback.target===state.baseline,'retained_window');
-  const workerCertificate=latestBookingVerifierCertificate(history);
+  mark('audit-worker');const workerCertificate=latestBookingVerifierCertificate(history);
   need(workerCertificate,'worker_certificate');
   const worker=snapshot.rows.find(row=>row.name===(workerCertificate.workerRelease?.priorWorker.name??REBOOT_WORKER_NAME));
   need(worker?.pid>0&&worker.pm2_env.status==='online'&&worker.pm2_env.pm_exec_path==='/var/lib/faolla-online-code/'+workerCertificate.toolRevision+'/scripts/booking-atomic-worker.mjs','worker');
@@ -70,7 +75,8 @@ export async function observeApplicationRelease(target,{requireCompletion=true}=
   need(digest(bookingHostRead(gateFile))===verifierContext.gateSha256,'worker_gate');
   const workerSource=inspectPinnedExecutionSource({revision:workerCertificate.toolRevision,directory:'/var/lib/faolla-online-code/'+workerCertificate.toolRevision});
   need(workerSource.inventorySha256===(verifierContext.inventorySha256??verifierContext.sourceInventorySha256),'worker_source');
-  for(const file of WEB_RELEASE_FILES)need(digest(bookingHostRead(WEB_RELEASE_PROXY+'/'+file,{privateMode:false}))===state.configs[file]?.newHash,'routing');
+  mark('audit-routing');for(const file of WEB_RELEASE_FILES)need(digest(bookingHostRead(WEB_RELEASE_PROXY+'/'+file,{privateMode:false}))===state.configs[file]?.newHash,'routing');
+  mark('audit-persistence');
   const dump=read('/root/.pm2/dump.pm2');assertOnlineRetentionPersistedProcesses(snapshot.rows,dump,{processes:current.slice().sort((a,b)=>a.pmId-b.pmId)});
   const identity=fs.readFileSync('/proc/'+worker.pid+'/stat','utf8').split(')').slice(1).join(')').trim().split(/\s+/)[19];
   ownedReleasePath('/proc/'+worker.pid,{directory:true});
@@ -80,14 +86,16 @@ export async function observeApplicationRelease(target,{requireCompletion=true}=
    need(fs.readFileSync('/proc/'+worker.pid+'/stat','utf8').split(')').slice(1).join(')').trim().split(/\s+/)[19]===identity,'worker_replaced');
   };
   const verifyUnchanged=()=>{historyObservation.verify();verifyRuntime();};
-  const publicProof=await proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target,operationId:randomUUID(),verify:verifyUnchanged,deadlineAtMs:Date.now()+30000});
+  mark('audit-public-probe');const publicProof=await proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target,operationId:randomUUID(),verify:verifyUnchanged,deadlineAtMs:Date.now()+30000});
+  mark('audit-worker-cycles');
   const cycle=readNaturalWorkerCycle(worker,Date.parse(certificate.completedAt),2);
   need(cycle,'worker_cycles_pending');verifyUnchanged();
   if(requireCompletion)need(state.applicationCompletion.workerPid===worker.pid,'completion_worker');
-  historyObservation.finish();verifyRuntime();
+  mark('audit-history-final');historyObservation.finish();verifyRuntime();
   return{kind:'ordinary-application-release-readonly-verified',target,baseline:state.baseline,certificateSha256:history.headSha256,
    manifestSha256:proof.manifestSha256,workerPid:worker.pid,naturalCycle:cycle,publicProof,savedProcessConfigurationVerified:true,
    rollbackRetained:true,otherProcessesUnchanged:true,businessDataWrittenByAudit:false,mailEnabled:false,recordedSchema,at:new Date().toISOString()};
+ });
  });
 }
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
