@@ -4,6 +4,7 @@ import {parseSourceTree,sourceGit,assertReviewFresh,inspectPinnedExecutionSource
 import {commitApplicationRetention} from './application-release-retention.mjs';
 import {applicationReleaseProbeFetch} from './application-release-probe.mjs';
 import {observeApplicationRelease} from './application-release-audit.mjs';
+import {observeApplicationFinalization} from './application-release-finalization-diagnostics.mjs';
 import {captureApplicationHistoryObservation} from './application-release-history-observation.mjs';
 import {readNaturalWorkerCycle} from './release-toolchain-worker-release-host.mjs';
 import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
@@ -711,9 +712,13 @@ function assertApplicationWorkerReady(all){
  }
 }
 async function finishApplicationRelease(s,heldLock){
+ return observeApplicationFinalization(s.target,'finish',async mark=>{
+ mark('finish-verify');
  if(s.lane!==APPLICATION_RELEASE_LANE||s.status!=='active')fail('application_release_finish_phase');
  verifyApplicationRelease(s,true);verifyCandidate(s);configUnchanged(s,true);
- await settleOnlineRetention(s,heldLock);await verifyBase(s);
+ mark('finish-retention');await settleOnlineRetention(s,heldLock);
+ mark('finish-baseline');await verifyBase(s);
+ mark('finish-worker-cycles');
  const history=readOnlineRetentionHistory(),certificate=history.entries.at(-1),workerCertificate=latestBookingVerifierCertificate(history);
  const worker=workerCertificate&&pm().find(item=>item.name===(workerCertificate.workerRelease?.priorWorker.name??REBOOT_WORKER_NAME));
  if(!worker)fail('application_release_worker_missing');
@@ -725,10 +730,12 @@ async function finishApplicationRelease(s,heldLock){
   await new Promise(resolve=>setTimeout(resolve,5000));
  }
  if(!cycle)fail('application_release_worker_cycles_unconfirmed');
- const proof=await observeApplicationRelease(s.target,{requireCompletion:false});
+ mark('finish-precompletion-audit');const proof=await observeApplicationRelease(s.target,{requireCompletion:false});
+ mark('finish-completion-record');
  s.applicationCompletion={status:'completed',certificateSha256:proof.certificateSha256,workerPid:proof.workerPid,
   naturalCycle:proof.naturalCycle,publicProof:proof.publicProof,retired:null,mailEnabled:false,at:new Date().toISOString()};save(s);
- return observeApplicationRelease(s.target);
+ mark('finish-final-audit');return observeApplicationRelease(s.target);
+ });
 }
 function backupClosure(releaseTarget,releaseBaseline){
  const files=run('git',['diff','--name-only',releaseBaseline,releaseTarget],{cwd:app}).trim().split('\n');
