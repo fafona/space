@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';
 import {chatContinuationServicePlan} from './application-release-chat-continuation.mjs';
-import {CHAT_TARGET,CHAT_BASELINE,executeChatScopeClosure} from './application-release-chat-policy.mjs';
+import {CHAT_TARGET,CHAT_BASELINE,executeChatScopeClosure,completeChatRecovery} from './application-release-chat-policy.mjs';
 const restored=()=>({actualTarget:CHAT_BASELINE,restored:true,publicProof:['https://faolla.com','https://launch.faolla.com'].map(origin=>({origin,status:200,buildId:CHAT_BASELINE}))});
 test('the actual shared closure archives only after complete public proof, durable seal and unchanged ownership',async()=>{
  const events=[];await executeChatScopeClosure({verify:()=>events.push('verify'),seal:()=>events.push('seal'),archive:()=>events.push('archive')},async()=>{events.push('work');return restored();});assert.deepEqual(events,['work','verify','seal','verify','archive']);
@@ -34,4 +34,16 @@ test('new authority is issued in-process and all original source/build/data guar
  const lock=readFileSync(new URL('./online-release-retention-writer.mjs',import.meta.url),'utf8').split('export async function withChatContinuationLocks')[1];
  for(const guard of ['assertChatOperationOwner','flock','applicationOperationBirth','application_controller_still_present','startup_owner_ambiguous'.replace('startup','chat'),'fs.renameSync(OPERATION_LOCK,destination)'])assert.ok(lock.includes(guard),guard);
  assert.doesNotMatch(lock,/NAVIGATION_PINS|STARTUP_PINS|unlinkSync|rmSync|rmdirSync/);
+});
+
+test('both lock-held and already-closed recovery require a fresh independent proof before sealing completion',async()=>{
+ const proof={kind:'ordinary-application-release-readonly-verified',target:CHAT_TARGET,baseline:CHAT_BASELINE,certificateSha256:'a'.repeat(64),workerPid:100,mailEnabled:false,businessDataWrittenByAudit:false,savedProcessConfigurationVerified:true,publicProof:['https://faolla.com','https://launch.faolla.com'].map(origin=>({origin,status:200,buildId:CHAT_TARGET}))};
+ for(const value of [{actualTarget:CHAT_TARGET,replayed:false},{kind:'chat-continuation-already-completed',actualTarget:CHAT_TARGET,replayed:false}]){
+  const events=[];const result=await completeChatRecovery(value,{audit:()=>{events.push('audit');return proof;},verify:()=>events.push('verify'),seal:()=>events.push('seal')});
+  assert.equal(result.proof,proof);assert.deepEqual(events,['audit','verify','seal','verify']);
+  for(const failure of ['audit','verify']){const calls=[];await assert.rejects(completeChatRecovery(value,{audit:()=>{calls.push('audit');if(failure==='audit')throw Error('audit');return proof;},verify:()=>{calls.push('verify');throw Error('verify');},seal:()=>calls.push('seal')}));assert.ok(!calls.includes('seal'));}
+  await assert.rejects(completeChatRecovery(value,{audit:()=>({...proof,publicProof:[]}),verify:()=>{},seal:()=>assert.fail('no invalid receipt')}));
+ }
+ const value=restored();assert.equal(await completeChatRecovery(value,{audit:()=>assert.fail('rollback is not publication'),seal:()=>assert.fail('rollback is not publication')}),value);
+ const source=readFileSync(new URL('./application-release-chat-continuation.mjs',import.meta.url),'utf8');assert.ok(source.includes('return completeRecovery(await closeOrRun(true))'));
 });

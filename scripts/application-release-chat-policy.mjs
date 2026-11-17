@@ -72,3 +72,14 @@ export function chatCycleAfter(state,certificate){
  need(state?.target===CHAT_TARGET&&certificate?.active?.target===CHAT_TARGET&&Number.isFinite(activated)&&Number.isFinite(retained),'cycle_boundary');
  return Math.max(activated,retained);
 }
+
+// A recovered rollback is not a publication. A recovered active release must
+// pass a NEW independent audit and preservation check before its outer receipt.
+export async function completeChatRecovery(value,operations){
+ if(value?.actualTarget===CHAT_BASELINE){need(value.restored===true,'recovery_restoration');return value;}
+ need(value?.actualTarget===CHAT_TARGET,'recovery_target');
+ const proof=await operations.audit();
+ const completed={...value,proof};
+ await executeChatScopeClosure({verify:operations.verify,seal:operations.seal,archive:()=>{}},async()=>completed);
+ return completed;
+}

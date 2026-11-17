@@ -1,6 +1,6 @@
 // Fixed reviewed retained-build supervisor. No build/SQL/process restart path.
 import * as fs from 'node:fs';import path from 'node:path';import {fileURLToPath,pathToFileURL} from 'node:url';import {spawnSync} from 'node:child_process';import {randomUUID} from 'node:crypto';
-import {CHAT_TARGET as TARGET,CHAT_BASELINE as BASELINE,CHAT_PINS as P} from './application-release-chat-policy.mjs';
+import {CHAT_TARGET as TARGET,CHAT_BASELINE as BASELINE,CHAT_PINS as P,completeChatRecovery} from './application-release-chat-policy.mjs';
 import {inspectReviewedChatSource,assertChatPreserved,chatHash} from './application-release-chat-source.mjs';
 import {withReviewedChatExecution} from './application-release-authority.mjs';
 import {withChatContinuationLocks} from './online-release-retention-writer.mjs';
@@ -23,6 +23,21 @@ async function closeOrRun(recover){
   return runRetainedChatUnderLock(lock,{recover});
  }));
 }
+async function completeRecovery(value){
+ return completeChatRecovery(value,{
+  audit:async()=>{
+   const audit=spawnSync('/usr/bin/node',[entry,'audit'],{cwd:directory,env:bookingHostEnvironment(),encoding:'utf8',timeout:300000,maxBuffer:65536});
+   need(audit.status===0&&!audit.error&&!audit.signal,'post_completion_audit');return JSON.parse(audit.stdout);
+  },
+  verify:()=>{assertChatPreserved({originalState:false});need(!fs.existsSync('/var/lib/faolla-maintenance/merchant-space/operation.lock'),'recovery_scope_not_closed');},
+  seal:completed=>{
+   const file='/var/lib/faolla-application-publications/'+TARGET+'/completed.json';
+   if(!fs.existsSync(file))bookingHostWriteOnce(file,JSON.stringify({kind:'ordinary-application-publication-completed',target:TARGET,baseline:BASELINE,toolRevision:tool,proof:completed.proof,retainedBuildSha256:P.build.sha256,controllerReceiptRecoveredWithoutReplay:true,mailEnabled:false,at:new Date().toISOString()})+'\n');
+   const saved=JSON.parse(bookingHostRead(file));
+   need(saved.kind==='ordinary-application-publication-completed'&&saved.target===TARGET&&saved.baseline===BASELINE&&saved.toolRevision===tool&&saved.retainedBuildSha256===P.build.sha256&&saved.proof?.certificateSha256===completed.proof.certificateSha256&&saved.mailEnabled===false,'completion_receipt_changed');
+  },
+ });
+}
 export async function runChatContinuation(){
  const source=await inspectReviewedChatSource();ensure();
  if(source.action==='audit')return withReviewedChatExecution({readOnly:true},async()=>{const{observeApplicationRelease}=await import('./application-release-audit.mjs');return observeApplicationRelease(TARGET);});
@@ -38,17 +53,14 @@ export async function runChatContinuation(){
   if(!fs.existsSync('/var/lib/faolla-maintenance/merchant-space/operation.lock')){
    const state=JSON.parse(bookingHostRead('/var/lib/faolla-online-release/'+TARGET+'/state.json'));
    if(state.applicationCompletion?.status==='completed'){
-    // Independent read-only context must have its explicit audit invocation.
-    const audit=spawnSync('/usr/bin/node',[entry,'audit'],{cwd:directory,env:bookingHostEnvironment(),encoding:'utf8',timeout:300000,maxBuffer:65536});
-    need(audit.status===0&&!audit.error&&!audit.signal,'post_completion_audit');const proof=JSON.parse(audit.stdout);
-    const completed='/var/lib/faolla-application-publications/'+TARGET+'/completed.json';
-    if(!fs.existsSync(completed))bookingHostWriteOnce(completed,JSON.stringify({kind:'ordinary-application-publication-completed',target:TARGET,baseline:BASELINE,toolRevision:tool,proof,retainedBuildSha256:P.build.sha256,controllerReceiptRecoveredWithoutReplay:true,mailEnabled:false,at:new Date().toISOString()})+'\n');
-    return{kind:'chat-continuation-already-completed',actualTarget:TARGET,proof,replayed:false};
+    return completeRecovery({kind:'chat-continuation-already-completed',actualTarget:TARGET,replayed:false});
    }
    // No lock and no completed proof is not authority to recreate a scope.
    need(false,'recovery_scope_missing');
   }
-  return closeOrRun(true);
+  // Covers controller death while an operation lock still existed as well as
+  // death after its archival. Neither path replays activation or writes data.
+  return completeRecovery(await closeOrRun(true));
  }
  need(source.action==='run','action');
  const attempt=root+'/attempt-'+randomUUID();fs.mkdirSync(attempt,{mode:0o700});bookingHostSync(root);
