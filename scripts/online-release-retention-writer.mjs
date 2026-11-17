@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationReleaseManifest,assertApplicationReleasePackage} from './application-release-compatibility.mjs';
 import {parseSourceTree,sourceGit} from './release-toolchain-source.mjs';
 import {reviewedApplicationExecution,reviewedApplicationStandbyExecution} from './application-release-authority.mjs';
+import {CHAT_TARGET,assertChatContinuationInvocation,assertChatOperationOwner,executeChatScopeClosure} from './application-release-chat-policy.mjs';
 import {STARTUP_TARGET,assertStartupContinuationInvocation,assertStartupOperationOwner,executeStartupScopeClosure} from './application-release-startup-policy.mjs';
 import {NAVIGATION_TARGET,NAVIGATION_PINS,assertNavigationContinuationInvocation,assertNavigationOperationOwner,executeNavigationScopeClosure} from './application-release-navigation-policy.mjs';
 import {assertNavigationPinnedFile} from './application-release-navigation-source.mjs';
@@ -1444,4 +1445,51 @@ export async function acceptMetadataRecoveryKernel(){
   cases.push({outcome,completed,archived,allOriginalInodesRetained:true,allOriginalBytesRetained:true,oldCertificateFabricated:false,productionAuthority:false});
  }
  const proof={kind:'metadata-recovery-kernel-accepted',cases,actualFlock:true,actualCas:true,actualInodePreservingRenames:true,productionTokensRejected:true,formalHostTouched:false,publicationAuthority:false};privateWrite(root+'/verified.json',retentionCanonicalText(proof));return{root,sha256:digest(readOwned(root+'/verified.json')),proof};
+}
+
+// Own-orphan-only lock for the preserved chat candidate, no legacy adoption.
+export async function withChatContinuationLocks({orphan=false,recordRoot},work){
+ const directory=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+ const invocation=assertChatContinuationInvocation({argv:process.argv,directory,platform:process.platform,uid:process.getuid?.(),executable:process.execPath});
+ if(!['run','recover'].includes(invocation.action)||orphan!== (invocation.action==='recover')||typeof work!=='function'||
+  recordRoot!=='/var/lib/faolla-chat-continuation/'+CHAT_TARGET+'/'+invocation.toolRevision)fail('chat_lock_invocation');
+ privateDirectory(recordRoot);ownedPath(DEPLOY_LOCK,'file');const fd=fs.openSync(DEPLOY_LOCK,fs.constants.O_RDWR|fs.constants.O_NOFOLLOW);
+ let token;
+ try{
+  const deploy=dirIdentity(fs.fstatSync(fd));equal(deploy,dirIdentity(fs.lstatSync(DEPLOY_LOCK)),'deploy_lock_changed');
+  const result=spawnSync('flock',['--nonblock','3'],{stdio:['ignore','pipe','pipe',fd],env:runtimeEnvironment(),timeout:10000});
+  if(result.status!==0||result.signal||result.error)fail('deploy_lock_busy');
+  let owner,id;
+  if(orphan){
+   const operation=dirIdentity(privateDirectory(OPERATION_LOCK)),birth=applicationOperationBirth();
+   if(fs.readdirSync(OPERATION_LOCK).length)fail('operation_lock_changed');
+   const matches=[];
+   for(const name of fs.readdirSync(recordRoot).filter(n=>/^operation-[a-f0-9-]{36}\.owner\.json$/.test(n))){
+    const bytes=readOwned(recordRoot+'/'+name),v=parse(bytes);equal(bytes,Buffer.from(retentionCanonicalText(v)),'chat_owner_encoding');
+    if(isDeepStrictEqual(v.operation,operation)&&isDeepStrictEqual(v.operationBirth,birth)){
+     assertChatOperationOwner(v,{toolRevision:invocation.toolRevision,operation,operationBirth:birth,deploy});
+     if(v.kind!=='chat-continuation-operation-owner'||v.target!==CHAT_TARGET||v.toolRevision!==invocation.toolRevision||
+      v.controller?.cwd!==directory||v.controller?.uid!==0||v.controller?.executable!=='/usr/bin/node'||
+      v.controller.commandSha256!==digest(Buffer.from(['/usr/bin/node',directory+'/scripts/application-release-chat-continuation.mjs','run',''].join('\0'))))fail('chat_owner_invalid');
+     equal(v.deploy,deploy,'deploy_lock_changed');matches.push(v);
+    }
+   }
+   if(matches.length!==1)fail('chat_owner_ambiguous');owner=matches[0];
+   id=owner.id;
+   try{const current=processFact(owner.controller.pid),text=fs.readFileSync('/proc/'+owner.controller.pid+'/stat','utf8'),status=text.slice(text.lastIndexOf(')')+2).split(/\s+/)[0];if(current.startTicks===owner.controller.startTicks&&status!=='Z')fail('application_controller_still_present');}
+   catch(e){if(!['ENOENT','ESRCH'].includes(e.code))throw e;}
+  }else{
+   fs.mkdirSync(OPERATION_LOCK,{mode:0o700});syncDirectory(path.dirname(OPERATION_LOCK));id=randomUUID();
+   owner={kind:'chat-continuation-operation-owner',target:CHAT_TARGET,toolRevision:invocation.toolRevision,id,
+    controller:processFact(process.pid),operation:dirIdentity(privateDirectory(OPERATION_LOCK)),operationBirth:applicationOperationBirth(),deploy,at:new Date().toISOString()};
+   privateWrite(recordRoot+'/operation-'+id+'.owner.json',retentionCanonicalText(owner));
+  }
+  token=Object.freeze({deployFd:fd,operationDirectory:OPERATION_LOCK});
+  heldLocks.set(token,{deployLock:DEPLOY_LOCK,operation:OPERATION_LOCK,deployIdentity:deploy,operationIdentity:owner.operation,applicationOperationBirth:owner.operationBirth});assertHeldLocks(token);
+  return await executeChatScopeClosure({verify:()=>assertHeldLocks(token),
+   seal:value=>privateWrite(recordRoot+'/operation-'+id+'.closed.json',retentionCanonicalText({kind:'chat-continuation-owned-scope-closed',target:CHAT_TARGET,toolRevision:invocation.toolRevision,id,operation:owner.operation,result:value,at:new Date().toISOString()})),
+   archive:()=>{const destination=recordRoot+'/operation-'+id+'.directory';if(exists(destination))fail('application_archive_exists');
+    fs.renameSync(OPERATION_LOCK,destination);syncDirectory(path.dirname(OPERATION_LOCK));syncDirectory(recordRoot);equal(dirIdentity(privateDirectory(destination)),owner.operation,'application_archive_changed');}
+  },()=>work(token));
+ }finally{if(token)heldLocks.delete(token);fs.closeSync(fd);}
 }

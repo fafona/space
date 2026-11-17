@@ -8,7 +8,8 @@ import {observeApplicationFinalization} from './application-release-finalization
 import {captureApplicationHistoryObservation} from './application-release-history-observation.mjs';
 import {readNaturalWorkerCycle} from './release-toolchain-worker-release-host.mjs';
 import {proveRecoveryTargets} from './release-toolchain-recovery-probe.mjs';
-import {withReviewedApplicationExecution,reviewedApplicationExecution,reviewedNavigationApplicationSource,reviewedStartupApplicationSource} from './application-release-authority.mjs';
+import {withReviewedApplicationExecution,reviewedApplicationExecution,reviewedNavigationApplicationSource,reviewedStartupApplicationSource,reviewedChatApplicationSource} from './application-release-authority.mjs';
+import {CHAT_TARGET,CHAT_BASELINE,chatContinuationPhase,chatCycleAfter} from './application-release-chat-policy.mjs';
 import {STARTUP_TARGET,STARTUP_BASELINE,startupContinuationPhase,startupRollbackHeadBinding} from './application-release-startup-policy.mjs';
 import {bookingHostRead,bookingHostWriteOnce,bookingHostReplace} from './booking-handoff-host-io.mjs';
 import {NAVIGATION_TARGET,NAVIGATION_BASELINE,navigationContinuationPhase} from './application-release-navigation-policy.mjs';
@@ -61,9 +62,10 @@ import {BACKUP_RELEASE_LANE,BACKUP_RELEASE_BASELINE,BACKUP_FOCUSED_TESTS,assertB
 
 const app='/www/wwwroot/merchant-space', nginx='/www/server/nginx/sbin/nginx';
 const controllerModuleUrl=import.meta.url;
+const chatEntry=process.argv[1]?.endsWith('/scripts/application-release-chat-continuation.mjs');
 const startupEntry=process.argv[1]?.endsWith('/scripts/application-release-startup-continuation.mjs');
 const navigationEntry=process.argv[1]?.endsWith('/scripts/application-release-navigation-continuation.mjs');
-const [requestedAction,target,baseline]=navigationEntry?[process.argv[2],NAVIGATION_TARGET,NAVIGATION_BASELINE]:startupEntry?[process.argv[2],STARTUP_TARGET,STARTUP_BASELINE]:process.argv.slice(2);
+const [requestedAction,target,baseline]=chatEntry?[process.argv[2],CHAT_TARGET,CHAT_BASELINE]:navigationEntry?[process.argv[2],NAVIGATION_TARGET,NAVIGATION_BASELINE]:startupEntry?[process.argv[2],STARTUP_TARGET,STARTUP_BASELINE]:process.argv.slice(2);
 const action=['stage-booking-reviewed-candidate','stage-application'].includes(requestedAction)?'stage':requestedAction;
 const envBase={...process.env,PM2_HOME:'/root/.pm2'};
 const read=p=>readFileSync(p,'utf8'),hash=v=>createHash('sha256').update(v).digest('hex');
@@ -144,7 +146,7 @@ async function settleOnlineRetention(s,heldLock){
   if(s.status!=='active')fail('application_release_not_active');
   const toolDirectory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');
   const toolRevision=run('git',['rev-parse','HEAD'],{cwd:toolDirectory}).trim();
-  if(reviewedNavigationApplicationSource()??reviewedStartupApplicationSource()){
+  if(reviewedNavigationApplicationSource()??reviewedStartupApplicationSource()??reviewedChatApplicationSource()){
    const prior=readOnlineRetentionHistory(),publication=applicationPublicationProof(prior,s.target);
    if(publication.introduced.toolRevision!==s.target||publication.manifestSha256!==s.applicationManifestSha256||prior.headSha256!==s.retentionRollbackHeadSha256)fail('navigation_continuation_retention_changed');
   }else await commitApplicationRetention({target:s.target,operation,toolRevision,lock:heldLock});
@@ -669,7 +671,7 @@ function applicationReleaseClosure(releaseTarget,releaseBaseline){
 }
 function assertApplicationExecutionSource(){
  const directory=fileURLToPath(new URL('..',controllerModuleUrl)).replace(/\/$/,'');
- const retained=reviewedNavigationApplicationSource()??reviewedStartupApplicationSource();
+ const retained=reviewedNavigationApplicationSource()??reviewedStartupApplicationSource()??reviewedChatApplicationSource();
  if(retained){if(retained.target!==target||directory!==retained.tool.directory)fail('application_release_execution_source');return inspectPinnedExecutionSource({revision:retained.toolRevision,directory});}
  if(directory!==`/var/lib/faolla-online-code/${target}`)fail('application_release_execution_source');
  return inspectPinnedExecutionSource({revision:target,directory});
@@ -726,7 +728,7 @@ async function finishApplicationRelease(s,heldLock){
  while(Date.now()-started<160000){
   const current=pm().find(item=>item.name===worker.name);
   if(current?.pid!==worker.pid||current.pm2_env.restart_time!==worker.pm2_env.restart_time)fail('application_release_worker_changed');
-  cycle=readNaturalWorkerCycle(current,Date.parse(certificate.completedAt),2);if(cycle)break;
+  cycle=reviewedChatApplicationSource()?readNaturalWorkerCycle(current,chatCycleAfter(s,certificate),2):readNaturalWorkerCycle(current,Date.parse(certificate.completedAt),2);if(cycle)break;
   await new Promise(resolve=>setTimeout(resolve,5000));
  }
  if(!cycle)fail('application_release_worker_cycles_unconfirmed');
@@ -735,7 +737,7 @@ async function finishApplicationRelease(s,heldLock){
  s.applicationCompletion={status:'completed',certificateSha256:proof.certificateSha256,workerPid:proof.workerPid,
   naturalCycle:proof.naturalCycle,publicProof:proof.publicProof,retired:null,mailEnabled:false,at:new Date().toISOString()};save(s);
  mark('finish-final-audit');return observeApplicationRelease(s.target);
- });
+ },{emit:reviewedChatApplicationSource()?value=>console.error(JSON.stringify(value)):undefined});
 }
 function backupClosure(releaseTarget,releaseBaseline){
  const files=run('git',['diff','--name-only',releaseBaseline,releaseTarget],{cwd:app}).trim().split('\n');
@@ -1018,7 +1020,7 @@ async function activateCandidate(s){
   // The retained certificate already names this candidate. Record explicit
   // activating intent before switching; only full smoke marks it active. The
   // dedicated recovery handles either physical route while this phase exists.
-  if(s.lane===APPLICATION_RELEASE_LANE&&(reviewedNavigationApplicationSource()??reviewedStartupApplicationSource()))atomic(activeFile,JSON.stringify({target:s.target,port:s.port,directory:s.directory,name:s.name}));
+  if(s.lane===APPLICATION_RELEASE_LANE&&(reviewedNavigationApplicationSource()??reviewedStartupApplicationSource()??reviewedChatApplicationSource()))atomic(activeFile,JSON.stringify({target:s.target,port:s.port,directory:s.directory,name:s.name}));
   for(const file of WEB_RELEASE_FILES)atomic(`${proxy}/${file}`,saved?saved.get(file).after:safeFile(`${operation}/after-${file}`));run(nginx,['-t']);run(nginx,['-s','reload']);
   let verified=false;for(let i=0;i<8;i++){try{s.checkedAssets=await smoke(s,true);verified=true;break;}catch(error){console.error(`online_public_probe_failed:${error.message}`);await new Promise(r=>setTimeout(r,1500));}}if(!verified)fail('public_verification_failed');
   await request('https://launch.faolla.com/login');await verifyBase(s);verifyCandidate(s);configUnchanged(s,true);run('pm2',['save']);
@@ -1263,6 +1265,40 @@ export async function runRetainedStartupUnderLock(lock,{recover=false}={}){
  const publicProof=await proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target:baseline,operationId:randomUUID(),verify,deadlineAtMs:Date.now()+30000});
  witness.finish();return{actualTarget:baseline,publicProof,restored:true,replayed:false};
 }
+export async function runRetainedChatUnderLock(lock,{recover=false}={}){
+ const retained=reviewedChatApplicationSource();
+ if(!retained||retained.target!==target||!chatEntry||requestedAction!==(recover?'recover':'run'))fail('chat_continuation_authority');
+ const mark=phase=>console.error(JSON.stringify({kind:'chat-continuation-phase',target,phase,recover,at:new Date().toISOString(),publicationCompleted:false}));
+ mark('source');
+ assertApplicationExecutionSource();const s=JSON.parse(safeFile(stateFile));
+ let phase=chatContinuationPhase(s,JSON.parse(safeFile(activeFile)));
+ if(phase==='partial'&&!recover)fail('chat_continuation_recovery_required');
+ if(phase==='completed')return{actualTarget:target,proof:await observeApplicationRelease(target),replayed:false};
+ if(recover&&phase==='partial'){
+  // A crash may happen between durable activating intent and active metadata.
+  // In that exact window validate the genuinely preserved rollback snapshot,
+  // not a fabricated status projection or a relaxed publication grammar.
+  if(JSON.parse(safeFile(activeFile)).target===baseline){
+   const original=JSON.parse(safeFile('/var/lib/faolla-chat-continuation/'+target+'/'+retained.toolRevision+'/original-state.json'));
+   verifyApplicationRelease(s,true);await verifyBase(original);
+  }else await verifyBase(s);
+  restoreConfigs(s);phase='restored';
+ }
+ if(phase==='restored'){
+  mark('preserved-baseline');
+  await verifyBase(s);configUnchanged(s);verifyCandidate(s);await smoke(s);
+  if(!recover){mark('activate');await activateCandidate(s);mark('activated');}
+ }
+ if(!recover||phase==='active'){
+  try{const current=JSON.parse(safeFile(stateFile));await finishApplicationRelease(current,lock);return{actualTarget:target,proof:await observeApplicationRelease(target),replayed:false};}
+  catch(error){const current=JSON.parse(safeFile(stateFile));if(current.status==='active'){await verifyBase(current);restoreConfigs(current);}if(!recover)throw error;}
+ }
+ mark('rollback-proof');const witness=captureApplicationHistoryObservation();
+ const verify=async()=>{witness.verify();await verifyBase(JSON.parse(safeFile(stateFile)),witness);configUnchanged(JSON.parse(safeFile(stateFile)));};
+ const publicProof=await proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target:baseline,operationId:randomUUID(),verify,deadlineAtMs:Date.now()+30000});
+ witness.finish();return{actualTarget:baseline,publicProof,restored:true,replayed:false};
+}
+
 export async function runOnlineTrafficRelease(){
 if(process.platform!=='linux'||process.getuid?.()!==0||!['stage','finish-stage','finish-application','finish-booking-built-smoke','resume-login-stage','resume-booking-stage','resume-booking-probe-stage','database','database-booking-compatibility-adapter','database-booking-registry-repair','database-booking-formal-backup','activate','retry-static','rollback','status'].includes(action)||!/^[a-f0-9]{40}$/.test(target??''))fail('invalid_online_invocation');
 if(target===BOOKING_HANDOFF_CANDIDATE&&['finish-stage','resume-booking-stage','resume-booking-probe-stage'].includes(action))fail('booking_built_smoke_use_reviewed_continuation');
