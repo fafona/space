@@ -27,6 +27,15 @@ test('observation returns the same result, with monotonic diagnostic timings but
  assert.equal(result,value);assert.equal(calls,1);assert.deepEqual(records.map(row=>[row.phase,row.event,row.elapsedMs]),[['finish-entry','enter',0],['finish-retention','enter',7],['finish-retention','returned',15]]);
  for(const row of records){assert.equal(row.publicationAuthority,false);assert.equal(row.publicationCompleted,false);}
 });
+test('the existing successful CLI protocol remains silent; only the dedicated diagnostic entry opts into progress output',async t=>{
+ const output=t.mock.method(console,'error',()=>{}),value={same:true};
+ assert.equal(await observeApplicationFinalization(target,'audit',mark=>{mark('audit-history');return value;}),value);
+ assert.equal(output.mock.calls.length,0);
+ const original=Error('application_release_audit_worker_source');
+ await assert.rejects(observeApplicationFinalization(target,'audit',()=>{throw original;}),error=>error===original);
+ assert.equal(output.mock.calls.length,1);
+ const record=JSON.parse(output.mock.calls[0].arguments[0]);assert.equal(record.event,'threw');assert.equal(record.code,'application_release_audit_worker_source');
+});
 for(const scope of Object.keys(APPLICATION_FINALIZATION_PHASES))for(const phase of APPLICATION_FINALIZATION_PHASES[scope])test('isolation preserves the original refusal at '+phase+' without replay',async()=>{
  const records=[],original=Error('booking_recovery_probe_deadline'),events=[];
  await assert.rejects(observeApplicationFinalization(target,scope,async mark=>{for(const current of APPLICATION_FINALIZATION_PHASES[scope]){mark(current);events.push(current);if(current===phase)throw original;}},{emit:record=>records.push(record)}),error=>error===original);
