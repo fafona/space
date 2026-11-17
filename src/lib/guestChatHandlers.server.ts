@@ -28,7 +28,7 @@ async function body(request:Request) {
   try{for(;;){const result=await reader.read();if(result.done)break;bytes+=result.value.length;if(bytes>24*1024){await reader.cancel();throw new GuestChatError("guest_chat_too_large",413);}chunks.push(result.value);}}finally{reader.releaseLock();}
   try{const parsed:unknown=JSON.parse(Buffer.concat(chunks).toString("utf8"));if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))throw 0;return parsed as Record<string,unknown>;}catch{throw new GuestChatError("guest_chat_invalid",400);}
 }
-function readToken(request:Request) {
+export function readGuestChatToken(request:Request) {
   const tokens=(request.headers.get("cookie")||"").split(";").map(v=>v.trim()).filter(v=>v.startsWith(COOKIE+"="));
   if(tokens.length!==1)return null;const value=tokens[0].slice(COOKIE.length+1);return TOKEN.test(value)?value:null;
 }
@@ -49,7 +49,7 @@ export async function handleGuestChat(request:Request,merchant=false,deps:Depend
     if(Object.keys(input).some(k=>!["siteId","action","threadId","messageId","text","through","before","offset"].includes(k)))return fail("guest_chat_invalid",400);
     const actor=merchant?await deps.authorize(request,{siteId,requiredPermission:action==="send"?"conversations.send":"conversations.view"}):null;
     if(!merchant&&!await deps.published(request,siteId))return fail("guest_chat_not_found",404);
-    const token=merchant?null:readToken(request);let session:GuestSession|null=token?await store.session(hash(token)):null;
+    const token=merchant?null:readGuestChatToken(request);let session:GuestSession|null=token?await store.session(hash(token)):null;
     if(action==="session"){
       const newToken=session?token!:randomBytes(32).toString("base64url");
       if(!session){const ip=request.headers.get("cf-connecting-ip")||request.headers.get("x-real-ip")||"unknown";session=await store.createSession(hash(newToken),hash(ip));}

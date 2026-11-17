@@ -1,4 +1,5 @@
 import { GUEST_CHAT_UUID, type GuestChatThread } from "./guestChat";
+import { guestChatLabel, localizedGuestChatName } from "./guestChatPresentation";
 
 export type MerchantConversationRow = {
   key: string;
@@ -13,6 +14,7 @@ export type MerchantConversationRow = {
   avatarImageUrl?: string;
   accountType?: "merchant" | "personal";
   isOfficial: boolean;
+  guestNumber?: string;
 };
 
 // Display numbers are never account identifiers. Only the server thread UUID
@@ -25,16 +27,18 @@ export function guestConversationId(key: string) {
 export function mergeMerchantConversations(
   accounts: readonly MerchantConversationRow[],
   guests: readonly GuestChatThread[],
+  locale = "zh-CN",
 ): MerchantConversationRow[] {
   const visitors = guests.map((thread): MerchantConversationRow => ({
     key: `guest:${thread.id}`,
-    name: thread.guestName,
+    name: localizedGuestChatName(thread.guestNumber, locale),
+    guestNumber: thread.guestNumber,
     unreadCount: thread.unread,
-    subtitle: "游客",
+    subtitle: guestChatLabel(locale),
     preview: thread.lastMessage?.text || "暂无消息。",
     updatedAt: thread.updatedAt,
     unread: thread.unread > 0,
-    avatarLabel: "客",
+    avatarLabel: "",
     isOfficial: false,
   }));
   const timestamp = (value: string) => Date.parse(value) || 0;

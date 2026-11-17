@@ -38,7 +38,7 @@ function Website(){const{setLocale}=useI18n();return <main data-public-merchant-
 const query=new URLSearchParams(location.search);createRoot(document.getElementById('root')).render(<I18nProvider initialLocale="zh-CN">{location.pathname==='/service-center'?<Frame siteId={query.get('siteId')} siteName="Synthetic venue" parentOrigin={query.get('parentOrigin')} nonce={query.get('nonce')} initialSection={query.get('section')}/>:<Website/>}<ClientDomTranslator/></I18nProvider>);
 `;
 const script=(await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents:entry},bundle:true,platform:'browser',format:'iife',write:false,jsx:'automatic',plugins:[plugin],define:{'process.env':'{}','process.env.NODE_ENV':'"production"'},logLevel:'silent'})).outputFiles[0].text;
-const utilityCss=(await postcss([tailwind()]).process('@import "tailwindcss" source(none);\n@source "./src/components/service-center";\n@source "./src/components/PublicWebsiteActions.tsx";', {from:path.resolve('service-center-acceptance.css')})).css;
+const utilityCss=(await postcss([tailwind()]).process('@import "tailwindcss" source(none);\n@source "./src/components/service-center";\n@source "./src/components/support";\n@source "./src/components/PublicWebsiteActions.tsx";', {from:path.resolve('service-center-acceptance.css')})).css;
 const surfaceCss=(await readFile('src/app/globals.css','utf8')).split(':root {')[0].replace(/^@import[^\n]+/gm,'');
 const css=utilityCss+'\n'+surfaceCss+'\nbody{margin:0}';
 const profile={nickname:'Synthetic visitor',name:'Synthetic visitor',email:'visitor@example.invalid',phone:'000',birthday:'01-01',birthdayMonthDayOnly:true};
@@ -60,6 +60,7 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900,camer
    return route.fulfill({json:[[[target==='zh-CN'?(dictionary[q]||q):q,q]]]});
   }
   if(realDirectory&&url.origin==='https://haoyouduo.faolla.com'&&request.isNavigationRequest())return route.fulfill({contentType:'text/html',body:'<!doctype html><meta charset="utf-8"><h1>Synthetic destination merchant</h1>'});
+  if(url.origin==='https://faolla.com'&&url.pathname===`/storage/v1/object/public/page-assets/guest-chat/${siteId}/${'a'.repeat(64)}/${'b'.repeat(64)}.png`)return route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64')});
   if(![merchantOrigin,portalOrigin].includes(url.origin)){state.unexpected.push(url.href);return route.abort();}
   if(request.isNavigationRequest()){
    if(url.pathname==='/service-center'){
@@ -75,6 +76,12 @@ async function setup(browser,width,{logged=true,seedGuest=false,height=900,camer
    return route.fulfill({headers:{'access-control-allow-origin':merchantOrigin,'access-control-allow-credentials':'true','cache-control':'no-store'},json:{ok:true,authenticated:state.logged,favorited:state.favorite}});
   }
   if(url.origin===merchantOrigin&&url.pathname==='/api/guest-chat'&&request.method()==='GET')return route.fulfill({json:{ok:true,guest:null,thread:null,messages:[],before:null}});
+  if(url.origin===merchantOrigin&&request.method()==='POST'&&url.pathname.startsWith('/api/guest-chat')){
+   state.writes.push({path:url.pathname,body:url.pathname.endsWith('/attachments')?null:request.postDataJSON(),origin:merchantOrigin});
+   if(url.pathname.endsWith('/attachments'))return route.fulfill({json:{ok:true,url:`/storage/v1/object/public/page-assets/guest-chat/${siteId}/${'a'.repeat(64)}/${'b'.repeat(64)}.png`,name:'synthetic.png',image:true}});
+   assert.equal(request.postDataJSON().action,'session');return route.fulfill({json:{ok:true,guest:{guestNumber:'12345678',guestName:'游客12345678'}}});
+  }
+  if(url.pathname.startsWith('/storage/v1/object/public/'))return route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64')});
   if(url.pathname.startsWith('/api/')&&url.pathname!=='/api/platform-published'){
    assert.equal(url.origin,portalOrigin,'all personal IO must stay inside the login origin');
    if(logged)assert.match(request.headers().cookie||'',/__Host-faolla-merchant-auth-v2=synthetic-cookie/);
@@ -156,7 +163,7 @@ test('guest and account composers stay beside send inside a keyboard-only visual
     assert.ok(sheet.y>=bounds.top&&sheet.y+sheet.height<=bounds.top+bounds.height+1,'the whole sheet fits the visible viewport');
     assert.equal(await surface.locator('[data-chat-composer]').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
    }
-   await surface.locator('input[type=file]').dispatchEvent('cancel',{bubbles:true});
+   await surface.getByLabel('图片 / 文件',{exact:true}).dispatchEvent('cancel',{bubbles:true});
    assert.equal(await f.page.locator('dialog[open]').count(),1,'cancelling an attachment never closes the conversation');
    assert.equal(await input.inputValue(),'Keep this draft while the keyboard changes height.\nSecond line.');
    if(process.env.FAOLLA_SERVICE_QA_DIR)await f.page.screenshot({path:path.join(process.env.FAOLLA_SERVICE_QA_DIR,`keyboard-composer-${logged?'account':'guest'}-${width}.png`)});
@@ -405,8 +412,8 @@ test('file-picker cancellation is not a request to dismiss the service dialog',{
    await menu(f.page);await choose(f.page,'会话');
    const surface=logged?serviceFrame(f.page):f.page;
    await openThread(surface);await surface.getByLabel('输入消息').fill('Keep this unsent draft');
-   const input=surface.locator('input[type="file"]');
-   const chooser=f.page.waitForEvent('filechooser');await surface.locator('label[title="图片 / 文件"]').click();
+   const input=surface.getByLabel('图片 / 文件',{exact:true});
+   const chooser=f.page.waitForEvent('filechooser');if(logged)await surface.locator('label[title="图片 / 文件"]').click();else{await surface.getByRole('button',{name:'添加附件',exact:true}).click();await surface.getByRole('button',{name:'文件',exact:true}).click();}
    await (await chooser).setFiles([]);
    // File inputs emit their own bubbling cancel event when their OS picker is
    // dismissed. React delegates this event through ancestors, including dialog.
@@ -416,12 +423,12 @@ test('file-picker cancellation is not a request to dismiss the service dialog',{
    assert.equal(await surface.locator(`[data-conversation-id="${siteId}"]`).getAttribute('aria-pressed'),'true');
    assert.equal(new URL(f.page.url()).origin,merchantOrigin);
    assert.deepEqual(f.state.writes,[]);
-   // Registered uploads remain unchanged. Visitors must not receive a false
-   // "sent" result for an image which used to exist only in the local draft.
+   // Registered upload stays unchanged. Visitor uploads use their own bounded
+   // authenticated endpoint, and selecting an attachment never sends a message.
    await input.setInputFiles({name:'synthetic.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64')});
    if(logged){await surface.locator('textarea').filter({visible:true}).evaluate(element=>new Promise((resolve,reject)=>{const deadline=Date.now()+5000;const timer=setInterval(()=>{if(element.value.includes('图片：')){clearInterval(timer);resolve(true)}else if(Date.now()>deadline){clearInterval(timer);reject(new Error('attachment draft was not updated'))}},10)}));assert.match(await surface.getByLabel('输入消息').inputValue(),/^Keep this unsent draft\n图片：/);}
-   else {await surface.getByRole('alert').filter({hasText:'游客会话目前支持文字；发送图片或文件请先登录。'}).waitFor();assert.equal(await surface.getByLabel('输入消息').inputValue(),'Keep this unsent draft');}
-   assert.deepEqual(f.state.writes.map(write=>write.path),logged?['/api/assets/upload']:[]);
+   else {await surface.locator('[data-chat-attachment-preview]').waitFor();assert.equal(await surface.getByLabel('输入消息').inputValue(),'Keep this unsent draft');}
+   assert.deepEqual(f.state.writes.map(write=>write.path),logged?['/api/assets/upload']:['/api/guest-chat','/api/guest-chat/attachments']);
    await f.page.getByRole('button',{name:'关闭会话',exact:true}).focus();
    await f.page.keyboard.press('Escape');await f.page.waitForFunction(()=>!document.querySelector('dialog').open);
   }finally{await f.close();}
