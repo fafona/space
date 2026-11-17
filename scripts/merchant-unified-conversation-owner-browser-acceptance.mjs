@@ -22,7 +22,7 @@ const css=utilities+'\n'+(await readFile('src/app/globals.css','utf8')).replace(
 
 test('actual owner desktop and mobile use the existing single list for account and visitor replies',{timeout:90000},async()=>{
  const browser=await chromium.launch({headless:true});try{for(const width of [1440,390]){
-  const context=await browser.newContext({viewport:{width,height:900},isMobile:width<768,hasTouch:width<768,serviceWorkers:'block'});
+  const context=await browser.newContext({locale:'zh-CN',viewport:{width,height:900},isMobile:width<768,hasTouch:width<768,serviceWorkers:'block'});
   const errors=[],sends=[],denied=[],messages=[{id:'1',requestId:threadId,sender:'guest',text:'Actual owner visitor fixture',createdAt:'2026-11-16T12:00:00Z'}];let readThrough=0;
   const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));
   await context.addInitScript(()=>localStorage.setItem('merchant-space:locale:v1','zh-CN'));
@@ -51,6 +51,7 @@ test('actual owner desktop and mobile use the existing single list for account a
   });
   try{
    await page.goto(origin+'/'+siteId);
+   await page.waitForFunction(()=>document.documentElement.lang==='zh-CN');
    if(width>=768)await page.getByRole('button',{name:'会话',exact:true}).click();
    await page.getByRole('button').filter({hasText:'访客12345678'}).first().waitFor();
    const toggle=page.getByRole('switch',{name:'翻译聊天内容',exact:true}).filter({visible:true});assert.equal(await toggle.getAttribute('aria-checked'),'true');
