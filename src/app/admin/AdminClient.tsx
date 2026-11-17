@@ -21,6 +21,8 @@ import { createPortal } from "react-dom";
 import DeferredFaollaFrame from "@/components/admin/DeferredFaollaFrame";
 import { useMerchantGuestInbox } from "@/components/service-center/useMerchantGuestInbox";
 import MerchantGuestInboxStatus from "@/components/service-center/MerchantGuestInboxStatus";
+import GuestAvatar from "@/components/service-center/GuestAvatar";
+import { ChatTranslationProvider, ChatTranslationToggle } from "@/components/support/ChatTranslation";
 import { guestConversationId, mergeMerchantConversations, type MerchantConversationRow } from "@/lib/merchantConversationList";
 import LeisurePageLayout from "@/components/blocks/LeisurePageLayout";
 import { getLeisureBlockStyle, getLeisurePresentation, getLeisureRole } from "@/lib/leisurePresentation";
@@ -3794,6 +3796,7 @@ type SupportAvatarBadgeProps = {
   labelClassName?: string;
   imageAlt?: string;
   showMerchantBadge?: boolean;
+  guest?: boolean;
 };
 
 function buildSupportPublishedProfileFromSite(site: Site): MerchantListPublishedSite {
@@ -3886,7 +3889,9 @@ function SupportAvatarBadge({
   labelClassName = "",
   imageAlt = "",
   showMerchantBadge = false,
+  guest = false,
 }: SupportAvatarBadgeProps) {
+  if (guest) return <GuestAvatar className={className.includes("h-12") ? "h-12 w-12" : "h-11 w-11"}/>;
   const normalizedImageUrl = normalizePublicAssetUrl(imageUrl ?? "");
   return (
     <div className={`faolla-support-avatar relative rounded-full ${className}`.trim()}>
@@ -4189,6 +4194,7 @@ export default function AdminClient({
   const [supportSending, setSupportSending] = useState(false);
   const [supportError, setSupportError] = useState("");
   const [supportDraft, setSupportDraft] = useState("");
+  const [chatTranslationEnabled, setChatTranslationEnabled] = useState(true);
   const [supportAttachmentBusy, setSupportAttachmentBusy] = useState(false);
   const [supportAttachmentMenuOpen, setSupportAttachmentMenuOpen] = useState(false);
   const [supportEmojiMenuOpen, setSupportEmojiMenuOpen] = useState(false);
@@ -11168,7 +11174,7 @@ function getPageBackgroundPatch(source: Block | undefined): PageBackgroundPatch 
         isOfficial: false,
       };
     }),
-  ], supportGuestInbox.threads);
+  ], supportGuestInbox.threads, locale);
   const supportUnreadConversationCount =
     supportContactRows.filter(row => row.unread).length;
   const supportUnreadBadgeLabel = supportUnreadBadgeCount > 99 ? "99+" : String(supportUnreadBadgeCount);
@@ -16853,6 +16859,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
             <div className="faolla-mobile-list-title text-[15px] font-semibold text-slate-900">聊天列表</div>
             <div className="faolla-mobile-list-summary mt-1 text-xs text-slate-500">{mobileSupportContactListSummary}</div>
           </div>
+          <ChatTranslationToggle enabled={chatTranslationEnabled} onChange={setChatTranslationEnabled}/>
           {!isMobileMerchantSupportOnlyMode ? (
             <button
               type="button"
@@ -16944,6 +16951,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 <div className="flex items-start gap-3">
                   <SupportAvatarBadge
                     label={contactRow.avatarLabel}
+                    guest={!!contactRow.guestNumber}
                     imageUrl={contactRow.avatarImageUrl}
                     imageAlt={contactRow.name}
                     className={`faolla-mobile-chat-avatar mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
@@ -18644,10 +18652,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
     active={supportInterfaceOpen && !!selectedGuestThreadId && (!isMobileSupportDialog || supportMobileView === "thread")}
     conversationId={selectedGuestThreadId} inboxThread={supportGuestInbox.threads.find(thread => thread.id === selectedGuestThreadId)}
     onThreadUpdated={supportGuestInbox.updateThread} onBack={closeMobileSupportThread} />;
-  const supportMobileDialogContent = <>
+  const supportMobileDialogContent = <ChatTranslationProvider scope={`${supportGuestSiteId}:${supportSelectedContactKey}`} enabled={chatTranslationEnabled} active={supportInterfaceOpen}>
     <div className={selectedGuestThreadId && supportMobileView === "thread" ? "hidden" : "contents"}>{legacySupportMobileDialogContent}</div>
     {!isPlatformEditor ? <div className={selectedGuestThreadId && supportMobileView === "thread" ? "flex h-full min-h-0 flex-1 flex-col pt-[var(--faolla-mobile-safe-top)]" : "hidden"}>{supportGuestThreadContent}</div> : null}
-  </>;
+  </ChatTranslationProvider>;
   const supportSelfCardPickerOverlay =
     supportSelfCardPickerOpen && supportInterfaceOpen
       ? renderTopMostOverlay(
@@ -19448,20 +19456,10 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
         <div className="space-y-4 border-b border-slate-100 px-5 py-4">
           <div className="flex items-center justify-between gap-3">
             <div className="text-[26px] font-bold leading-8 text-slate-950">聊天</div>
-            <button
-              type="button"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-700 transition hover:bg-slate-100"
-              onClick={() => void searchSupportPeerMerchant()}
-              disabled={supportSearchLoading}
-              aria-label="搜索"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" aria-hidden="true">
-                <path d="m21 21-4.3-4.3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
-              </svg>
-            </button>
+            <ChatTranslationToggle enabled={chatTranslationEnabled} onChange={setChatTranslationEnabled}/>
           </div>
-          <div className="flex h-11 items-center gap-2 rounded-full bg-[#f0f2f5] px-4">
+          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-full bg-[#f0f2f5] px-4">
             <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-slate-500" fill="none" aria-hidden="true">
               <path d="m21 21-4.3-4.3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
               <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
@@ -19478,6 +19476,8 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                 void searchSupportPeerMerchant();
               }}
             />
+          </div>
+          <button type="button" aria-label="搜索" className="h-11 shrink-0 rounded-full border border-slate-200 px-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50" disabled={supportSearchLoading} onClick={()=>void searchSupportPeerMerchant()}>{supportSearchLoading?"搜索中":"搜索"}</button>
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto bg-white p-3">
@@ -19506,6 +19506,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
                     <div className="flex items-start gap-3">
                       <SupportAvatarBadge
                         label={contactRow.avatarLabel}
+                        guest={!!contactRow.guestNumber}
                         imageUrl={contactRow.avatarImageUrl}
                         imageAlt={contactRow.name}
                         className={`mt-0.5 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-sm font-semibold shadow-sm ${
@@ -19931,7 +19932,7 @@ function buildSupportSelfBusinessCardLinkMessageText(input: {
       </div>
     </div>
   );
-  const supportDesktopSurfaceContent = legacySupportDesktopSurfaceContent;
+  const supportDesktopSurfaceContent = <ChatTranslationProvider scope={`${supportGuestSiteId}:${supportSelectedContactKey}`} enabled={chatTranslationEnabled} active={supportInterfaceOpen}>{legacySupportDesktopSurfaceContent}</ChatTranslationProvider>;
   const desktopMerchantWorkspaceContent =
     isDesktopMerchantWorkspace && merchantDesktopSection !== "editor" ? (
       <div

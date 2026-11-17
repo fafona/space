@@ -17,18 +17,19 @@ const script=(await build({stdin:{resolveDir:process.cwd(),loader:'tsx',contents
  window.__defaults={permissionConfig:createDefaultMerchantPermissionConfig(),sortConfig:createDefaultMerchantSortConfig()};
  createRoot(document.getElementById('root')).render(<I18nProvider initialLocale="zh-CN"><AdminClient forcedScope="site-${siteId}" startInLoadingState/></I18nProvider>);
 `},bundle:true,write:false,outfile:'owner-conversations.js',platform:'browser',format:'iife',jsx:'automatic',logLevel:'silent',define:{'process.env':'{}','process.env.NODE_ENV':'"development"','process.env.NEXT_PUBLIC_SUPABASE_URL':JSON.stringify(origin),'process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY':'"synthetic-owner-anon"','process.env.NEXT_PUBLIC_SUPABASE_DISABLE_AUTO_REFRESH':'"1"'}})).outputFiles[0].text;
-const utilities=(await postcss([tailwind()]).process('@import "tailwindcss" source(none);\n@source "./src/app/admin/AdminClient.tsx";\n@source "./src/components/service-center";',{from:path.resolve('owner-conversations.css')})).css;
+const utilities=(await postcss([tailwind()]).process('@import "tailwindcss" source(none);\n@source "./src/app/admin/AdminClient.tsx";\n@source "./src/components/service-center";\n@source "./src/components/support";',{from:path.resolve('owner-conversations.css')})).css;
 const css=utilities+'\n'+(await readFile('src/app/globals.css','utf8')).replace(/^@import[^\n]+/gm,'');
 
 test('actual owner desktop and mobile use the existing single list for account and visitor replies',{timeout:90000},async()=>{
  const browser=await chromium.launch({headless:true});try{for(const width of [1440,390]){
-  const context=await browser.newContext({viewport:{width,height:900},isMobile:width<768,hasTouch:width<768,serviceWorkers:'block'});
+  const context=await browser.newContext({locale:'zh-CN',viewport:{width,height:900},isMobile:width<768,hasTouch:width<768,serviceWorkers:'block'});
   const errors=[],sends=[],denied=[],messages=[{id:'1',requestId:threadId,sender:'guest',text:'Actual owner visitor fixture',createdAt:'2026-11-16T12:00:00Z'}];let readThrough=0;
   const page=await context.newPage();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));
   await context.addInitScript(()=>localStorage.setItem('merchant-space:locale:v1','zh-CN'));
   const thread=()=>({id:threadId,siteId,guestNumber:'12345678',guestName:'游客12345678',updatedAt:'2026-11-16T12:00:00Z',unread:readThrough?0:1,lastMessage:messages.at(-1)});
   await context.route('**/*',async route=>{
    const request=route.request(),url=new URL(request.url());
+   if(url.hostname==='translate.googleapis.com')return route.fulfill({json:[[[url.searchParams.get('q')]]]});
    if(request.isNavigationRequest())return route.fulfill({contentType:'text/html',body:'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+css+'</style><div id="root"></div><script>'+script.replaceAll('</script>','<\\/script>')+'</script>'});
    if(url.pathname==='/api/merchant-guest-chat'){
     assert.equal(url.searchParams.get('siteId')??request.postDataJSON()?.siteId,siteId);
@@ -50,16 +51,20 @@ test('actual owner desktop and mobile use the existing single list for account a
   });
   try{
    await page.goto(origin+'/'+siteId);
+   await page.waitForFunction(()=>document.documentElement.lang==='zh-CN');
    if(width>=768)await page.getByRole('button',{name:'会话',exact:true}).click();
-   await page.getByRole('button').filter({hasText:'游客12345678'}).first().waitFor();
+   await page.getByRole('button').filter({hasText:'访客12345678'}).first().waitFor();
+   const toggle=page.getByRole('switch',{name:'翻译聊天内容',exact:true}).filter({visible:true});assert.equal(await toggle.getAttribute('aria-checked'),'true');
+   if(width>=768){const search=await page.getByRole('button',{name:'搜索',exact:true}).filter({visible:true}).boundingBox(),input=await page.getByPlaceholder('精确搜索商户ID或邮箱',{exact:true}).filter({visible:true}).boundingBox();assert.ok(search.x>input.x+input.width,'search remains to the right of the shortened field');assert.ok(Math.abs(search.y-input.y)<10,'search and input stay on one line');}
    assert.equal(await page.getByRole('tab',{name:'账号会话',exact:true}).count(),0);assert.equal(await page.getByRole('tab',{name:'游客会话',exact:true}).count(),0);
-   const account=page.getByRole('button').filter({hasText:'Registered customer'}).first(),visitor=page.getByRole('button').filter({hasText:'游客12345678'}).first();
+   const account=page.getByRole('button').filter({hasText:'Registered customer'}).first(),visitor=page.getByRole('button').filter({hasText:'访客12345678'}).first();
    if(process.env.FAOLLA_GUEST_QA_DIR)await page.screenshot({path:path.join(process.env.FAOLLA_GUEST_QA_DIR,`owner-list-${width}.png`)});
    await account.click();
    const composer=width>=768?page.locator('[data-support-auto-resize="desktop"]'):page.locator('[data-support-auto-resize="mobile"]');
    await composer.fill('Keep owner account draft');
    if(width<768)await page.getByRole('button',{name:'返回会话列表',exact:true}).filter({visible:true}).click();
    await visitor.click();await page.getByLabel('聊天记录').getByText('Actual owner visitor fixture',{exact:true}).waitFor();
+   assert.equal(await page.locator('[data-chat-thread-header]').getByRole('button',{name:/刷新/}).count(),0);
    await page.getByLabel('输入消息').fill('Actual owner reply fixture');await page.getByRole('button',{name:'发送',exact:true}).filter({visible:true}).click();await page.getByLabel('聊天记录').getByText('Actual owner reply fixture',{exact:true}).waitFor();
    if(process.env.FAOLLA_GUEST_QA_DIR)await page.screenshot({path:path.join(process.env.FAOLLA_GUEST_QA_DIR,`owner-guest-${width}.png`)});
    if(width<768)await page.getByRole('button',{name:'返回会话列表',exact:true}).filter({visible:true}).click();

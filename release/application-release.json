@@ -1,8 +1,8 @@
 {
   "schemaVersion": 5,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "4963116f54bcab64ae397e06ecf323838fe2e3be",
-  "purpose": "Keyboard-safe same-row chat composer and unified merchant account/visitor inbox; preserve message identities and drafts",
+  "baseline": "110b022d08d56d51aa86e650f83ced75e4b31cc6",
+  "purpose": "Localized guest identity, secure bidirectional chat attachments, and nonblocking chat translation controls",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,132 +10,15 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
-      "file": "docs/booking-registry-capacity-recovery-20261117.md",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "ee0cc5ecb7b1438ee999553773651e270732d835"
-      ]
-    },
-    {
-      "file": "docs/chat-composer-unified-inbox-20261117.md",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "2da496f5760716301257ef742e429d09968e09d5"
-      ]
-    },
-    {
-      "file": "docs/startup-retained-continuation-20261117.md",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "9f0a2973fddc73135fd3e8f5180bcdce77520948"
-      ]
-    },
-    {
-      "file": "scripts/application-release-audit.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "d5581f109a046d56879951d7e2f194ddf50dece7"
-      ],
-      "after": [
-        "100644",
-        "24edfbb959020b0a2c71a56dd31f782b64283d67"
-      ]
-    },
-    {
-      "file": "scripts/application-release-authority.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "f1c40bd99ec3d6b40a5c9c4165e548b4868f80c3"
-      ],
-      "after": [
-        "100644",
-        "d4ae39e88b233d00947e00d7cf6d447db2d97438"
-      ]
-    },
-    {
-      "file": "scripts/application-release-startup-continuation.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "84a0c449534c04cbb4e69eb4c24683d32e80a76a"
-      ]
-    },
-    {
-      "file": "scripts/application-release-startup-continuation.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "697840a3025998e4a248c73ca1ad051593d9ab27"
-      ]
-    },
-    {
-      "file": "scripts/application-release-startup-native.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "c94e69c8f3a5020c1a21c8e8a12f1a8ee40ea950"
-      ]
-    },
-    {
-      "file": "scripts/application-release-startup-policy.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "b015f87d0027d09a86aed67dfe09904fb89a56f5"
-      ]
-    },
-    {
-      "file": "scripts/application-release-startup-policy.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "d269d7611dcc3b6f5b930a8d23d1453dc095c55a"
-      ]
-    },
-    {
-      "file": "scripts/application-release-startup-source.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "94c87dd33506fcb875c54808caa67a906c0e9e17"
-      ]
-    },
-    {
-      "file": "scripts/attendance-staged-tool-repair.test.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "be972925b7ebc70bc8ccf5de561ca66a511ddc3f"
-      ],
-      "after": [
-        "100644",
-        "c86a376a75fee3716abf09f8e7d7d339dbbcdfa0"
-      ]
-    },
-    {
       "file": "scripts/guest-chat-browser-acceptance.mjs",
       "role": "verification",
       "before": [
         "100644",
-        "fbefd83d42eb647ed44c5ea5b182a222edd9d6db"
+        "ab8d5e1b513f9b546151cc38450523cdc12ae6d4"
       ],
       "after": [
         "100644",
-        "ab8d5e1b513f9b546151cc38450523cdc12ae6d4"
+        "6a96ef944431d8ecff55a3f6268257e68f2c2cc3"
       ]
     },
     {
@@ -143,185 +26,23 @@
       "role": "verification",
       "before": [
         "100644",
-        "e371a04d5dea37023b0c8c69dc814c33627af430"
+        "3a0eaf3337d3aa8c37c2509b217b64ec79b94492"
       ],
       "after": [
         "100644",
-        "3a0eaf3337d3aa8c37c2509b217b64ec79b94492"
+        "7c95a052e7e3c08b96e2a50a800b19a2abbfe978"
       ]
     },
     {
       "file": "scripts/merchant-unified-conversation-owner-browser-acceptance.mjs",
       "role": "verification",
-      "before": null,
-      "after": [
+      "before": [
         "100644",
         "dc4b0f8ca33bdc7d6f323ccea9dd295d404ac382"
-      ]
-    },
-    {
-      "file": "scripts/online-release-retention-writer.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "31e14c7d0ba6c12fc080f75377f40af778fa66aa"
       ],
       "after": [
         "100644",
-        "ce8cc313e1086e33652e2f9f2c29dd958bc00513"
-      ]
-    },
-    {
-      "file": "scripts/online-traffic-release.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "d0fee1ae2ea537fb1c33da6aa2337918d4637e19"
-      ],
-      "after": [
-        "100644",
-        "7848e1291bab21c0ff63449629e6188cd85a729e"
-      ]
-    },
-    {
-      "file": "scripts/online-unpublished-candidate.test.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "4c656b298d08dd0d3034ac514c7b2b549f9a4a82"
-      ],
-      "after": [
-        "100644",
-        "18aba48106b915d060926d65828b5aac2f251f84"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-pm2-observation.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "796ae4ee6cc3fe780deca994172d0bb2b20256b4"
-      ],
-      "after": [
-        "100644",
-        "f179642dbace4d32da44e0369ca9f3e1e2ac8177"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-pm2-real-acceptance.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "2a544573bb10a567fe0e931d79c5c30081cd9a7d"
-      ],
-      "after": [
-        "100644",
-        "5f0f1b33a74e4645790a5c4449bb7e5d823b687f"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-registry-capacity-adapter.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "c6ad7df94a481d42f12e13c65d6c350233c73a2d"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-registry-capacity-dump.py",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "d90d7a72d84b116aca9862e009e3c37b96a04f3c"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-registry-capacity-native.test.py",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "1de0219549c04e48128fdee2036056106054be93"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-registry-capacity.py",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "697893c62dad9bdcff1799a217393ea44072b130"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-registry-capacity.test.py",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "696609b215d3399c46695e75de906d3329590623"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-registry-recovery-pm2.py",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "cec849b6c1a7370c15fc3c11735dc9362473aff3"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-registry-recovery-policy.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "72211de626ed392a506a7d98767f9379849926ec"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-registry-recovery.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "bfeaa8f6b77ad66f5cfe5059873ae1acfb09600f"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-registry-recovery.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "ddcf2ecaa6889e79065ed136398126c3a2285e69"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-worker-release-ci.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "ad73675b134431baba7be821f00ea5992fa56973"
-      ],
-      "after": [
-        "100644",
-        "50e28a2644299060fbf3a87fef75707f3fa4fb1f"
-      ]
-    },
-    {
-      "file": "scripts/release-toolchain-worker-release-contract.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "50716f51b61d6261a6339687b1cef6002264f8b0"
-      ],
-      "after": [
-        "100644",
-        "7adda61c2fbe86ca78d789844403cc23d33e6f1f"
+        "afeb75debb60614b50d7998e65bf85fe96958eef"
       ]
     },
     {
@@ -329,23 +50,29 @@
       "role": "application",
       "before": [
         "100644",
-        "29ef2f94ed7f07daa43351fd718eb3d6b7b8c8e5"
+        "7448b0e04657802bef91251473f5a6caf9e38db0"
       ],
       "after": [
         "100644",
-        "7448b0e04657802bef91251473f5a6caf9e38db0"
+        "c10c0eb2bc610435e9cb8294d7fbaf815581e2b9"
       ]
     },
     {
-      "file": "src/app/globals.css",
+      "file": "src/app/api/guest-chat/attachments/route.ts",
       "role": "application",
-      "before": [
-        "100644",
-        "97899963eb3a1b7b924220b7f676a58977cc9f6c"
-      ],
+      "before": null,
       "after": [
         "100644",
-        "3df173a6063222c840c09d26612f91e3dfb5ab84"
+        "0ebf061499ac02ab8310011de962bde61167364d"
+      ]
+    },
+    {
+      "file": "src/app/api/merchant-guest-chat/attachments/route.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "38b08f7167f1d48fb98e86947ace8269ee8ad8e5"
       ]
     },
     {
@@ -353,20 +80,32 @@
       "role": "application",
       "before": [
         "100644",
-        "2e53e4e0c3e81ed549bb6772e5e971761ab7d0cd"
+        "44d19ba06608897b4e7bc0928865169c750b9a25"
       ],
       "after": [
         "100644",
-        "44d19ba06608897b4e7bc0928865169c750b9a25"
+        "d193360f3d0858791fa48127b16e6c59bacf21d8"
       ]
     },
     {
       "file": "src/components/service-center/ChatComposer.tsx",
       "role": "application",
+      "before": [
+        "100644",
+        "9179a0666040cf2c8adcaa74b3818decc3c679c4"
+      ],
+      "after": [
+        "100644",
+        "d262ed88accf0eeef62210b8af9420568eda04c3"
+      ]
+    },
+    {
+      "file": "src/components/service-center/GuestAvatar.tsx",
+      "role": "application",
       "before": null,
       "after": [
         "100644",
-        "9179a0666040cf2c8adcaa74b3818decc3c679c4"
+        "30ffc7f74624e6332267281737df1590b8740185"
       ]
     },
     {
@@ -374,115 +113,170 @@
       "role": "application",
       "before": [
         "100644",
-        "e77d4e77b08636f05a988e960c2d8a897ec0814f"
-      ],
-      "after": [
-        "100644",
         "647478dff956cd66ab74d67e740febb7e1be7274"
+      ],
+      "after": [
+        "100644",
+        "704188102d60a548992a0074ffbd0429914fc732"
       ]
     },
     {
-      "file": "src/components/service-center/MerchantConversationTabs.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "797f546145adae0e418af5515274a58b443d372b"
-      ],
-      "after": null
-    },
-    {
-      "file": "src/components/service-center/MerchantGuestInboxStatus.tsx",
+      "file": "src/components/service-center/GuestMessageContent.tsx",
       "role": "application",
       "before": null,
       "after": [
         "100644",
-        "215d6b8e0ef9e139043d2c2cede938c598b58637"
+        "c9ce434e7da6b7efc1d4c1bfdad79a6f28f4dd13"
       ]
     },
     {
-      "file": "src/components/service-center/ServiceCenterSheet.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "14a56fec85ccab6e00b72745f195348431752316"
-      ],
-      "after": [
-        "100644",
-        "ef84ae7df283db319cb89e154b0d338e9ff09645"
-      ]
-    },
-    {
-      "file": "src/components/service-center/ServiceConversations.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "331395623a2827658d832d79613d63f8884cfa9e"
-      ],
-      "after": [
-        "100644",
-        "d9ef57c573a4163e5d9fea2c8574c82fb090a0df"
-      ]
-    },
-    {
-      "file": "src/components/service-center/useConversationViewport.ts",
+      "file": "src/components/support/ChatTranslation.tsx",
       "role": "application",
       "before": null,
       "after": [
         "100644",
-        "39f7df7b3530ef12b294f67c79e615fdfff666dd"
+        "a640df759c9fcdcf3c5126fe1e21b12ed92bee97"
       ]
     },
     {
-      "file": "src/components/service-center/useMerchantGuestInbox.ts",
+      "file": "src/components/support/SupportMessageContent.tsx",
+      "role": "application",
+      "before": [
+        "100644",
+        "bcadb56f5297882259c7fdf18e04b01015f95a75"
+      ],
+      "after": [
+        "100644",
+        "1eeac52ae77c5d82bd979fd3cbff42451fc59767"
+      ]
+    },
+    {
+      "file": "src/lib/chatAttachments.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "89edbcb846699ecdb6687452b07f1ebcab3b6a9c"
+      ]
+    },
+    {
+      "file": "src/lib/chatAttachments.ts",
       "role": "application",
       "before": null,
       "after": [
         "100644",
-        "868ab55f34aeb430b3be7cf33714f0cbae418c56"
+        "b55fd7c2f7374bd485d39689c12609978be249d9"
+      ]
+    },
+    {
+      "file": "src/lib/chatTranslation.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "ec0b85f4fdacbe43efdd279af1234f7e3ceb6bda"
+      ]
+    },
+    {
+      "file": "src/lib/chatTranslation.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "5ac976983174c7aa261a1f4bd627e4e6cde31387"
+      ]
+    },
+    {
+      "file": "src/lib/guestChatAttachments.server.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "0a69d7574a485515cbbedaabe4d448ab79586536"
+      ]
+    },
+    {
+      "file": "src/lib/guestChatAttachments.server.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "a9b13ce46b6b37c7c9aa57adb1cee450b1f729ac"
+      ]
+    },
+    {
+      "file": "src/lib/guestChatHandlers.server.ts",
+      "role": "application",
+      "before": [
+        "100644",
+        "1b5563790bac577a804b0c3205f4273093588431"
+      ],
+      "after": [
+        "100644",
+        "a728f64272a7b250bf9c884db6cd9ec13159a918"
+      ]
+    },
+    {
+      "file": "src/lib/guestChatPresentation.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "c90dfcd58d25e865ffaf0e5d994e585a1aff7c28"
+      ]
+    },
+    {
+      "file": "src/lib/guestChatPresentation.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "9147545555751d0a7200937b35ad8099ab6d80fe"
+      ]
+    },
+    {
+      "file": "src/lib/guestChatUploadRateLimit.server.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "545b4b716a060c361e530d5e23999e55e8e58933"
       ]
     },
     {
       "file": "src/lib/merchantConversationList.test.ts",
       "role": "verification",
-      "before": null,
-      "after": [
+      "before": [
         "100644",
         "dada78ff79799944b7b80ca6d360eb3474cf6043"
+      ],
+      "after": [
+        "100644",
+        "799f8a40c3463cd658d2a2b9ab400cf122467ec9"
       ]
     },
     {
       "file": "src/lib/merchantConversationList.ts",
       "role": "application",
-      "before": null,
-      "after": [
+      "before": [
         "100644",
         "6561299c1b0da8fba22957ae195231aec7ce36e9"
-      ]
-    },
-    {
-      "file": "src/lib/serviceSheetViewport.test.ts",
-      "role": "verification",
-      "before": null,
+      ],
       "after": [
         "100644",
-        "98256645a8dbd0a579bfbf070629bc09c481d5ca"
-      ]
-    },
-    {
-      "file": "src/lib/serviceSheetViewport.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "f9917791e01982ddaa8f6493cd190f6353002ae0"
+        "b3fa75825336345b1a40414c50df161bdbcf645c"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/merchantConversationList.test.ts",
-    "src/lib/serviceSheetViewport.test.ts",
+    "src/lib/chatAttachments.test.ts",
+    "src/lib/chatTranslation.test.ts",
+    "src/lib/guestChatAttachments.server.test.ts",
+    "src/lib/guestChatPresentation.test.ts",
     "src/lib/guestChatHandlers.server.test.ts",
-    "src/lib/personalGuestSession.test.ts"
+    "src/lib/merchantConversationList.test.ts",
+    "src/lib/merchantBusinessApiClient.test.ts",
+    "scripts/merchant-conversation-employee-frontend-contract.test.mjs"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {

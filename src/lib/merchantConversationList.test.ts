@@ -13,7 +13,7 @@ test("one chronological inbox keeps official support pinned and preserves each u
   const before = structuredClone({ accounts, guest });
   const rows = mergeMerchantConversations(accounts, [guest]);
   assert.deepEqual(rows.map(row => row.key), ["official", `guest:${id}`, "merchant:12345678"]);
-  assert.equal(rows[1].name, "游客12345678");
+  assert.equal(rows[1].name, "访客12345678");
   assert.equal(rows[1].preview, "Guest message");
   assert.deepEqual(rows.map(row => row.unreadCount), [2, 3, 2]);
   assert.deepEqual({ accounts, guest }, before, "rendering must not mutate either source");

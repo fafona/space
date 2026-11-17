@@ -12,6 +12,9 @@ import { getMerchantConversationFrontendAccess } from "@/lib/merchantConversatio
 import GuestChatPanel from "@/components/service-center/GuestChatPanel";
 import { useMerchantGuestInbox } from "@/components/service-center/useMerchantGuestInbox";
 import MerchantGuestInboxStatus from "@/components/service-center/MerchantGuestInboxStatus";
+import GuestAvatar from "@/components/service-center/GuestAvatar";
+import { useI18n } from "@/components/I18nProvider";
+import { ChatTranslationProvider, ChatTranslationToggle, TranslatedChatText } from "@/components/support/ChatTranslation";
 import { guestConversationId, mergeMerchantConversations } from "@/lib/merchantConversationList";
 import type {
   MerchantPeerContactSummary,
@@ -194,6 +197,8 @@ export default function MerchantEmployeeConversationPanel({
   permissions,
   onAuthorizationInvalid,
 }: MerchantEmployeeConversationPanelProps) {
+  const { locale } = useI18n();
+  const [translationEnabled,setTranslationEnabled]=useState(true);
   const access = useMemo(
     () => getMerchantConversationFrontendAccess(permissions),
     [permissions],
@@ -214,6 +219,8 @@ export default function MerchantEmployeeConversationPanel({
   const [mobile, setMobile] = useState(false);
   const guestInbox = useMerchantGuestInbox({ siteId, active: access.view, apiClient, onAuthorizationInvalid });
   const requestGenerationRef = useRef(0);
+  const busyRef = useRef(false);
+  useEffect(() => { busyRef.current = busy; }, [busy]);
   useEffect(() => {
     const query = window.matchMedia("(max-width: 767px)");
     const sync = () => setMobile(query.matches);
@@ -295,8 +302,16 @@ export default function MerchantEmployeeConversationPanel({
       return;
     }
     void refreshInbox();
+    // Replacing the refresh control must not leave account messages frozen.
+    // Keep the same visible-only cadence as guest conversations; never replay
+    // a send, and invalidate pre-send reads before applying a write response.
+    const resume = () => { if (document.visibilityState === "visible" && !busyRef.current) void refreshInbox(); };
+    const interval = setInterval(resume, 15000);
+    document.addEventListener("visibilitychange", resume);
     return () => {
       requestGenerationRef.current += 1;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", resume);
     };
   }, [access.view, refreshInbox]);
 
@@ -323,7 +338,7 @@ export default function MerchantEmployeeConversationPanel({
     subtitle: `账号 ${contact.merchantId}`, preview: contact.lastMessage?.text || "暂无消息。",
     updatedAt: contact.updatedAt, unread: isUnread(contact, currentMerchantId, peerLastRead),
     avatarLabel: (contact.merchantName || contact.merchantId).slice(0, 1), isOfficial: false,
-  })), guestInbox.threads);
+  })), guestInbox.threads, locale);
 
   useEffect(() => {
     if (selectedGuestId || mobile && !mobileThread) return;
@@ -399,6 +414,7 @@ export default function MerchantEmployeeConversationPanel({
 
   async function startConversation() {
     if (!access.start || !searchResult || busy) return;
+    requestGenerationRef.current += 1;
     setBusy(true);
     setError("");
     try {
@@ -432,6 +448,7 @@ export default function MerchantEmployeeConversationPanel({
     if (selectedGuestId) return;
     const nextText = draft.trim();
     if (!access.send || !activeContact || !nextText || busy) return;
+    requestGenerationRef.current += 1;
     setBusy(true);
     setError("");
     try {
@@ -468,7 +485,7 @@ export default function MerchantEmployeeConversationPanel({
   }
 
   return (
-    <section data-merchant-conversations className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+    <ChatTranslationProvider scope={`${siteId}:${selectedGuestId||selectedContactId}`} enabled={translationEnabled} active={access.view}><section data-merchant-conversations className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
       <header className={`${mobileThread ? "hidden md:flex" : "flex"} flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4`}>
         <div>
           <h2 className="text-lg font-semibold text-slate-950">会话</h2>
@@ -476,14 +493,7 @@ export default function MerchantEmployeeConversationPanel({
             客户、商户和游客消息统一显示；Faolla 官方支持会话不会显示在员工工作台。
           </p>
         </div>
-        <button
-          type="button"
-          className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-45"
-          disabled={loading || busy}
-          onClick={() => { void refreshInbox(); void guestInbox.refresh(); }}
-        >
-          {loading ? "刷新中..." : "刷新"}
-        </button>
+        <ChatTranslationToggle enabled={translationEnabled} onChange={setTranslationEnabled}/>
       </header>
 
       {access.search ? (
@@ -569,9 +579,9 @@ export default function MerchantEmployeeConversationPanel({
                   }`}
                   onClick={() => { const id = guestConversationId(contact.key); setSelectedGuestId(id); if (!id) setSelectedContactId(contact.key.slice("merchant:".length)); setMobileThread(true); }}
                 >
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-900 text-xs font-bold text-white">
+                  {contact.guestNumber?<GuestAvatar className="h-9 w-9"/>:<span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-900 text-xs font-bold text-white">
                     {contact.avatarLabel}
-                  </span>
+                  </span>}
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center justify-between gap-2">
                       <span className="truncate text-sm font-semibold text-slate-900">
@@ -625,7 +635,7 @@ export default function MerchantEmployeeConversationPanel({
                             : "border border-slate-200 bg-white text-slate-800"
                         }`}
                       >
-                        <div className="whitespace-pre-wrap break-words">{message.text}</div>
+                        <div className="whitespace-pre-wrap break-words"><TranslatedChatText value={message.text}/></div>
                         <div className={`mt-1 text-[10px] ${mine ? "text-slate-300" : "text-slate-400"}`}>
                           {formatDateTime(message.createdAt)}
                         </div>
@@ -678,6 +688,6 @@ export default function MerchantEmployeeConversationPanel({
           )}
         </div>
       </div>
-    </section>
+    </section></ChatTranslationProvider>
   );
 }

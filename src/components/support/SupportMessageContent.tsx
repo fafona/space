@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { TranslatedChatText } from "./ChatTranslation";
 import { normalizePublicAssetUrl } from "@/lib/publicAssetUrl";
 import {
   normalizeSupportLinkHref,
@@ -14,7 +15,7 @@ export type SupportMessageImageActivatePayload = {
   linkUrl: string;
 };
 
-function renderSupportMessageText(value: string) {
+export function renderSupportMessageText(value: string) {
   const text = String(value ?? "");
   if (!text) return text;
   const parts: ReactNode[] = [];
@@ -76,12 +77,11 @@ export default function SupportMessageContent({
 
   if (!attachmentPreview) {
     return (
-      <span
+      <TranslatedChatText value={value}
         className="faolla-support-message-text inline whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[15px] leading-[1.35]"
-        data-no-translate="1"
       >
-        {renderSupportMessageText(value)}
-      </span>
+        {renderSupportMessageText}
+      </TranslatedChatText>
     );
   }
 
