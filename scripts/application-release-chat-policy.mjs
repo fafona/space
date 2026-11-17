@@ -18,6 +18,7 @@ export const CHAT_CONTINUATION_FILES=Object.freeze([
  "scripts/application-release-authority.mjs",
  "scripts/application-release-audit.mjs",
  "scripts/online-traffic-release.mjs",
+ "scripts/online-unpublished-candidate.test.mjs",
  "scripts/online-release-retention-writer.mjs"
 ]);
 const need=(v,c)=>{if(!v)throw Error('chat_continuation_'+c);};
