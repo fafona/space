@@ -39,6 +39,9 @@ const same=(a,b,code)=>need(isDeepStrictEqual(a,b),code);
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const read=file=>JSON.parse(bookingHostRead(file));
 const bytesIdentity=stat=>['dev','ino','mode','uid','nlink','size','mtimeNs','ctimeNs'].map(key=>String(stat[key]));
+export function assertRetainedObservationBinding(initial,current){
+ same(current.state,initial.state,'state');same(current.active,initial.active,'active');
+}
 
 // Test composition only: no production path, permission, writer or caller JSON.
 export async function executeRetainedDiagnostic(operations,{emit,clock}={}){
@@ -100,7 +103,9 @@ export async function runRetainedDiagnostic(){
     witness=fileWitness([
      ...[OP+'/state.json',ROOT+'/active.json','/var/lib/faolla-online-retention.head.json','/root/.pm2/dump.pm2',OP+'/attendance-build-proof.json',OP+'/runtime.json',state.directory+'/.env.local',gateFile].map(file=>({file})),
      ...WEB_RELEASE_FILES.flatMap(file=>[{file:WEB_RELEASE_PROXY+'/'+file,privateMode:false},{file:OP+'/before-'+file},{file:OP+'/after-'+file}]),
-    ]);return{candidateState:'rolled-back',actualActiveTarget:active.target,originalPublicationAuditAdmissible:false};
+    ]);
+    assertRetainedObservationBinding({state,active},{state:read(OP+'/state.json'),active:read(ROOT+'/active.json')});
+    witness();return{candidateState:'rolled-back',actualActiveTarget:active.target,originalPublicationAuditAdmissible:false};
    },
    history:async()=>{
     historyObservation=captureApplicationHistoryObservation();history=historyObservation.history;certificate=history.entries.at(-1);

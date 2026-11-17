@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import http from 'node:http';
-import {RETAINED_DIAGNOSTIC,RETAINED_DIAGNOSTIC_STEPS,executeRetainedDiagnostic,assertRetainedDiagnosticInvocation,probeRetainedVersion} from './application-release-retained-diagnostic.mjs';
+import {RETAINED_DIAGNOSTIC,RETAINED_DIAGNOSTIC_STEPS,executeRetainedDiagnostic,assertRetainedDiagnosticInvocation,assertRetainedObservationBinding,probeRetainedVersion} from './application-release-retained-diagnostic.mjs';
 const revision='a'.repeat(40),entry='/var/lib/faolla-online-code/'+revision+'/scripts/application-release-retained-diagnostic.mjs';
 function operations(failure,{verifyFailure=false}={}){
  const events=[],original=Error('original-private-value');let phase;
@@ -23,6 +23,13 @@ test('all independent observations and fresh verifications complete without issu
  for(const flag of ['publicationAuthority','publicationCompleted','originalPublicationAuditAdmissible','businessDataWritten','processControlPerformed','routeChanged','existingBuildModified','mailEnabled'])assert.equal(value[flag],false,flag);
  assert.deepEqual(Object.keys(value.checks),RETAINED_DIAGNOSTIC_STEPS);
  assert.ok(records.every(row=>row.scope==='retained'&&row.publicationAuthority===false&&row.publicationCompleted===false));
+});
+test('state changes between first read and immutable file capture cannot bind a stale observation to newer bytes',()=>{
+ const initial={state:{target:RETAINED_DIAGNOSTIC.target,status:'rolled-back'},active:{target:RETAINED_DIAGNOSTIC.baseline}};
+ assertRetainedObservationBinding(initial,structuredClone(initial));
+ for(const change of [value=>value.state.status='active',value=>value.active.target=RETAINED_DIAGNOSTIC.target,value=>value.state.extra='changed']){
+  const current=structuredClone(initial);change(current);assert.throws(()=>assertRetainedObservationBinding(initial,current),/application_retained_diagnostic_(?:state|active)/);
+ }
 });
 for(const phase of RETAINED_DIAGNOSTIC_STEPS)for(const verifyFailure of [false,true])test('an isolated '+phase+(verifyFailure?' witness':' check')+' refusal stops without a retry or hidden success',async()=>{
  const f=operations(phase,{verifyFailure}),records=[];
