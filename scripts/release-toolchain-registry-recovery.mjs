@@ -9,6 +9,7 @@ import {isDeepStrictEqual} from 'node:util';
 import {REGISTRY_RECOVERY as P,registryAdapterContext,registryRecoveryHash as hash,assertRegistryRecoveryHistory,assertRegistryRecoverySourceDelta} from './release-toolchain-registry-recovery-policy.mjs';
 import {collectRemoteReleaseReview,assertReviewFresh,inspectPinnedExecutionSource,parseSourceTree,sourceGit,ownedReleasePath} from './release-toolchain-source.mjs';
 import {withPinnedFormalPm2Process} from './release-toolchain-proc-witness.mjs';
+import {withRetainedApplicationAttestation} from './release-toolchain-application-attestation.mjs';
 import {collectFormalBookingPm2Registry} from './release-toolchain-pm2-observation.mjs';
 import {normalizeResurrectedRetirementProcess as normalize} from './release-toolchain-process-observation.mjs';
 import {readOnlineRetentionHistory,buildOnlineRetentionPreparation,buildOnlineRetentionReceipt} from './online-release-retention.mjs';
@@ -72,7 +73,7 @@ export async function inspectRegistryRecovery(){
 }
 export async function publishRegistryRecovery(){
  const admitted=await admission('publish');
- return withPinnedFormalPm2Process(verifyDaemon=>withOnlineRetentionLocks(async lock=>{
+ return withPinnedFormalPm2Process(verifyDaemon=>withRetainedApplicationAttestation(()=>withOnlineRetentionLocks(async lock=>{
   const directory=ROOT+'/'+revision;need(!fs.existsSync(directory),'attempt_replay_forbidden');
   const history=readOnlineRetentionHistory(),original=physical(),gateText=bookingHostRead(HANDOFF+'/worker-enabled.json'),gate=JSON.parse(gateText);
   need(boot()===P.bootId&&hash(gateText)===P.gateSha256&&hash(bookingHostRead(RELEASE+'/active.json'))===P.activeSha256&&hash(bookingHostRead(RELEASE+'/'+P.target+'/state.json'))===P.failedStateSha256,'incident');
@@ -113,14 +114,14 @@ export async function publishRegistryRecovery(){
    check();same(readOnlineRetentionHistory(),committed);need(await verifyCapacityPm2Dump(daemon,bootId,registry,persisted),'persistence');assertBookingWorkerExecutionRevision({gate,history:committed,toolRevision:revision});assertBookingAtomicWorkerGate({gate,history:committed,actualActive:read(RELEASE+'/active.json'),current:physical().processes,toolRevision:gate.toolRevision});
    const completed={kind:'booking-registry-recovery-completed',revision,certificateSha256:retentionHash(receipt.certificate),workerPid:settled.worker.pid,workerRestarts:settled.worker.pm2_env.restart_time,naturalCycle:natural,publicProof,originalGateUnchanged:true,websiteUnchanged:true,otherProcessesUnchanged:true,applicationRebuilt:false,mailEnabled:false,at:new Date().toISOString()};seal(directory,'completed.json',completed);return completed;
   }catch(error){seal(directory,'unconfirmed.json',{kind:'booking-registry-recovery-unconfirmed',revision,phase,attempted,certificateCommitted:!!committed,errorSha256:hash(String(error?.message)),automaticRetryAllowed:false,mailEnabled:false,at:new Date().toISOString()});throw error;}
- }));
+ })));
 }
 // Read-only re-audit, or completion-only sealing after an interrupted observer.
 // Neither action can invoke a restart, persist a dump, change history or retry
 // a failed mutation. A complete committed certificate is mandatory first.
 export async function auditRegistryRecovery(action='audit'){
  need(['audit','finish'].includes(action),'action');const admitted=await admission(action);
- const observe=async()=>withPinnedFormalPm2Process(async verifyDaemon=>{
+ const observe=async()=>withPinnedFormalPm2Process(verifyDaemon=>withRetainedApplicationAttestation(async()=>{
   const directory=ROOT+'/'+revision,intent=read(directory+'/intent.json'),history=readOnlineRetentionHistory(),certificate=history.entries.at(-1),actual=physical(),gate=read(HANDOFF+'/worker-enabled.json');
   need(intent.kind===P.kind&&intent.revision===revision&&intent.context.inventorySha256===admitted.inventory.inventorySha256&&history.entries.length===66&&certificate.kind==='booking-worker'&&certificate.toolRevision===revision&&certificate.previousSha256===P.historyHead,'committed_recovery');
   same(certificate.workerRelease,intent.context);same(actual.processes,certificate.processes);
@@ -139,7 +140,7 @@ export async function auditRegistryRecovery(action='audit'){
    else seal(directory,'completed.json',proof);
   }
   return{...proof,completionReceiptPresent:fs.existsSync(directory+'/completed.json'),readOnly:action==='audit'};
- });
+ }));
  return action==='finish'?withOnlineRetentionLocks(observe):observe();
 }
 function processPeer(pid){const p=captureProcessFact(pid),s=fs.statSync('/proc/'+pid+'/exe',{bigint:true});return{pid,uid:p.uid,startTicks:p.startTicks,bootId:boot(),executable:p.executable,executableIdentity:['dev','ino','size','mtimeNs','ctimeNs','nlink','uid','mode'].map(k=>String(s[k])).join(':')};}

@@ -31,7 +31,7 @@ test('exact source allowlist rejects application/dependency/SQL and unrecognized
 test('local imports and unreviewed calls cannot acquire formal-host execution authority',async()=>{
  await assert.rejects(inspectRegistryRecovery());await assert.rejects(publishRegistryRecovery());await assert.rejects(auditRegistryRecovery());await assert.rejects(auditRegistryRecovery('finish'));
  const source=readFileSync(new URL('./release-toolchain-registry-recovery.mjs',import.meta.url),'utf8');
- for(const token of ['withPinnedFormalPm2Process','withOnlineRetentionLocks','collectRemoteReleaseReview','assertRegistryRecoverySourceDelta','verifyWorkerEntryCiArtifact','captureFileContinuity','assertBookingReadyWorkerRawTransition','assertCompletePm2DumpSet','readNaturalWorkerCycle','automaticRetryAllowed:false','attempt_replay_forbidden'])assert.ok(source.includes(token),token);
+ for(const token of ['withPinnedFormalPm2Process','withRetainedApplicationAttestation','withOnlineRetentionLocks','collectRemoteReleaseReview','assertRegistryRecoverySourceDelta','verifyWorkerEntryCiArtifact','captureFileContinuity','assertBookingReadyWorkerRawTransition','assertCompletePm2DumpSet','readNaturalWorkerCycle','automaticRetryAllowed:false','attempt_replay_forbidden'])assert.ok(source.includes(token),token);
  assert.doesNotMatch(source,/runMerchantBookingAutomationForAllSites|\.tick\(|process\.kill|\['restart'|\['delete'|RESEND_API_KEY\s*=/);
 });
 test('mandatory bounded Python transport and real Linux peer regressions',()=>{
