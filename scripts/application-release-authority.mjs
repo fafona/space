@@ -14,6 +14,8 @@ import {inspectReviewedNavigationSource,assertNavigationPreserved} from './appli
 import {NAVIGATION_TARGET,NAVIGATION_BASELINE} from './application-release-navigation-policy.mjs';
 import {inspectReviewedStartupSource,assertStartupPreserved} from './application-release-startup-source.mjs';
 import {STARTUP_TARGET,STARTUP_BASELINE} from './application-release-startup-policy.mjs';
+import {inspectReviewedChatSource,assertChatPreserved} from './application-release-chat-source.mjs';
+import {CHAT_TARGET,CHAT_BASELINE} from './application-release-chat-policy.mjs';
 const active=new AsyncLocalStorage(),issued=new WeakSet(),ROOT='/var/lib/faolla-online-release',REPOSITORY='/www/wwwroot/merchant-space';
 const need=(value,reason)=>{if(!value)throw Error('application_release_authority_'+reason);};
 export function assertApplicationPriorStates(rows){
@@ -143,4 +145,31 @@ export function reviewedNavigationApplicationSource(){
  if(!context.readOnly)reviewedApplicationExecution(NAVIGATION_TARGET,NAVIGATION_TARGET);
  else need(isDeepStrictEqual(priorStates(NAVIGATION_TARGET),context.prior),'prior_states_changed');
  return context.navigation;
+}
+
+// Exact retained-chat context; the ordinary and older contexts are unchanged.
+export async function withReviewedChatExecution({lock,readOnly=false},work){
+ need(typeof work==='function'&&typeof readOnly==='boolean','chat_invocation');
+ if(!readOnly)assertOnlineRetentionHeldLocks(lock);
+ const source=await inspectReviewedChatSource();
+ need(readOnly?source.action==='audit':['run','recover'].includes(source.action),'chat_action');
+ const target=CHAT_TARGET,baseline=CHAT_BASELINE;
+ const manifest=JSON.parse(sourceGit(REPOSITORY,['show',target+':'+APPLICATION_RELEASE_MANIFEST]));
+ const proof=assertApplicationReleaseManifest(manifest,{baseline,baselineRows:parseSourceTree(sourceGit(REPOSITORY,['ls-tree','-r','-z',baseline])),targetRows:source.application.rows});
+ assertRecordedSchemaDatabase(manifest);
+ assertApplicationReleasePackage(JSON.parse(sourceGit(REPOSITORY,['show',baseline+':package.json'])),JSON.parse(sourceGit(REPOSITORY,['show',target+':package.json'])));
+ const prior=priorStates(target),state=JSON.parse(bookingHostRead(ROOT+'/'+target+'/state.json'));
+ need(state.applicationPriorStatesSha256===prior.sha256,'prior_states_changed');
+ assertChatPreserved({originalState:false});
+ const context={target,lock,prior,readOnly,chat:source,public:Object.freeze({kind:APPLICATION_RELEASE_LANE,target,baseline,
+  manifestSha256:proof.manifestSha256,priorStatesSha256:prior.sha256,legacyStatesPreserved:true,legacyCandidatesResumed:false,
+  review:source.review,reviewedRevision:source.toolRevision,retainedChat:true})};
+ issued.add(context);return active.run(context,()=>work(context.public));
+}
+export function reviewedChatApplicationSource(){
+ const context=active.getStore();if(!context?.chat)return null;
+ need(issued.has(context)&&context.target===CHAT_TARGET,'chat_context');
+ if(!context.readOnly)reviewedApplicationExecution(CHAT_TARGET,CHAT_TARGET);
+ else need(isDeepStrictEqual(priorStates(CHAT_TARGET),context.prior),'prior_states_changed');
+ return context.chat;
 }

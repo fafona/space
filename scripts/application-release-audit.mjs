@@ -10,7 +10,8 @@ import {APPLICATION_RELEASE_LANE,APPLICATION_RELEASE_MANIFEST,assertApplicationR
 import {applicationPublicationProof} from './application-release-publication-proof.mjs';
 import {inspectPinnedExecutionSource,parseSourceTree,sourceGit,ownedReleasePath} from './release-toolchain-source.mjs';
 import {captureApplicationHistoryObservation} from './application-release-history-observation.mjs';
-import {reviewedNavigationApplicationSource,reviewedStartupApplicationSource} from './application-release-authority.mjs';
+import {reviewedNavigationApplicationSource,reviewedStartupApplicationSource,reviewedChatApplicationSource} from './application-release-authority.mjs';
+import {chatCycleAfter} from './application-release-chat-policy.mjs';
 import {withApplicationCliLifetime} from './application-release-cli-lifetime.mjs';
 import {observeApplicationFinalization} from './application-release-finalization-diagnostics.mjs';
 import {inspectOnlineRetentionWindow} from './online-release-retention-policy.mjs';
@@ -36,7 +37,7 @@ export async function observeApplicationRelease(target,{requireCompletion=true}=
  return observeApplicationFinalization(target,'audit',async mark=>{
  mark('audit-source');
  const source=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
- const retained=reviewedNavigationApplicationSource()??reviewedStartupApplicationSource();
+ const retained=reviewedNavigationApplicationSource()??reviewedStartupApplicationSource()??reviewedChatApplicationSource();
  need(source==='/var/lib/faolla-online-code/'+target||retained?.target===target&&source===retained.tool.directory,'source');
  const tool=retained?.application??inspectPinnedExecutionSource({revision:target,directory:source});
  return withPinnedFormalPm2Process(async verify=>{
@@ -88,7 +89,7 @@ export async function observeApplicationRelease(target,{requireCompletion=true}=
   const verifyUnchanged=()=>{historyObservation.verify();verifyRuntime();};
   mark('audit-public-probe');const publicProof=await proveRecoveryTargets({origins:['https://faolla.com','https://launch.faolla.com'],target,operationId:randomUUID(),verify:verifyUnchanged,deadlineAtMs:Date.now()+30000});
   mark('audit-worker-cycles');
-  const cycle=readNaturalWorkerCycle(worker,Date.parse(certificate.completedAt),2);
+  const cycle=reviewedChatApplicationSource()?readNaturalWorkerCycle(worker,chatCycleAfter(state,certificate),2):readNaturalWorkerCycle(worker,Date.parse(certificate.completedAt),2);
   need(cycle,'worker_cycles_pending');verifyUnchanged();
   if(requireCompletion)need(state.applicationCompletion.workerPid===worker.pid,'completion_worker');
   mark('audit-history-final');historyObservation.finish();verifyRuntime();
@@ -96,7 +97,7 @@ export async function observeApplicationRelease(target,{requireCompletion=true}=
    manifestSha256:proof.manifestSha256,workerPid:worker.pid,naturalCycle:cycle,publicProof,savedProcessConfigurationVerified:true,
    rollbackRetained:true,otherProcessesUnchanged:true,businessDataWrittenByAudit:false,mailEnabled:false,recordedSchema,at:new Date().toISOString()};
  });
- });
+ },{emit:reviewedChatApplicationSource()?value=>console.error(JSON.stringify(value)):undefined});
 }
 if(process.argv[1]&&pathToFileURL(path.resolve(process.argv[1])).href===import.meta.url){
  const [target,...extra]=process.argv.slice(2);
