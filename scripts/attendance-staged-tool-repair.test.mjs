@@ -70,7 +70,8 @@ test('real static closure includes every transitive local import according to th
   assert.ok(seen.has('scripts/release-toolchain-worker-release-contract.mjs'));
   for(const name of ['application-release-policy','release-toolchain-source'])assert.ok(seen.has('scripts/'+name+'.mjs'),name);
   assert.ok(seen.has('scripts/release-toolchain-host-reboot-contract.mjs'));
-  assert.equal(seen.size,28);
+  assert.ok(seen.has('scripts/release-toolchain-registry-recovery-policy.mjs'));
+  assert.equal(seen.size,29);
 });
 
 test('closure follows inline/multiline static imports, reexports and cycles but refuses escapes', () => {

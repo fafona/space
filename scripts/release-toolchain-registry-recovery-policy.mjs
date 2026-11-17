@@ -46,6 +46,8 @@ export const REGISTRY_RECOVERY_FILES=Object.freeze([
  'scripts/release-toolchain-worker-release-contract.mjs',
  'scripts/release-toolchain-worker-release-ci.mjs',
  'scripts/release-toolchain-pm2-real-acceptance.mjs',
+ 'scripts/attendance-staged-tool-repair.test.mjs',
+ 'scripts/online-unpublished-candidate.test.mjs',
  'docs/booking-registry-capacity-recovery-20261117.md',
 ]);
 export function assertRegistryRecoverySourceDelta(before,after){
