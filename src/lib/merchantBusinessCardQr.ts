@@ -32,7 +32,8 @@ export type BusinessCardQrMatrix = {
 };
 
 // Small H-level logo badge, never covering a functional module (including central alignment).
-// Dense versions may need a slight offset. Only a fixed built-in vector is permitted inside.
+// Dense versions may need a slight offset. Only built-in vectors or normalized,
+// bounded PNG data are permitted inside; neither can cover structural modules.
 export function businessCardQrIconBox(matrix: BusinessCardQrMatrix, expanded = false): { row: number; col: number; size: number } | null {
   for (let size = Math.min(11, Math.floor(matrix.size * (expanded ? 0.25 : 0.18))) | 1; size >= 3; size -= 2) {
     let best: { row: number; col: number; size: number; distance: number } | undefined;
@@ -124,10 +125,13 @@ export function renderBusinessCardQrSvg(
   const escapedCaption = caption.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
   // Caption sits below the full four-module quiet zone; it never covers QR modules.
   const captionSvg = caption ? `<text x="${extent / 2}" y="${extent * 1.08}" text-anchor="middle" dominant-baseline="middle" font-family="Arial, Microsoft YaHei, sans-serif" font-size="${fontSize}" fill="${color}">${escapedCaption}</text>` : "";
-  const expandedIcon = /^(studio|industry)-/.test(decoration.icon);
-  const badge = decoration.icon !== "none" ? businessCardQrIconBox(matrix, expandedIcon) : null;
+  const image = decoration.iconImageDataUrl;
+  const expandedIcon = !image && /^(studio|industry)-/.test(decoration.icon);
+  const badge = image || decoration.icon !== "none" ? businessCardQrIconBox(matrix, expandedIcon) : null;
   const iconColor = decoration.iconFollowColor ? color : decoration.iconColor;
-  const iconSvg = badge ? `<g data-qr-icon="${decoration.icon}"><rect x="${badge.col + 4}" y="${badge.row + 4}" width="${badge.size}" height="${badge.size}" fill="${background}"/>${renderBusinessCardQrIcon(decoration.icon, iconColor).replace('<svg ', `<svg x="${badge.col + 4.45}" y="${badge.row + 4.45}" width="${badge.size - 0.9}" height="${badge.size - 0.9}" `)}</g>` : "";
+  const artwork = badge && image ? `<image href="${image}" x="${badge.col + 4.45}" y="${badge.row + 4.45}" width="${badge.size - 0.9}" height="${badge.size - 0.9}" preserveAspectRatio="xMidYMid meet"/>`
+    : badge ? renderBusinessCardQrIcon(decoration.icon, iconColor).replace('<svg ', `<svg x="${badge.col + 4.45}" y="${badge.row + 4.45}" width="${badge.size - 0.9}" height="${badge.size - 0.9}" `) : "";
+  const iconSvg = badge ? `<g data-qr-icon="${image ? "uploaded" : decoration.icon}"><rect x="${badge.col + 4}" y="${badge.row + 4}" width="${badge.size}" height="${badge.size}" fill="${background}"/>${artwork}</g>` : "";
   const finderSvg = roundedFinder ? [[4, 4], [matrix.size - 3, 4], [4, matrix.size - 3]].map(([x, y]) => {
     const radius = requestedStyle === "finder-soft-ring" ? 0.8 : 1.7;
     return `<g data-qr-finder="rounded"><rect x="${x}" y="${y}" width="7" height="7" rx="${radius}" fill="${color}"/><rect x="${x + 1}" y="${y + 1}" width="5" height="5" rx="${radius * 0.7}" fill="${background}"/><rect x="${x + 2}" y="${y + 2}" width="3" height="3" rx="${radius * 0.4}" fill="${color}"/></g>`;

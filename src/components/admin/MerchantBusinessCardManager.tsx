@@ -2033,6 +2033,7 @@ export default function MerchantBusinessCardManager({
   const [draftShareCode, setDraftShareCode] = useState(() => createMerchantBusinessCardShareKeyCode());
   const [editorOpen, setEditorOpen] = useState(false);
   const [qrExportSession, setQrExportSession] = useState<BusinessCardQrExportSession | null>(null);
+  const [qrImageProcessing, setQrImageProcessing] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewAsset, setPreviewAsset] = useState<MerchantBusinessCardAsset | null>(null);
@@ -2327,7 +2328,7 @@ export default function MerchantBusinessCardManager({
   // Keep image and its frame geometry together until the new SVG is decoded.
   // QR position/size and all non-QR edits still respond immediately.
   const qrDisplayDraft = qrDisplayPreview ? { ...draft, qr: { ...draft.qr, ...qrDisplayPreview.appearance } } : draft;
-  const qrReadyForCurrentDraft = !invalidWebsiteAddress && (!draft.showQr || !!qrCodeUrl);
+  const qrReadyForCurrentDraft = !qrImageProcessing && !invalidWebsiteAddress && (!draft.showQr || !!qrCodeUrl);
 
   useEffect(() => {
     clearNumberInputDraft(TYPOGRAPHY_FONT_SIZE_INPUT_KEY);
@@ -4450,6 +4451,7 @@ export default function MerchantBusinessCardManager({
                       </div>
                       <BusinessCardQrControls
                         targetUrl={qrTargetUrl}
+                        onImageProcessingChange={setQrImageProcessing}
                         {...draft.qr}
                         onChange={(patch) => applyDraft((current) => ({ ...current, qr: { ...current.qr, ...patch } }))}
                         exportDisabledReason={invalidWebsiteAddress ? "请先填写有效的网站地址。" : usesContactPage && (!editingCard?.shareKey || !businessCardUsesContactPage(editingCard) || scanTargetChanged) ? "请先生成并保存联系卡，确保二维码链接生效后再导出。" : ""}

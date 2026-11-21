@@ -209,6 +209,9 @@ jobs:
       - name: Unified User Login Browser Journeys
         run: node --test --test-concurrency=1 scripts/unified-user-login-browser-acceptance.mjs scripts/public-utility-controls-browser-acceptance.mjs
 
+      - name: Business Card QR Image Upload Browser Journeys
+        run: node --test scripts/business-card-qr-image-browser-acceptance.mjs
+
   qr-database:
     name: QR Atomic PostgreSQL Acceptance
     runs-on: ubuntu-latest

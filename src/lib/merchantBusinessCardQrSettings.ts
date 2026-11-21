@@ -1,5 +1,6 @@
 // Lightweight saved-setting normalization. Artwork belongs to deferred renderers.
 import { BUSINESS_CARD_QR_FRAME_IDS, BUSINESS_CARD_QR_ICON_IDS } from "./merchantBusinessCardQrPresetIds";
+import { normalizeBusinessCardQrImage } from "./merchantBusinessCardQrImage";
 import type { BusinessCardQrDecoration, BusinessCardQrFrame, BusinessCardQrIcon } from "./merchantBusinessCardQrDecorations";
 export type { BusinessCardQrDecoration, BusinessCardQrFrame, BusinessCardQrIcon } from "./merchantBusinessCardQrDecorations";
 
@@ -47,9 +48,11 @@ export const normalizeBusinessCardQrIcon = (v: unknown): BusinessCardQrIcon => B
 export const normalizeBusinessCardQrFrame = (v: unknown): BusinessCardQrFrame => BUSINESS_CARD_QR_FRAME_IDS.find(id => id === v) ?? "none";
 const hex = (v: unknown, fallback: string) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : fallback;
 const bounded = (v: unknown, fallback: number, min: number, max: number) => typeof v === "number" && Number.isFinite(v) ? Math.max(min, Math.min(max, Math.round(v))) : fallback;
-export function normalizeBusinessCardQrDecoration(input: BusinessCardQrDecoration | null = {}): Required<BusinessCardQrDecoration> {
+export function normalizeBusinessCardQrDecoration(input: BusinessCardQrDecoration | null = {}): Required<Omit<BusinessCardQrDecoration, "iconImageDataUrl">> & Pick<BusinessCardQrDecoration, "iconImageDataUrl"> {
   const v = input && typeof input === "object" ? input : {};
+  const image = normalizeBusinessCardQrImage(v.iconImageDataUrl);
   return { icon: normalizeBusinessCardQrIcon(v.icon), iconColor: hex(v.iconColor, "#000000"), iconFollowColor: v.iconFollowColor !== false,
     frame: normalizeBusinessCardQrFrame(v.frame), frameColor: hex(v.frameColor, "#1e3a8a"), frameBackgroundColor: hex(v.frameBackgroundColor, "#ffffff"),
-    frameWidth: bounded(v.frameWidth, 2, 1, 4), framePadding: bounded(v.framePadding, 16, 8, 32) };
+    frameWidth: bounded(v.frameWidth, 2, 1, 4), framePadding: bounded(v.framePadding, 16, 8, 32),
+    ...(image ? { iconImageDataUrl: image } : {}) };
 }
