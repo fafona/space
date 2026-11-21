@@ -10,7 +10,7 @@ import { chromium } from "playwright";
 
 // Real shared QR controls, normalizer, image decoder, preview and exporter.
 // Synthetic draft persistence only; no merchant credentials, API calls or data.
-test("QR center uploads work in both card modes on desktop and mobile", { timeout: 120_000 }, async () => {
+test("QR center uploads and size sliders work in both card modes on desktop and mobile", { timeout: 120_000 }, async () => {
   const bundle = await build({ stdin: { contents: `import React,{useEffect,useState}from'react';import{createRoot}from'react-dom/client';
     import {BusinessCardQrControls}from'./src/components/admin/BusinessCardQrControls';
     import {useBusinessCardQrPreview}from'./src/components/admin/useBusinessCardQrPreview';
@@ -51,7 +51,21 @@ test("QR center uploads work in both card modes on desktop and mobile", { timeou
         await page.addStyleTag({ content: css });
         await page.addScriptTag({ content: bundle.outputFiles[0].text });
         const input = page.getByLabel("上传二维码中心图片", { exact: true });
+        const scale = page.getByRole("slider", { name: "中心图案大小", exact: true });
+        const waitForScale = value => page.waitForFunction(expected => {
+          const source = document.querySelector('img[alt="二维码实时预览"]')?.src;
+          if (!source) return false;
+          const svg = new DOMParser().parseFromString(decodeURIComponent(source.slice(source.indexOf(',') + 1)), 'image/svg+xml');
+          const center = svg.querySelector('[data-qr-icon]');
+          return !!center && Number(center.getAttribute('data-qr-icon-scale') ?? 100) === expected;
+        }, value);
+        const artworkWidth = () => page.evaluate(() => {
+          const source = document.querySelector('img[alt="二维码实时预览"]').src;
+          const svg = new DOMParser().parseFromString(decodeURIComponent(source.slice(source.indexOf(',') + 1)), 'image/svg+xml');
+          return Number(svg.querySelector('[data-qr-icon] image').getAttribute('width'));
+        });
         await input.waitFor({ state: "attached" });
+        assert.equal(await scale.isDisabled(), true, "select a center before resizing it");
         await page.evaluate(() => {
           const original = Image.prototype.decode;
           let delayOnce = true;
@@ -77,7 +91,21 @@ test("QR center uploads work in both card modes on desktop and mobile", { timeou
           return { width: img.width, height: img.height, corner: ctx.getImageData(0,0,1,1).data[3], middle: ctx.getImageData(64,64,1,1).data[3] };
         });
         assert.deepEqual(alpha, { width: 128, height: 128, corner: 0, middle: 255 });
+        assert.equal(await scale.inputValue(), "130", "uploaded artwork defaults to a larger size");
+        await waitForScale(130);
+        const recommendedWidth = await artworkWidth();
+        await scale.press("Home");
+        await waitForScale(50);
+        const smallWidth = await artworkWidth();
+        assert.ok(smallWidth < recommendedWidth, `slider changes the actual preview artwork: ${smallWidth} < ${recommendedWidth}`);
         await page.getByRole("button", { name: "保存名片", exact: true }).click();
+        await page.getByRole("button", { name: "重新打开名片", exact: true }).click();
+        assert.equal(await scale.inputValue(), "50");
+        await scale.press("End");
+        await waitForScale(150);
+        assert.ok(await artworkWidth() > recommendedWidth, "safe maximum is visibly larger than the recommendation");
+        await page.getByRole("button", { name: "保存名片", exact: true }).click();
+        assert.equal(await page.evaluate(() => JSON.parse(window.__saved).qr.iconScale), 150);
         await input.setInputFiles([]);
         assert.equal(await page.evaluate(() => window.__draft.qr.iconImageDataUrl), first, "picker cancellation must not discard a logo or close the editor");
         await input.setInputFiles({ name: "unsafe.svg", mimeType: "image/svg+xml", buffer: Buffer.from('<svg onload="alert(1)"/>') });
@@ -85,6 +113,8 @@ test("QR center uploads work in both card modes on desktop and mobile", { timeou
         assert.equal(await page.evaluate(() => window.__draft.qr.iconImageDataUrl), first);
         await page.getByRole("button", { name: "重新打开名片", exact: true }).click();
         assert.equal(await page.getByAltText("已上传的二维码中心图片").getAttribute("src"), first);
+        assert.equal(await scale.inputValue(), "150");
+        await waitForScale(150);
         for (const format of ["svg", "2048"]) {
           await page.getByLabel("二维码导出格式", { exact: true }).selectOption(format);
           const downloading = page.waitForEvent("download");
@@ -99,9 +129,11 @@ test("QR center uploads work in both card modes on desktop and mobile", { timeou
           await input.setInputFiles({ name, mimeType, buffer });
           await page.getByRole("status").filter({ hasText: "图片已加入二维码预览" }).waitFor();
           assert.ok((await page.evaluate(() => window.__draft.qr.iconImageDataUrl)).startsWith("data:image/png;base64,"));
+          assert.equal(await scale.inputValue(), "150", "replacement keeps the user's size setting");
         }
         await page.getByRole("button", { name: "移除图片", exact: true }).click();
         assert.equal(await page.getByAltText("已上传的二维码中心图片").count(), 0);
+        assert.equal(await scale.isDisabled(), true);
         await page.getByRole("button", { name: "重新打开名片", exact: true }).click();
         await page.getByRole("button", { name: /^图形 ·/ }).click();
         await page.getByRole("group", { name: "图形选项", exact: true }).getByRole("button", { name: "无图形", exact: true }).click();
@@ -111,10 +143,18 @@ test("QR center uploads work in both card modes on desktop and mobile", { timeou
         assert.equal(await page.evaluate(() => window.__draft.qr.icon), "coffee");
         assert.equal(await page.evaluate(() => window.__draft.qr.iconImageDataUrl ?? ""), "");
         await page.getByRole("button", { name: "收起", exact: true }).click();
+        await scale.press("Home");
+        await waitForScale(50);
+        await page.getByRole("button", { name: "推荐大小", exact: true }).click();
+        assert.equal(await scale.inputValue(), "100", "builtin artwork keeps its legacy recommended size");
+        await waitForScale(100);
         await input.setInputFiles({ name: "logo.png", mimeType: "image/png", buffer: png });
         await page.getByAltText("已上传的二维码中心图片").waitFor();
+        await page.getByRole("button", { name: "推荐大小", exact: true }).click();
+        await waitForScale(130);
+        assert.equal(await scale.inputValue(), "130");
         await fs.mkdir("output", { recursive: true });
-        await page.screenshot({ path: `output/card-qr-image-upload-${width}-${mode}.png`, fullPage: true });
+        await page.screenshot({ path: `output/card-qr-center-size-${width}-${mode}.png`, fullPage: true });
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), "mobile controls must not overflow");
         assert.deepEqual(errors, []); assert.deepEqual(unexpected, []);
       } finally { await context.close(); }

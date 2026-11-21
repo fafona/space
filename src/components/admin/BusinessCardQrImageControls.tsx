@@ -2,13 +2,18 @@
 
 import { useEffect, useId, useRef, useState, type ChangeEvent } from "react";
 import type { BusinessCardQrAppearance } from "@/lib/merchantBusinessCardQr";
+import { BUSINESS_CARD_QR_CENTER_SCALE_MIN, BUSINESS_CARD_QR_CENTER_SCALE_MAX, businessCardQrCenterScale } from "@/lib/merchantBusinessCardQrCenterSize";
 
-export function BusinessCardQrImageControls({ image, onChange, onProcessingChange }: {
+export function BusinessCardQrImageControls({ image, iconScale, hasCenter, onChange, onProcessingChange }: {
   image?: string;
+  iconScale?: number;
+  hasCenter: boolean;
   onChange: (patch: BusinessCardQrAppearance) => void;
   onProcessingChange: (busy: boolean) => void;
 }) {
   const inputId = useId();
+  const scaleId = useId();
+  const scale = businessCardQrCenterScale(iconScale, !!image);
   const request = useRef(0);
   const notify = useRef(onProcessingChange);
   const [processing, setProcessing] = useState(false);
@@ -53,6 +58,18 @@ export function BusinessCardQrImageControls({ image, onChange, onProcessingChang
         className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 disabled:opacity-50">移除图片</button>}
     </div>
     <p className="mt-2 text-xs leading-5 text-slate-500">PNG / JPG / WebP · 最大 8 MB，自动压缩。保留二维码识别区域，导出前仍会进行扫码校验。上传图片保持原色，不随色板变色。</p>
+    <div className="mt-3 border-t border-blue-100 pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label htmlFor={scaleId} className="text-xs font-semibold text-slate-800">中心图案大小 · <output htmlFor={scaleId}>{scale}%</output></label>
+        <button type="button" disabled={!hasCenter || processing} onClick={() => onChange({ iconScale: businessCardQrCenterScale(undefined, !!image) })}
+          className="min-h-8 rounded-md border border-blue-200 bg-white px-2 py-1 text-xs text-blue-900 disabled:opacity-40">推荐大小</button>
+      </div>
+      <input id={scaleId} aria-label="中心图案大小" aria-valuetext={`${scale}%`} type="range" min={BUSINESS_CARD_QR_CENTER_SCALE_MIN} max={BUSINESS_CARD_QR_CENTER_SCALE_MAX} step="1"
+        value={scale} disabled={!hasCenter || processing} onChange={event => onChange({ iconScale: Number(event.target.value) })}
+        className="mt-1 h-8 w-full cursor-pointer accent-blue-600 disabled:cursor-not-allowed disabled:opacity-40" />
+      <div aria-hidden="true" className="flex justify-between text-xs text-slate-500"><span>小 · 50%</span><span>大 · 150%</span></div>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{hasCenter ? "内置图形和上传图片均可调整，预览与导出同步。达到扫码安全上限时，实际大小会自动限幅或微调位置。" : "先上传图片或选择内置图形，再调整大小。"}</p>
+    </div>
     {message && <p role="status" className="mt-2 text-xs leading-5 text-slate-700">{message}</p>}
   </section>;
 }
