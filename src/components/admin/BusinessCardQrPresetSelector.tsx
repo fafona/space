@@ -44,7 +44,7 @@ export function BusinessCardQrPresetSelector({ appearance, onChange }: { appeara
       const next = Object.fromEntries(options.ids.map(id => {
         const svg = options.open === "icon" && id !== "none"
           ? renderBusinessCardQrIcon(id, options.iconFollowColor ? options.color ?? "#000000" : options.iconColor ?? "#000000")
-          : renderBusinessCardQrSvg(matrix, { ...options, ...(options.open === "frame" && options.frame !== id ? businessCardQrCraftedSelection(id) : {}), icon: "none", frame: options.open === "frame" ? id : "none", style: options.open === "style" ? normalizeBusinessCardQrStyle(id) : options.style, showCaption: false, size: 240 });
+          : renderBusinessCardQrSvg(matrix, { ...options, ...(options.open === "frame" && options.frame !== id ? businessCardQrCraftedSelection(id) : {}), icon: "none", iconImageDataUrl: "", frame: options.open === "frame" ? id : "none", style: options.open === "style" ? normalizeBusinessCardQrStyle(id) : options.style, showCaption: false, size: 240 });
         return [id, businessCardQrSvgDataUrl(svg)];
       }));
       if (!cancelled) { setSamples({ key: sampleKey, values: next }); setError(""); }
@@ -61,7 +61,7 @@ export function BusinessCardQrPresetSelector({ appearance, onChange }: { appeara
     <div className="grid grid-cols-1 gap-2 @min-[420px]:grid-cols-3">
       {(["style", "icon", "frame"] as const).map(kind => <button key={kind} type="button" aria-expanded={open === kind} aria-controls={optionsId} onClick={() => toggle(kind)} className={`min-w-0 rounded-xl border px-3 py-3 text-left ${open === kind ? "border-blue-500 bg-blue-50 ring-1 ring-blue-200" : "border-slate-200 bg-white hover:border-blue-300"}`}>
         <span className="flex justify-between gap-2 text-xs text-slate-500"><span>{TITLES[kind]} · {kind === "frame" ? `${BUSINESS_CARD_QR_CRAFTED_FRAMES.length} 款新版` : `${CATALOGS[kind].length - (kind === "style" ? 0 : 1)} 款`}</span><span aria-hidden="true">{open === kind ? "▴" : "▾"}</span></span>
-        <span className="mt-1 block truncate text-sm font-semibold text-slate-900">{CATALOGS[kind].find(i => i.id === selected[kind])?.label}{kind === "frame" && historicalSelection ? " · 历史" : ""}</span>
+        <span className="mt-1 block truncate text-sm font-semibold text-slate-900">{kind === "icon" && value.iconImageDataUrl ? "已上传图片" : CATALOGS[kind].find(i => i.id === selected[kind])?.label}{kind === "frame" && historicalSelection ? " · 历史" : ""}</span>
       </button>)}
     </div>
     {open && <div id={optionsId} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -79,9 +79,9 @@ export function BusinessCardQrPresetSelector({ appearance, onChange }: { appeara
       </div>
       <div role="group" aria-label={`${TITLES[open]}选项`} className="grid grid-cols-2 gap-2 @min-[380px]:grid-cols-3 @min-[620px]:grid-cols-4">
         {visible.map(item => {
-          const active = selected[open] === item.id;
+          const active = selected[open] === item.id && !(open === "icon" && value.iconImageDataUrl);
           const source = samples.key === sampleKey ? samples.values[item.id] : undefined;
-          return <button type="button" key={item.id} aria-pressed={active} onClick={() => { if (!active) onChange(open === "style" ? { style: normalizeBusinessCardQrStyle(item.id) } : open === "icon" ? { icon: item.id } : businessCardQrCraftedSelection(item.id)); }} className={`min-w-0 rounded-lg border p-2 text-xs ${active ? "border-blue-500 bg-blue-50 ring-1 ring-blue-200" : "border-slate-200 bg-white hover:border-blue-300"}`}>
+          return <button type="button" key={item.id} aria-pressed={active} onClick={() => { if (!active) onChange(open === "style" ? { style: normalizeBusinessCardQrStyle(item.id) } : open === "icon" ? { icon: item.id, iconImageDataUrl: "" } : businessCardQrCraftedSelection(item.id)); }} className={`min-w-0 rounded-lg border p-2 text-xs ${active ? "border-blue-500 bg-blue-50 ring-1 ring-blue-200" : "border-slate-200 bg-white hover:border-blue-300"}`}>
             <div className={`flex items-center justify-center ${open === "frame" ? "h-36" : "h-24"}`}>
               {item.id === "none" ? <span className="text-2xl text-slate-400" aria-hidden="true">∅</span> : source ?
                 // eslint-disable-next-line @next/next/no-img-element

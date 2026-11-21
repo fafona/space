@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { ColorOrGradientPicker, ColorSwatchPalette } from "./ColorOrGradientPicker";
 import { BusinessCardQrPresetSelector } from "./BusinessCardQrPresetSelector";
 import { BusinessCardQrTextControls } from "./BusinessCardQrTextControls";
+import { BusinessCardQrImageControls } from "./BusinessCardQrImageControls";
 import { normalizeBusinessCardQrDecoration } from "@/lib/merchantBusinessCardQrDecorations";
 import { BUSINESS_CARD_QR_COLORS, BUSINESS_CARD_QR_BACKGROUNDS, businessCardQrAspectRatio, isBusinessCardQrColorReadable, normalizeBusinessCardQrBackground, normalizeBusinessCardQrColor, normalizeBusinessCardQrStyle, type BusinessCardQrAppearance } from "@/lib/merchantBusinessCardQr";
 import { businessCardQrColorPatch, businessCardQrTargetColor, businessCardQrBackgroundPatch, businessCardQrBackgroundTargetColor, type BusinessCardQrColorTarget, type BusinessCardQrBackgroundTarget } from "@/lib/merchantBusinessCardQrColorSelection";
@@ -13,10 +14,11 @@ const TARGETS: { id: BusinessCardQrColorTarget; label: string }[] = [{ id: "qr",
 const BACKGROUND_TARGETS: { id: BusinessCardQrBackgroundTarget; label: string }[] = [{ id: "background", label: "二维码背景色" }, { id: "frameBackground", label: "外框底色" }];
 const PALETTE = [...BUSINESS_CARD_QR_COLORS, "#b18054", "#c69b6b", "#448fbd", "#dc7d90", "#d6a653"];
 
-export function BusinessCardQrEditorControls({ targetUrl, onChange, exportDisabledReason = "", ...options }: BusinessCardQrAppearance & {
+export function BusinessCardQrEditorControls({ targetUrl, onChange, exportDisabledReason = "", onImageProcessingChange, ...options }: BusinessCardQrAppearance & {
   targetUrl: string;
   onChange: (patch: BusinessCardQrAppearance) => void;
   exportDisabledReason?: string;
+  onImageProcessingChange?: (busy: boolean) => void;
 }) {
   const decoration = normalizeBusinessCardQrDecoration(options);
   const value = { ...options, ...decoration, style: normalizeBusinessCardQrStyle(options.style), color: normalizeBusinessCardQrColor(options.color), backgroundColor: normalizeBusinessCardQrBackground(options.backgroundColor) };
@@ -25,6 +27,10 @@ export function BusinessCardQrEditorControls({ targetUrl, onChange, exportDisabl
   const [format, setFormat] = useState<"2048" | "4096" | "svg">("2048");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [imageBusy, setImageBusy] = useState(false);
+  const imageProcessingChanged = useCallback((processing: boolean) => {
+    setImageBusy(processing); onImageProcessingChange?.(processing);
+  }, [onImageProcessingChange]);
   const ratio = businessCardQrAspectRatio(value);
   const readable = isBusinessCardQrColorReadable(value.color, value.backgroundColor);
   const selectedColors = targets.map(t => businessCardQrTargetColor(value, t));
@@ -47,7 +53,7 @@ export function BusinessCardQrEditorControls({ targetUrl, onChange, exportDisabl
     setMessage(""); onChange(result.patch!);
   };
   const download = async () => {
-    if (busy || !targetUrl || exportDisabledReason || !readable) return;
+    if (busy || imageBusy || !targetUrl || exportDisabledReason || !readable) return;
     setBusy(true); setMessage("");
     try {
       const size = format === "2048" ? 2048 : 4096;
@@ -67,7 +73,8 @@ export function BusinessCardQrEditorControls({ targetUrl, onChange, exportDisabl
   };
 
   return <div className="@container mt-3 space-y-4 border-t border-slate-200 pt-4">
-    <BusinessCardQrPresetSelector appearance={value} onChange={onChange} />
+    <fieldset disabled={imageBusy} className="min-w-0"><legend className="sr-only">选择二维码外观</legend><BusinessCardQrPresetSelector appearance={value} onChange={onChange} /></fieldset>
+    <BusinessCardQrImageControls image={decoration.iconImageDataUrl} onChange={onChange} onProcessingChange={imageProcessingChanged} />
     <section aria-label="共用色板" className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-semibold text-slate-900">颜色</h4><span className="text-xs text-slate-500">选择应用对象 · 可多选</span></div>
       <div className="grid grid-cols-1 gap-2 @min-[360px]:grid-cols-3">
@@ -105,7 +112,7 @@ export function BusinessCardQrEditorControls({ targetUrl, onChange, exportDisabl
     <BusinessCardQrTextControls value={value} onChange={onChange} />
     <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 pt-3">
       <label className="text-xs text-slate-600">导出格式<select aria-label="二维码导出格式" value={format} onChange={e => setFormat(e.target.value as typeof format)} disabled={busy} className="ml-2 rounded-lg border bg-white px-2 py-2 text-sm"><option value="2048">PNG · 2048 × {Math.round(2048 * ratio)}</option><option value="4096">PNG · 4096 × {Math.round(4096 * ratio)}</option><option value="svg">SVG · 矢量高清</option></select></label>
-      <button type="button" disabled={busy || !targetUrl || !!exportDisabledReason || !readable} onClick={() => void download()} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">{busy ? "正在导出…" : "导出二维码"}</button>
+      <button type="button" disabled={busy || imageBusy || !targetUrl || !!exportDisabledReason || !readable} onClick={() => void download()} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">{busy ? "正在导出…" : "导出二维码"}</button>
     </div>
     {(exportDisabledReason || !targetUrl || !readable) && <p className="text-xs text-amber-700">{exportDisabledReason || (!targetUrl ? "请先填写网址，再导出二维码。" : "二维码与背景对比度不足，请调整颜色后导出。")}</p>}
     {message && <p role="status" className="text-xs leading-5 text-slate-700">{message}</p>}

@@ -59,6 +59,7 @@ export type BusinessCardQrIcon = "none" | (typeof BUSINESS_CARD_QR_ICONS)[number
 export type BusinessCardQrFrame = "none" | (typeof BUSINESS_CARD_QR_FRAMES)[number]["id"];
 export type BusinessCardQrDecoration = {
   icon?: BusinessCardQrIcon; iconColor?: string; iconFollowColor?: boolean;
+  iconImageDataUrl?: string;
   frame?: BusinessCardQrFrame; frameColor?: string; frameBackgroundColor?: string;
   frameWidth?: number; framePadding?: number;
 };
@@ -79,7 +80,7 @@ export function businessCardQrFrameGeometry(padding: number, frame = "none") {
   return { x: 172 + padding, y: 222 + padding, side: 656 - 2 * padding, width: 1000, height: 1140 };
 }
 
-export function renderBusinessCardQrFrame(options: Required<BusinessCardQrDecoration>): string {
+export function renderBusinessCardQrFrame(options: Required<Omit<BusinessCardQrDecoration, "iconImageDataUrl">> & Pick<BusinessCardQrDecoration, "iconImageDataUrl">): string {
   const { frame: f, frameColor: c, frameBackgroundColor: b, frameWidth } = options;
   const crafted = renderBusinessCardQrCraftedFrame(f, c, b, frameWidth);
   if (crafted !== null) return crafted;

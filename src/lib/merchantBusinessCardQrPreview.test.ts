@@ -46,7 +46,8 @@ test("actual editor keeps export strict, and hook cancels superseded work even a
   assert.match(source, /currentUrl: qrCodeUrl, display: qrDisplayPreview/);
   assert.match(source, /hiddenPreviewRef}><CardSurface draft={draft} websiteUrl={websiteUrl} qrCodeUrl={qrCodeUrl}/);
   assert.match(source, /draft={qrDisplayDraft}\s+websiteUrl={websiteUrl}\s+qrCodeUrl={qrDisplayPreview\?\.url \?\? ""}/);
-  assert.match(source, /const qrReadyForCurrentDraft = !invalidWebsiteAddress && \(!draft.showQr \|\| !!qrCodeUrl\)/);
+  assert.match(source, /const qrReadyForCurrentDraft = !qrImageProcessing && !invalidWebsiteAddress && \(!draft.showQr \|\| !!qrCodeUrl\)/);
+  assert.match(source, /onImageProcessingChange=\{setQrImageProcessing\}/);
   const hook = readFileSync(new URL("../components/admin/useBusinessCardQrPreview.ts", import.meta.url), "utf8");
   assert.match(hook, /await decodeBusinessCardQrPreview\(url\);\s+if \(!cancelled\) setPreview/);
   assert.match(hook, /return \(\) => { cancelled = true; window.clearTimeout\(timer\); }/);
