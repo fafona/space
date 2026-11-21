@@ -74,7 +74,7 @@ export function BusinessCardQrEditorControls({ targetUrl, onChange, exportDisabl
 
   return <div className="@container mt-3 space-y-4 border-t border-slate-200 pt-4">
     <fieldset disabled={imageBusy} className="min-w-0"><legend className="sr-only">选择二维码外观</legend><BusinessCardQrPresetSelector appearance={value} onChange={onChange} /></fieldset>
-    <BusinessCardQrImageControls image={decoration.iconImageDataUrl} onChange={onChange} onProcessingChange={imageProcessingChanged} />
+    <BusinessCardQrImageControls image={decoration.iconImageDataUrl} iconScale={decoration.iconScale} hasCenter={!!decoration.iconImageDataUrl || decoration.icon !== "none"} onChange={onChange} onProcessingChange={imageProcessingChanged} />
     <section aria-label="共用色板" className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-semibold text-slate-900">颜色</h4><span className="text-xs text-slate-500">选择应用对象 · 可多选</span></div>
       <div className="grid grid-cols-1 gap-2 @min-[360px]:grid-cols-3">

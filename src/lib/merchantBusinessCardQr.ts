@@ -1,6 +1,7 @@
 import { businessCardQrFrameGeometry, normalizeBusinessCardQrDecoration, normalizeBusinessCardQrFrame, renderBusinessCardQrFrame, renderBusinessCardQrIcon, type BusinessCardQrDecoration } from "./merchantBusinessCardQrDecorations";
 import { businessCardQrTextLayout, escapeBusinessCardQrText, hasBusinessCardQrText, normalizeBusinessCardQrText, type BusinessCardQrTextOptions } from "./merchantBusinessCardQrText";
 import { normalizeBusinessCardQrBackground, normalizeBusinessCardQrCaption, normalizeBusinessCardQrColor, normalizeBusinessCardQrStyle, type BusinessCardQrStyle } from "./merchantBusinessCardQrSettings";
+import { businessCardQrCenterScale } from "./merchantBusinessCardQrCenterSize";
 export { BUSINESS_CARD_QR_STYLES, BUSINESS_CARD_QR_COLORS, BUSINESS_CARD_QR_BACKGROUNDS, BUSINESS_CARD_QR_CAPTION_MAX_LENGTH, normalizeBusinessCardQrBackground, normalizeBusinessCardQrCaption, normalizeBusinessCardQrColor, normalizeBusinessCardQrStyle } from "./merchantBusinessCardQrSettings";
 export type { BusinessCardQrStyle } from "./merchantBusinessCardQrSettings";
 
@@ -51,6 +52,32 @@ export function businessCardQrIconBox(matrix: BusinessCardQrMatrix, expanded = f
     if (best) return { row: best.row, col: best.col, size: best.size };
   }
   return null;
+}
+
+// Keep the old 100% geometry byte-identical. Enlarged artwork gets its own
+// bounded, integer-module clearing area; no functional module may be covered.
+export function businessCardQrScaledIconBox(matrix: BusinessCardQrMatrix, expanded = false, scale = 100) {
+  const original = businessCardQrIconBox(matrix, expanded);
+  if (!original) return null;
+  if (scale === 100) return { ...original, artworkSize: original.size - 0.9 };
+  const artworkSize = (original.size - 0.9) * businessCardQrCenterScale(scale) / 100;
+  const maximum = Math.max(original.size, Math.min(15, Math.floor(matrix.size * 0.26)));
+  for (let size = Math.max(3, Math.min(maximum, Math.ceil(artworkSize + 0.9))); size >= 3; size--) {
+    let best: { row: number; col: number; size: number; distance: number } | undefined;
+    const center = (matrix.size - size) / 2;
+    const reach = Math.ceil(matrix.size * 0.2);
+    for (let row = Math.max(8, Math.floor(center - reach)); row <= Math.min(matrix.size - size - 8, Math.ceil(center + reach)); row++) {
+      for (let col = Math.max(8, Math.floor(center - reach)); col <= Math.min(matrix.size - size - 8, Math.ceil(center + reach)); col++) {
+        const distance = (row - center) ** 2 + (col - center) ** 2;
+        if (best && distance >= best.distance) continue;
+        let safe = true;
+        for (let y = row; y < row + size && safe; y++) for (let x = col; x < col + size; x++) if (matrix.isReserved(y, x)) { safe = false; break; }
+        if (safe) best = { row, col, size, distance };
+      }
+    }
+    if (best) return { row: best.row, col: best.col, size, artworkSize: Math.min(artworkSize, size - 0.9) };
+  }
+  return { ...original, artworkSize: Math.min(artworkSize, original.size - 0.9) };
 }
 
 // Keep all structural modules intact, including finders, alignment, timing and format bits.
@@ -127,11 +154,14 @@ export function renderBusinessCardQrSvg(
   const captionSvg = caption ? `<text x="${extent / 2}" y="${extent * 1.08}" text-anchor="middle" dominant-baseline="middle" font-family="Arial, Microsoft YaHei, sans-serif" font-size="${fontSize}" fill="${color}">${escapedCaption}</text>` : "";
   const image = decoration.iconImageDataUrl;
   const expandedIcon = !image && /^(studio|industry)-/.test(decoration.icon);
-  const badge = image || decoration.icon !== "none" ? businessCardQrIconBox(matrix, expandedIcon) : null;
+  const iconScale = businessCardQrCenterScale(decoration.iconScale, !!image);
+  const badge = image || decoration.icon !== "none" ? businessCardQrScaledIconBox(matrix, expandedIcon, iconScale) : null;
   const iconColor = decoration.iconFollowColor ? color : decoration.iconColor;
-  const artwork = badge && image ? `<image href="${image}" x="${badge.col + 4.45}" y="${badge.row + 4.45}" width="${badge.size - 0.9}" height="${badge.size - 0.9}" preserveAspectRatio="xMidYMid meet"/>`
-    : badge ? renderBusinessCardQrIcon(decoration.icon, iconColor).replace('<svg ', `<svg x="${badge.col + 4.45}" y="${badge.row + 4.45}" width="${badge.size - 0.9}" height="${badge.size - 0.9}" `) : "";
-  const iconSvg = badge ? `<g data-qr-icon="${image ? "uploaded" : decoration.icon}"><rect x="${badge.col + 4}" y="${badge.row + 4}" width="${badge.size}" height="${badge.size}" fill="${background}"/>${artwork}</g>` : "";
+  const artworkX = badge ? iconScale === 100 ? badge.col + 4.45 : badge.col + 4 + (badge.size - badge.artworkSize) / 2 : 0;
+  const artworkY = badge ? iconScale === 100 ? badge.row + 4.45 : badge.row + 4 + (badge.size - badge.artworkSize) / 2 : 0;
+  const artwork = badge && image ? `<image href="${image}" x="${artworkX}" y="${artworkY}" width="${badge.artworkSize}" height="${badge.artworkSize}" preserveAspectRatio="xMidYMid meet"/>`
+    : badge ? renderBusinessCardQrIcon(decoration.icon, iconColor).replace('<svg ', `<svg x="${artworkX}" y="${artworkY}" width="${badge.artworkSize}" height="${badge.artworkSize}" `) : "";
+  const iconSvg = badge ? `<g data-qr-icon="${image ? "uploaded" : decoration.icon}"${iconScale === 100 ? "" : ` data-qr-icon-scale="${iconScale}"`}><rect x="${badge.col + 4}" y="${badge.row + 4}" width="${badge.size}" height="${badge.size}" fill="${background}"/>${artwork}</g>` : "";
   const finderSvg = roundedFinder ? [[4, 4], [matrix.size - 3, 4], [4, matrix.size - 3]].map(([x, y]) => {
     const radius = requestedStyle === "finder-soft-ring" ? 0.8 : 1.7;
     return `<g data-qr-finder="rounded"><rect x="${x}" y="${y}" width="7" height="7" rx="${radius}" fill="${color}"/><rect x="${x + 1}" y="${y + 1}" width="5" height="5" rx="${radius * 0.7}" fill="${background}"/><rect x="${x + 2}" y="${y + 2}" width="3" height="3" rx="${radius * 0.4}" fill="${color}"/></g>`;

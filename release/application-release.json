@@ -1,8 +1,8 @@
 {
   "schemaVersion": 5,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "a1f3b29cb345b7a804e8a1e5a062c74bcb7fbbf2",
-  "purpose": "business-card-qr-center-image-upload",
+  "baseline": "87d85a859ff69261a0a2bd1d9923d8715935293a",
+  "purpose": "business-card-qr-center-size-slider",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,183 +10,15 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
-      "file": ".github/workflows/ci.yml",
-      "role": "verification",
-      "before": [
-        "100644",
-        "069506b9e422cd61f366c73a26dc8bf44749810f"
-      ],
-      "after": [
-        "100644",
-        "beb80c41ebaf80b8de8591da3acc398d1c6f539e"
-      ]
-    },
-    {
-      "file": "scripts/application-release-audit.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "24edfbb959020b0a2c71a56dd31f782b64283d67"
-      ],
-      "after": [
-        "100644",
-        "350e6432129183567ea578b22063818d113ad0a8"
-      ]
-    },
-    {
-      "file": "scripts/application-release-authority.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "d4ae39e88b233d00947e00d7cf6d447db2d97438"
-      ],
-      "after": [
-        "100644",
-        "321da72251334c30bd1e92f5492a51f30723f0e6"
-      ]
-    },
-    {
-      "file": "scripts/application-release-chat-continuation.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "b74876cfd5543290e858331be994cd2d98c726f5"
-      ]
-    },
-    {
-      "file": "scripts/application-release-chat-continuation.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "440e319e66c0540b56485db0b05a718bf4e0650a"
-      ]
-    },
-    {
-      "file": "scripts/application-release-chat-native.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "0ba3eb67719d3a34423cf4d4b5c9080ee965467d"
-      ]
-    },
-    {
-      "file": "scripts/application-release-chat-pins.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "613d0d44a16e959f5cef6fdd69d0804d918782c7"
-      ]
-    },
-    {
-      "file": "scripts/application-release-chat-policy.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "ed2773f78d213954d524dcb19779d263da258bb3"
-      ]
-    },
-    {
-      "file": "scripts/application-release-chat-policy.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "4eec20ecf1d2bf5dd08a5ca8c6d0de508bb13471"
-      ]
-    },
-    {
-      "file": "scripts/application-release-chat-source.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "94d4a3e1da37b32471903f3bb56b9dade9d314dc"
-      ]
-    },
-    {
-      "file": "scripts/application-release-finalization-diagnostics.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "f095d9121a668180079f216affe22fbdf7f00d71"
-      ]
-    },
-    {
-      "file": "scripts/application-release-finalization-diagnostics.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "b8056f477e42dd6b4425ea64a85f0dd510b8dcea"
-      ]
-    },
-    {
-      "file": "scripts/application-release-retained-diagnostic.mjs",
-      "role": "release-tool",
-      "before": null,
-      "after": [
-        "100644",
-        "a0142ea7bec3936753a5cdfb1b2c097a069c3590"
-      ]
-    },
-    {
-      "file": "scripts/application-release-retained-diagnostic.test.mjs",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "1f5b9e8d44259ae4d2cf049c668c6ce438dd3129"
-      ]
-    },
-    {
       "file": "scripts/business-card-qr-image-browser-acceptance.mjs",
       "role": "verification",
-      "before": null,
-      "after": [
+      "before": [
         "100644",
         "0a451417524e0e8af8dfc98635db03b2865802f9"
-      ]
-    },
-    {
-      "file": "scripts/online-release-retention-writer.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "ce8cc313e1086e33652e2f9f2c29dd958bc00513"
       ],
       "after": [
         "100644",
-        "0dab4bc4af4ec968d82f35db22dab01917991ab1"
-      ]
-    },
-    {
-      "file": "scripts/online-traffic-release.mjs",
-      "role": "release-tool",
-      "before": [
-        "100644",
-        "7848e1291bab21c0ff63449629e6188cd85a729e"
-      ],
-      "after": [
-        "100644",
-        "9eb8a9ff5b03c67917a770aa2dc79d9c4fee85be"
-      ]
-    },
-    {
-      "file": "scripts/online-unpublished-candidate.test.mjs",
-      "role": "verification",
-      "before": [
-        "100644",
-        "18aba48106b915d060926d65828b5aac2f251f84"
-      ],
-      "after": [
-        "100644",
-        "744f49d4e41049de2263ab88b160b6c7fcb6831b"
+        "0f6e3afb8a6ae6ffba11f48baaf0f908b9db5599"
       ]
     },
     {
@@ -194,44 +26,23 @@
       "role": "application",
       "before": [
         "100644",
-        "cd76c33df699aa380d37485f9db35d0344d1e1d9"
+        "b968457930fa5d6097312e05b0d9dc58019496cc"
       ],
       "after": [
         "100644",
-        "b968457930fa5d6097312e05b0d9dc58019496cc"
+        "f021b3f67a02ba6d7ba74dcdc5a624e21dbdbc4d"
       ]
     },
     {
       "file": "src/components/admin/BusinessCardQrImageControls.tsx",
       "role": "application",
-      "before": null,
-      "after": [
+      "before": [
         "100644",
         "7b1e10daf75530b2a9e89ca219b11df49d86eba5"
-      ]
-    },
-    {
-      "file": "src/components/admin/BusinessCardQrPresetSelector.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "449d5531e1bdc75cc1501bb3519282d66726bb93"
       ],
       "after": [
         "100644",
-        "800f2c73ec57cae4131f3621fbbbf7db60cd86d6"
-      ]
-    },
-    {
-      "file": "src/components/admin/MerchantBusinessCardManager.tsx",
-      "role": "application",
-      "before": [
-        "100644",
-        "c95450ba6694117b27cbd0f0e5029caa7386d90f"
-      ],
-      "after": [
-        "100644",
-        "70ccacb081d341de129697d1583547550f942135"
+        "e1ff2f8d26ab430d78a28e9ba39f5d76678e2305"
       ]
     },
     {
@@ -239,11 +50,29 @@
       "role": "application",
       "before": [
         "100644",
-        "89c657eb3b3948d7ec7e90f29ab6598faac52c58"
+        "7d08793511841379b461b2caa561c652e74da4e1"
       ],
       "after": [
         "100644",
-        "7d08793511841379b461b2caa561c652e74da4e1"
+        "a0619989ab45f0c9eb9f5d294f15ea5cc7ace976"
+      ]
+    },
+    {
+      "file": "src/lib/merchantBusinessCardQrCenterSize.test.ts",
+      "role": "verification",
+      "before": null,
+      "after": [
+        "100644",
+        "fc62d847a1012e7c4c49c8dfb1d0689d86d99871"
+      ]
+    },
+    {
+      "file": "src/lib/merchantBusinessCardQrCenterSize.ts",
+      "role": "application",
+      "before": null,
+      "after": [
+        "100644",
+        "a800450052600435bb56a63d3e083f05305248e3"
       ]
     },
     {
@@ -251,50 +80,11 @@
       "role": "application",
       "before": [
         "100644",
-        "67d524c3f2cc31ba087203103046165b90d1b0ad"
-      ],
-      "after": [
-        "100644",
         "44b88d0455edd6ea04c87baeacb34ce7149cced9"
-      ]
-    },
-    {
-      "file": "src/lib/merchantBusinessCardQrImage.client.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "3ed07bd9f42f931d05e9749d08cf7044fbc587bb"
-      ]
-    },
-    {
-      "file": "src/lib/merchantBusinessCardQrImage.test.ts",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "2901a7f8b131d77f66e32cdd75ffb55c29e1fe70"
-      ]
-    },
-    {
-      "file": "src/lib/merchantBusinessCardQrImage.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "da7f7061ac37b7f1611de245e5510f4d6081a12c"
-      ]
-    },
-    {
-      "file": "src/lib/merchantBusinessCardQrPreview.test.ts",
-      "role": "verification",
-      "before": [
-        "100644",
-        "aad722a702783065f6880805615de4dbf13b258c"
       ],
       "after": [
         "100644",
-        "a3637fe7cb80a50ebde8be0ae7dd00ea41418d38"
+        "f634a592f1db6d9104368cdcb70e08843c57569f"
       ]
     },
     {
@@ -302,15 +92,16 @@
       "role": "application",
       "before": [
         "100644",
-        "8eb88f4af827537def974d1529dac3029238f382"
+        "ae1f2a3d9a6c52a7070f495d2adb67703da96fcc"
       ],
       "after": [
         "100644",
-        "ae1f2a3d9a6c52a7070f495d2adb67703da96fcc"
+        "259fe44568f1347da218c26cb9a813e526cdec77"
       ]
     }
   ],
   "focusedTests": [
+    "src/lib/merchantBusinessCardQrCenterSize.test.ts",
     "src/lib/merchantBusinessCardQrImage.test.ts",
     "src/lib/merchantBusinessCardQrSettings.test.ts",
     "src/lib/merchantBusinessCardQrExport.test.ts",
