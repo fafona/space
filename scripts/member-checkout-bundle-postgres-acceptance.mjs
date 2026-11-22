@@ -17,6 +17,8 @@ import settings from '../src/lib/merchantMembershipSettings.ts';
 import coupons from '../src/lib/merchantCoupons.ts';
 import configurationStore from '../src/lib/merchantCheckoutConfigurationStore.server.ts';
 import memberPoints from '../src/lib/merchantMemberships.server.ts';
+import resultStore from '../src/lib/merchantMemberCheckoutResult.server.ts';
+import resultRoute from '../src/app/api/member-checkout/result/route-handler.ts';
 
 test('private composite proposal uses actual legacy PostgreSQL transactions, never separate financial commits',{timeout:120000},async t=>{
  const runtime=path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR||'.missing-test-runtime');
@@ -56,7 +58,7 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
   for(const [merchant,slug,blocks] of [[site,memberSlug,[member,foreign]],[site,couponSlug,[coupon]],[site,settingsSlug,configSettings],['__faolla_booking_persistence__',bookingSlug,{version:1,records:[foreignBooking]}]]){
    await admin.query('insert into pages(merchant_id,slug,blocks) values($1,$2,$3)',[merchant,slug,JSON.stringify(blocks)]);
   }
-  for(const file of ['scripts/supabase-migrations/202609080045_order_membership_atomic_mutation.sql','scripts/supabase-migrations/202609080046_redemption_atomic_mutation.sql','scripts/supabase-migrations/202610250211_booking_atomic_preparation.sql','scripts/supabase-migrations/202610250212_booking_atomic_runtime.sql','scripts/supabase-migrations/202611050213_booking_atomic_safeupdate_singleton.sql','database/proposals/20261122_member_checkout_design.sql','database/proposals/20261122_member_checkout_catalog.sql','database/proposals/20261122_member_checkout_bundle.sql']){
+  for(const file of ['scripts/supabase-migrations/202609080045_order_membership_atomic_mutation.sql','scripts/supabase-migrations/202609080046_redemption_atomic_mutation.sql','scripts/supabase-migrations/202610250211_booking_atomic_preparation.sql','scripts/supabase-migrations/202610250212_booking_atomic_runtime.sql','scripts/supabase-migrations/202611050213_booking_atomic_safeupdate_singleton.sql','database/proposals/20261122_member_checkout_design.sql','database/proposals/20261122_member_checkout_catalog.sql','database/proposals/20261122_member_checkout_bundle.sql','database/proposals/20261122_member_checkout_cancellation.sql','database/proposals/20261122_member_checkout_queries.sql']){
    await admin.query(await readFile(path.resolve(file),'utf8'));
   }
   // Test-only admin activation in this freshly created owned synthetic cluster.
@@ -65,7 +67,9 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
   await admin.query('insert into faolla_checkout_design.bundle_pilots(site_id,enabled) values($1,true)',[site]);
   const a=await connect(),b=await connect();
   const all=async()=>({pages:(await admin.query('select * from pages order by slug,id')).rows,commands:(await admin.query('select * from faolla_booking_atomic_commands order by command_key')).rows,
-   operations:(await admin.query('select * from faolla_redemption_operations order by operation_id')).rows,results:(await admin.query('select * from faolla_checkout_design.bundle_results order by operation_key')).rows});
+   operations:(await admin.query('select * from faolla_redemption_operations order by operation_id')).rows,results:(await admin.query('select * from faolla_checkout_design.bundle_results order by operation_key')).rows,
+   cancellations:(await admin.query('select * from faolla_checkout_design.bundle_cancellations order by operation_key')).rows,
+   returns:(await admin.query('select * from faolla_checkout_design.bundle_coupon_returns order by redeem_event_id')).rows});
   const prepared=async({points=400,withCoupon=true,withStock=true,kind='booking',id=`synthetic-${randomUUID()}`}={})=>{
    const stamp=await one(admin,'select to_jsonb(updated_at) as stamp from pages where slug=$1',[memberSlug]);
    const plan={settingsVersion:(await one(admin,'select to_jsonb(updated_at) as stamp from pages where slug=$1',[settingsSlug])).stamp,
@@ -221,12 +225,203 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
     await assert.rejects(commit(a,op(),plan),/checkout_invalid_plan/);assert.deepEqual(await all(),before);
    }
   });
+  const configure=async({returnPoints=true,returnCoupons=true,kind='booking',points=10,withCoupon=true,withStock=true,id}={})=>{
+   const couponRow=await one(admin,'select blocks,to_jsonb(updated_at) as stamp from pages where slug=$1',[couponSlug]),claimId=`claim-${randomUUID()}`;
+   const couponNext=structuredClone(couponRow.blocks);couponNext[0].expiresAt=null;
+   couponNext[0].claimEvents.push({...couponNext[0].claimEvents[0],id:claimId,settlementCode:`CODE-${randomUUID()}`,validUntil:'2035-12-31T00:00:00Z'});
+   const settingsRow=await one(admin,'select blocks,to_jsonb(updated_at) as stamp from pages where slug=$1',[settingsSlug]);
+   const settingNext=structuredClone(settingsRow.blocks);settingNext.redemptionItems[0].stock=2;
+   await admin.query('select public.faolla_commit_redemption_v1($1,$2)',[site,{coupons:{expectedUpdatedAt:couponRow.stamp,next:couponNext},settings:{expectedUpdatedAt:settingsRow.stamp,next:settingNext}}]);
+   const offerId=randomUUID(),revision=randomUUID();
+   const offer={version:1,id:offerId,revision,siteId:site,enabled:true,title:'Cancellation fixture',maxQuantity:2,
+    source:kind==='booking'?{kind,blockId:'synthetic-booking',serviceId:offerId,timeZone:'Europe/Madrid'}:{kind,blockId:'synthetic-product',collectionId:'synthetic-collection',productId:'synthetic-product'},
+    cash:{currency:'eur',unitAmountMinor:10000,initialPolicy:{mode:'full'}},unitPoints:points||10,allowOnSite:true,couponReturnOnCancel:returnCoupons,
+    checkoutBinding:{sourceKey:op(),sourceVersion:op(),viewport:'mobile',...(kind==='booking'?{store:'Synthetic',item:'Play'}:{}),stockItemId:withStock?'item-synthetic':null,voucherCouponIds:[],durationMinutes:60,pointsReturnOnCancel:returnPoints,cancellationAdvanceMinutes:60}};
+   const current=(await one(admin,'select public.faolla_member_checkout_catalog_snapshot_v1($1) as result',[site])).result;
+   await admin.query('select public.faolla_member_checkout_catalog_save_v1($1,$2,$3,$4,$5)',[site,current.version,randomUUID(),'owner:synthetic-owner',offer]);
+   const plan=await prepared({points,withCoupon,withStock,kind,...(id?{id}:{})});plan.offer={id:offerId,revision};
+   if(withCoupon){plan.coupons.claims[0].claimEventId=claimId;plan.couponReturnOnCancel=returnCoupons;}
+   return{plan,offer,key:op(),claimId};
+  };
+  const cancel=async(client,f,who=principal,expected=f.plan[f.offer.source.kind].record.updatedAt)=>(await one(client,
+   'select faolla_checkout_design.cancel_bundle($1,$2,$3,$4) as result',[site,f.key,who,expected])).result;
+  await t.test('two cancellations restore points/stock/coupon exactly once using the original policy after merchant edits',async()=>{
+   const f=await configure(),beforeMember=(await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks;
+   const original=await commit(a,f.key,f.plan);assert.equal(original.receipt.cancellationPolicy.returnPoints,true);
+   const current=(await one(admin,'select public.faolla_member_checkout_catalog_snapshot_v1($1) as result',[site])).result;
+   await admin.query('select public.faolla_member_checkout_catalog_save_v1($1,$2,$3,$4,$5)',[site,current.version,randomUUID(),'owner:synthetic-owner',
+    {...f.offer,enabled:false,revision:randomUUID(),unitPoints:900,couponReturnOnCancel:false,checkoutBinding:{...f.offer.checkoutBinding,pointsReturnOnCancel:false}}]);
+   const originalCoupons=(await one(admin,'select blocks from pages where slug=$1',[couponSlug])).blocks;
+   const couponExpired=structuredClone(originalCoupons);couponExpired[0].expiresAt=new Date(Date.now()-1000).toISOString();
+   couponExpired[0].claimEvents.find(c=>c.id===f.claimId).validUntil=new Date(Date.now()-1000).toISOString();
+   await admin.query('select public.faolla_commit_redemption_v1($1,$2)',[site,{coupons:{expectedUpdatedAt:(await one(admin,'select to_jsonb(updated_at) as stamp from pages where slug=$1',[couponSlug])).stamp,next:couponExpired}}]);
+   const result=await Promise.all([cancel(a,f),cancel(b,f)]);assert.deepEqual(result.map(r=>r.replayed).sort(),[false,true]);
+   assert.deepEqual(result[0].receipt,result[1].receipt);assert.equal(result[0].receipt.pointsReturned,10);assert.equal(result[0].receipt.couponsReturned,1);assert.equal(result[0].receipt.stockReleased,1);
+   const saved=(await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks;
+   assert.equal(saved[0].pointBalance,beforeMember[0].pointBalance);assert.deepEqual(saved.slice(1),beforeMember.slice(1));
+   assert.equal(saved[0].transactions.filter(tx=>tx.note.includes(`[member-checkout-return:${f.key}]`)).length,1);
+   assert.equal(saved[0].transactions.find(tx=>tx.id===f.plan.membership.transactions[0].id).status,'cancelled');
+   assert.equal((await one(admin,'select blocks from pages where slug=$1',[settingsSlug])).blocks.redemptionItems[0].stock,2);
+   const returned=(await one(admin,'select blocks from pages where slug=$1',[couponSlug])).blocks[0];
+   assert.deepEqual(returned.claimEvents,couponExpired[0].claimEvents);assert.equal(returned.expiresAt,couponExpired[0].expiresAt);
+   assert.equal(returned.redeemEvents.some(r=>r.id===original.receipt.couponUses[0].redeemEventId),false);
+   assert.deepEqual((await one(admin,'select original_redemption from faolla_checkout_design.bundle_coupon_returns where site_id=$1 and redeem_event_id=$2',[site,original.receipt.couponUses[0].redeemEventId])).original_redemption,
+    originalCoupons[0].redeemEvents.find(r=>r.id===original.receipt.couponUses[0].redeemEventId));
+   const before=await all();await assert.rejects(cancel(a,f,'account:50010106:foreign-synthetic'),/checkout_not_found/);assert.deepEqual(await all(),before);
+  });
+  await t.test('merchant may retain points and coupons; zero-point voucher cancellation never invents a point refund',async()=>{
+   for(const points of [0,10]){
+    const f=await configure({returnPoints:false,returnCoupons:false,points});await commit(a,f.key,f.plan);
+    const before=(await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks;
+    const couponsBefore=(await one(admin,'select blocks from pages where slug=$1',[couponSlug])).blocks;
+    const result=await cancel(a,f);assert.equal(result.receipt.pointsReturned,0);assert.equal(result.receipt.couponsReturned,0);assert.equal(result.receipt.stockReleased,1);
+    assert.deepEqual((await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks,before);
+    assert.deepEqual((await one(admin,'select blocks from pages where slug=$1',[couponSlug])).blocks,couponsBefore);
+   }
+  });
+  await t.test('late cancellation storage failure rolls back point refund, stock release, coupon history and refund facts together',async()=>{
+   const f=await configure({id:'forced-cancel-failure'});await commit(a,f.key,f.plan);
+   await admin.query(`create function public.synthetic_cancel_failure() returns trigger language plpgsql as $$begin
+    if new.slug='__merchant_booking_records__:v1' and exists(select 1 from jsonb_array_elements(new.blocks->'records') r where r->>'id'='forced-cancel-failure' and r->>'status'='cancelled') then raise exception 'synthetic_cancel_late_failure';end if;return new;end;$$;
+    create trigger synthetic_cancel_failure before update on public.pages for each row execute function public.synthetic_cancel_failure();`);
+   const before=await all();await assert.rejects(cancel(a,f),/synthetic_cancel_late_failure/);assert.deepEqual(await all(),before);
+   await admin.query('drop trigger synthetic_cancel_failure on public.pages;drop function public.synthetic_cancel_failure()');
+   assert.equal((await cancel(a,f)).replayed,false);
+  });
+  await t.test('stale resource, completed booking, cancellation deadline and unbound legacy receipt fail without financial writes',async()=>{
+   const stale=await configure({withCoupon:false,withStock:false});await commit(a,stale.key,stale.plan);
+   let before=await all();await assert.rejects(cancel(a,stale,principal,'stale'),/checkout_conflict/);assert.deepEqual(await all(),before);
+   const complete=await configure({withCoupon:false,withStock:false});await commit(a,complete.key,complete.plan);
+   const raw=(await one(admin,'select blocks from pages where slug=$1',[bookingSlug])).blocks;
+   raw.records.find(r=>r.id===complete.plan.booking.record.id).status='completed';
+   // Model completion THROUGH the original atomic writer, retaining its
+   // active-generation fence rather than bypassing it with direct pages IO.
+   const control=await one(admin,'select generation,revision::text from faolla_booking_atomic_control where singleton');
+   const bookingRows=(await one(admin,'select public.faolla_booking_atomic_rows_v1() as rows')).rows;
+   await admin.query('select public.faolla_booking_atomic_commit_v1($1,$2,$3,$4)',[site,op(),op(),
+    {...control,rows:bookingRows,next:raw,result:{syntheticCompleted:true},mailJobs:[]}]);before=await all();
+   await assert.rejects(cancel(a,complete),/checkout_cancellation_not_allowed/);assert.deepEqual(await all(),before);
+   const late=await configure({withCoupon:false,withStock:false});late.plan.booking.record.appointmentAt='2020-01-01T12:00';await commit(a,late.key,late.plan);before=await all();
+   await assert.rejects(cancel(a,late),/checkout_cancellation_deadline/);assert.deepEqual(await all(),before);
+   const legacy=await prepared({points:1,withCoupon:false,withStock:false}),key=op();await commit(a,key,legacy);before=await all();
+   await assert.rejects(a.query('select faolla_checkout_design.cancel_bundle($1,$2,$3,$4)',[site,key,principal,at]),/checkout_cancellation_review_required/);assert.deepEqual(await all(),before);
+  });
+  await t.test('order cancellation restores only its actual debit and original member even after leaving membership',async()=>{
+   const f=await configure({kind:'order',withCoupon:false}),prior=(await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks;
+   await commit(a,f.key,f.plan);
+   const current=await one(admin,'select blocks,to_jsonb(updated_at) as stamp from pages where slug=$1',[memberSlug]);current.blocks[0].status='left';
+   await admin.query('select public.faolla_commit_order_membership_v1($1,$2)',[site,{memberships:{expectedUpdatedAt:current.stamp,next:current.blocks}}]);
+   const result=await cancel(a,f);assert.equal(result.receipt.pointsReturned,10);
+   const saved=(await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks;
+   assert.equal(saved[0].pointBalance,prior[0].pointBalance);assert.equal(saved[0].status,'left');assert.deepEqual(saved.slice(1),prior.slice(1));
+   assert.equal((await one(admin,'select blocks from pages where slug=$1',[`__merchant_orders__:${site}:chunk:0`])).blocks.find(o=>o.id===f.plan.order.record.id).status,'cancelled');
+   // Restore only the synthetic fixture for later tests.
+   const row=await one(admin,'select blocks,to_jsonb(updated_at) as stamp from pages where slug=$1',[memberSlug]);row.blocks[0].status='active';
+   await admin.query('select public.faolla_commit_order_membership_v1($1,$2)',[site,{memberships:{expectedUpdatedAt:row.stamp,next:row.blocks}}]);
+  });
+  await t.test('returning an already reused coupon never cancels its later use and refund history is immutable',async()=>{
+   const first=await configure({withStock:false,points:1});await commit(a,first.key,first.plan);await cancel(a,first);
+   const next=await configure({withStock:false,points:1});next.plan.coupons.claims[0].claimEventId=first.claimId;await commit(a,next.key,next.plan);
+   const before=await all();assert.equal((await cancel(a,first)).replayed,true);assert.deepEqual(await all(),before);
+   const saved=(await one(admin,'select blocks from pages where slug=$1',[couponSlug])).blocks[0];
+   assert.ok(saved.redeemEvents.some(r=>r.claimEventId===first.claimId&&r.note.includes(next.key)));
+   await assert.rejects(admin.query('delete from faolla_checkout_design.bundle_cancellations where operation_key=$1',[first.key]),/checkout_history_immutable/);
+   await assert.rejects(admin.query('update faolla_checkout_design.bundle_coupon_returns set original_redemption=$1 where operation_key=$2',[{},first.key]),/checkout_history_immutable/);
+   assert.deepEqual(await all(),before);
+  });
+  await t.test('refunded spend removes its original growth without another level gift or unrelated member change',async()=>{
+   for(const annual of [false,true]){
+   const f=await configure({withCoupon:false,withStock:false,points:101});
+   const before=(await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks;
+   const policyRow=await one(admin,'select blocks,to_jsonb(updated_at) as stamp from pages where slug=$1',[settingsSlug]),policy=policyRow.blocks,now=new Date().toISOString();
+   policy.growthRules.annualRecalculate=annual;
+   await admin.query('select public.faolla_commit_redemption_v1($1,$2)',[site,{settings:{expectedUpdatedAt:policyRow.stamp,next:policy}}]);
+   f.plan.settingsVersion=(await one(admin,'select to_jsonb(updated_at) as stamp from pages where slug=$1',[settingsSlug])).stamp;
+   const available=memberPoints.prepareMemberCheckoutAvailablePoints({membership:before[0],settings:policy,now,unitPoints:101,quantity:1});
+   const debit=memberPoints.prepareMemberCheckoutPointDebit({original:before[0],prepared:available.membership,settings:policy,points:available.grossPoints,couponCount:0,accountId,userId,operationKey:f.key,now,title:'Growth return'});
+   f.plan.membership={...f.plan.membership,...debit.mutation};f.plan.receipt.totalPoints=available.grossPoints;await commit(a,f.key,f.plan);
+   const result=await cancel(a,f);assert.equal(result.receipt.pointsReturned,available.grossPoints);
+   const saved=(await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks;
+   assert.equal(saved[0].growthValue,available.membership.growthValue);assert.equal(saved[0].pointBalance,available.spendablePoints);assert.deepEqual(saved.slice(1),before.slice(1));
+   assert.equal(saved[0].transactions.filter(tx=>tx.note.includes('[level-one-time:gold]')).length,available.membership.transactions.filter(tx=>tx.note.includes('[level-one-time:gold]')).length);
+   }
+  });
+  await t.test('an order completed by the original writer during cancellation cannot receive a stale refund',async()=>{
+   const f=await configure({kind:'order'});await commit(a,f.key,f.plan);const before=await all();
+   await a.query('begin');
+   let pending;
+   try{
+    await a.query("select pg_advisory_xact_lock(hashtextextended('faolla-order-membership:'||$1,0))",[site]);
+    pending=cancel(b,f).then(value=>({value}),error=>({error}));
+    let waiting=false;
+    for(let i=0;i<200;i++){
+     waiting=(await one(admin,"select wait_event_type='Lock' and wait_event='advisory' as waiting from pg_stat_activity where pid=$1",[b.processID]))?.waiting===true;
+     if(waiting)break;await new Promise(resolve=>setTimeout(resolve,10));
+    }
+    assert.equal(waiting,true,'wait for the ACTUAL original member/order lock, not a zero-millisecond timer');
+    const rows=(await one(a,`select jsonb_agg(jsonb_build_object('id',id,'slug',slug,'blocks',blocks,'updated_at',updated_at) order by slug,id) as rows
+     from pages where slug=$1 or slug~$2`,[`__merchant_orders__:${site}`,`^__merchant_orders__:${site}:chunk:[0-9]+$`])).rows;
+    const records=structuredClone(rows.filter(r=>r.slug.includes(':chunk:')).flatMap(r=>r.blocks));const record=records.find(r=>r.id===f.plan.order.record.id);
+    record.status='completed';record.updatedAt=new Date().toISOString();
+    await a.query('select public.faolla_commit_order_membership_v1($1,$2)',[site,{orders:{expectedRows:rows,next:records}}]);await a.query('commit');
+    const outcome=await pending;assert.ok(outcome.error);assert.match(outcome.error.message,/order_update_conflict|checkout_conflict|checkout_cancellation_not_allowed/);
+    const final=await all();assert.deepEqual(final.cancellations,before.cancellations);assert.deepEqual(final.returns,before.returns);
+    assert.deepEqual(final.pages.find(r=>r.slug===memberSlug).blocks,before.pages.find(r=>r.slug===memberSlug).blocks);
+    assert.deepEqual(final.pages.find(r=>r.slug===couponSlug).blocks,before.pages.find(r=>r.slug===couponSlug).blocks);
+    assert.deepEqual(final.pages.find(r=>r.slug===settingsSlug).blocks,before.pages.find(r=>r.slug===settingsSlug).blocks);
+   }catch(error){await a.query('rollback');if(pending)await pending;throw error;}
+  });
+  await t.test('changed original booking time is not silently refunded under its earlier immutable terms',async()=>{
+   const f=await configure({withCoupon:false,withStock:false});await commit(a,f.key,f.plan);
+   const state=await one(admin,'select generation,revision::text from faolla_booking_atomic_control where singleton');
+   const rows=(await one(admin,'select public.faolla_booking_atomic_rows_v1() as rows')).rows;
+   const raw=structuredClone(rows.find(r=>r.slug===bookingSlug).blocks);raw.records.find(r=>r.id===f.plan.booking.record.id).appointmentAt='2020-01-01T12:00';
+   await admin.query('select public.faolla_booking_atomic_commit_v1($1,$2,$3,$4)',[site,op(),op(),{...state,rows,next:raw,result:{syntheticChanged:true},mailJobs:[]}]);
+   const before=await all();await assert.rejects(cancel(a,f),/checkout_cancellation_review_required/);assert.deepEqual(await all(),before);
+   const read=(await one(admin,'select public.faolla_member_checkout_result_v2($1,$2,$3) as result',[site,f.key,principal])).result;
+   assert.equal(read.cancellationAvailable,false);
+  });
+  await t.test('cancellation adds only the actual original debit to the current balance, preserving a later original-cashier spend',async()=>{
+   const f=await configure({withCoupon:false,withStock:false});await commit(a,f.key,f.plan);
+   const row=await one(admin,'select blocks,to_jsonb(updated_at) as stamp from pages where slug=$1',[memberSlug]);
+   const next=structuredClone(row.blocks);next[0].pointBalance-=5;
+   const tx={...f.plan.membership.transactions[0],id:`cashier-${randomUUID()}`,pointDelta:-5,note:'Synthetic later cashier spend'};
+   next[0].transactions.unshift(tx);
+   await a.query('select public.faolla_commit_order_membership_v1($1,$2)',[site,{memberships:{expectedUpdatedAt:row.stamp,next}}]);
+   const result=await cancel(b,f);assert.equal(result.receipt.pointsReturned,10);
+   const final=(await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks;
+   assert.equal(final[0].pointBalance,row.blocks[0].pointBalance-5+10);assert.deepEqual(final[0].transactions.find(t=>t.id===tx.id),tx);assert.deepEqual(final.slice(1),row.blocks.slice(1));
+  });
+  await t.test('actual customer result/cancel HTTP handler and adapter reach the real isolated SQL, with safe projections and read-only reconciliation',async()=>{
+   const f=await configure();await commit(a,f.key,f.plan);
+   const rpc=async(name,args)=>{try{
+    const sql=name==='faolla_member_checkout_result_v2'?'select public.faolla_member_checkout_result_v2($1,$2,$3) as result':
+     name==='faolla_member_checkout_cancel_v2'?'select public.faolla_member_checkout_cancel_v2($1,$2,$3,$4) as result':null;
+    assert.ok(sql);return{data:(await one(a,sql,[args.p_site_id,args.p_operation_key,args.p_principal_key,...(name.includes('cancel')?[args.p_expected_updated_at]:[])])).result,error:null};
+   }catch(error){return{data:null,error:{message:error.message}};}};
+   const deps={enabled:()=>true,session:async()=>({accountId,userId,servicePaused:false,user:{id:userId,email_confirmed_at:at}}),
+    read:input=>resultStore.readMemberCheckoutResult(input,rpc),cancel:input=>resultStore.cancelMemberCheckout(input,rpc)};
+   const url=`https://synthetic.faolla.invalid/api/member-checkout/result?siteId=${site}&operationKey=${f.key}`;
+   const before=await all(),response=await resultRoute.handleMemberCheckoutResult(new Request(url),deps);
+   assert.equal(response.status,200);const read=await response.json();assert.equal(read.result.cancellationAvailable,true);assert.deepEqual(await all(),before);
+   assert.ok(!/membershipId|pointTransactions|couponUses|settlementCode|principalKey|customer-synthetic/.test(JSON.stringify(read)));
+   const request=new Request('https://synthetic.faolla.invalid/api/member-checkout/cancel',{method:'POST',headers:{origin:'https://synthetic.faolla.invalid','content-type':'application/json'},
+    body:JSON.stringify({siteId:site,operationKey:f.key,expectedUpdatedAt:read.result.resource.updatedAt})});
+   const cancelled=await resultRoute.handleMemberCheckoutResult(request,deps);assert.equal(cancelled.status,200);assert.equal((await cancelled.json()).cancellation.pointsReturned,10);
+   const final=await resultStore.readMemberCheckoutResult({siteId:site,operationKey:f.key,principalKey:principal},rpc);
+   assert.equal(final.closed,true);assert.equal(final.resource.status,'cancelled');assert.equal(final.cancellationAvailable,false);assert.equal(final.cancellation.couponsReturned,1);
+   assert.equal(await resultStore.readMemberCheckoutResult({siteId:site,operationKey:f.key,principalKey:'account:50010106:foreign-synthetic'},rpc),null);
+  });
   await t.test('all browser/API roles are denied the private composition function and tables',async()=>{
    for(const role of ['anon','authenticated','service_role']){
     const client=await connect(role);
     await assert.rejects(client.query('select * from faolla_checkout_design.bundle_results'),/permission denied/);
     await assert.rejects(client.query('select faolla_checkout_design.commit_bundle($1,$2,$3,$4,$5)',[site,op(),principal,hash,{}]),/permission denied/);
     await assert.rejects(client.query('select public.faolla_member_checkout_catalog_snapshot_v1($1)',[site]),/permission denied/);
+    await assert.rejects(client.query('select faolla_checkout_design.cancel_bundle($1,$2,$3,$4)',[site,op(),principal,at]),/permission denied/);
+    await assert.rejects(client.query('select * from faolla_checkout_design.bundle_coupon_returns'),/permission denied/);
+    await assert.rejects(client.query('select public.faolla_member_checkout_result_v2($1,$2,$3)',[site,op(),principal]),/permission denied/);
+    await assert.rejects(client.query('select public.faolla_member_checkout_cancel_v2($1,$2,$3,$4)',[site,op(),principal,at]),/permission denied/);
    }
   });
   console.log(`[member-checkout-pg] PostgreSQL ${(await one(admin,'show server_version')).server_version}; private checks finished (status in TAP); evidence: ${evidence}`);

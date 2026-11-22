@@ -29,12 +29,13 @@ DECLARE
   v_account text; v_user text; v_member_id text; v_kind text; v_id text; v_stamp text;
   v_debit bigint; v_coupon_count integer; v_new_points numeric; v_transaction_delta numeric;
   v_member_state jsonb; v_level_id text;
+  v_offer jsonb; v_cancel_policy jsonb; v_stock_uses jsonb := '[]';
 BEGIN
   IF p_site_id IS NULL OR p_site_id !~ '^[0-9]{8}$' OR p_operation_key IS NULL OR p_operation_key !~ '^[a-f0-9]{64}$'
     OR p_request_hash IS NULL OR p_request_hash !~ '^[a-f0-9]{64}$'
     OR p_principal_key IS NULL OR p_principal_key !~ '^account:[0-9]{8}:[A-Za-z0-9_-]{8,128}$'
     OR jsonb_typeof(p_plan) IS DISTINCT FROM 'object' OR octet_length(p_plan::text)>262144
-    OR EXISTS(SELECT 1 FROM jsonb_object_keys(p_plan) k WHERE k NOT IN ('membership','settingsVersion','stock','coupons','couponReturnOnCancel','booking','order','receipt')) THEN
+    OR EXISTS(SELECT 1 FROM jsonb_object_keys(p_plan) k WHERE k NOT IN ('membership','settingsVersion','stock','coupons','couponReturnOnCancel','booking','order','receipt','offer')) THEN
     RAISE EXCEPTION 'checkout_invalid_plan';
   END IF;
   v_account := split_part(p_principal_key,':',2); v_user := split_part(p_principal_key,':',3);
@@ -67,6 +68,30 @@ BEGIN
   v_debit := (v_receipt->>'totalPoints')::bigint; v_coupon_count := (v_receipt->>'couponCount')::integer;
   IF v_debit=0 AND v_coupon_count=0 THEN RAISE EXCEPTION 'checkout_invalid_plan'; END IF;
   IF v_coupon_count>0 AND jsonb_typeof(p_plan->'couponReturnOnCancel') IS DISTINCT FROM 'boolean' THEN RAISE EXCEPTION 'checkout_coupon_policy_required'; END IF;
+  IF p_plan ? 'offer' THEN
+    -- Freeze policy from the CURRENT saved offer, not browser-supplied refund
+    -- booleans. Unbound legacy prototype results cannot later auto-refund.
+    SELECT v.snapshot INTO v_offer FROM faolla_checkout_design.offer_heads h
+      JOIN faolla_checkout_design.offer_versions v USING(site_id,offer_id,revision)
+      WHERE h.site_id=p_site_id AND h.offer_id=(p_plan#>>'{offer,id}')::uuid
+        AND h.revision=(p_plan#>>'{offer,revision}')::uuid AND h.enabled FOR SHARE OF h;
+    IF NOT FOUND OR v_offer->'enabled' IS DISTINCT FROM 'true'::jsonb
+      OR v_offer#>>'{source,kind}' IS DISTINCT FROM v_kind THEN RAISE EXCEPTION 'checkout_quote_changed'; END IF;
+    IF jsonb_typeof(v_offer#>'{checkoutBinding,pointsReturnOnCancel}') IS DISTINCT FROM 'boolean'
+      OR jsonb_typeof(v_offer->'couponReturnOnCancel') IS DISTINCT FROM 'boolean'
+      OR jsonb_typeof(v_offer#>'{checkoutBinding,cancellationAdvanceMinutes}') IS DISTINCT FROM 'number'
+      OR (v_offer#>>'{checkoutBinding,cancellationAdvanceMinutes}')::numeric NOT BETWEEN 0 AND 43200
+      OR trunc((v_offer#>>'{checkoutBinding,cancellationAdvanceMinutes}')::numeric)<>(v_offer#>>'{checkoutBinding,cancellationAdvanceMinutes}')::numeric
+      OR v_coupon_count>0 AND p_plan->'couponReturnOnCancel' IS DISTINCT FROM v_offer->'couponReturnOnCancel' THEN
+      RAISE EXCEPTION 'checkout_coupon_policy_required';
+    END IF;
+    v_cancel_policy := jsonb_build_object('returnPoints',v_offer#>'{checkoutBinding,pointsReturnOnCancel}',
+      'returnCoupons',v_offer->'couponReturnOnCancel','advanceMinutes',v_offer#>'{checkoutBinding,cancellationAdvanceMinutes}',
+      'cancellableUntil',CASE WHEN v_kind='booking' THEN
+        ((v_record->>'appointmentAt')::timestamp AT TIME ZONE (v_offer#>>'{source,timeZone}'))
+          - make_interval(mins=>(v_offer#>>'{checkoutBinding,cancellationAdvanceMinutes}')::integer) ELSE NULL END);
+    IF v_kind='booking' AND (v_cancel_policy->>'cancellableUntil') IS NULL THEN RAISE EXCEPTION 'checkout_invalid_plan'; END IF;
+  END IF;
 
   -- Shared lock order: original global booking control, THEN original merchant
   -- order/member lock. Old booking writers never acquire the latter, old
@@ -163,6 +188,7 @@ BEGIN
       IF v_item->'enabled' IS DISTINCT FROM 'true'::jsonb THEN RAISE EXCEPTION 'checkout_quantity_unavailable'; END IF;
       IF v_item->'stock'='null'::jsonb THEN CONTINUE; END IF;
       IF (v_item->>'stock')::numeric<(v_delta->>'quantity')::numeric THEN RAISE EXCEPTION 'checkout_quantity_unavailable'; END IF;
+      v_stock_uses := v_stock_uses||jsonb_build_array(v_delta);
       v_item := v_item||jsonb_build_object('stock',(v_item->>'stock')::numeric-(v_delta->>'quantity')::numeric);
       SELECT v_settings||jsonb_build_object('redemptionItems',jsonb_agg(CASE WHEN i->>'id'=v_delta->>'itemId' THEN v_item ELSE i END ORDER BY n)) INTO v_settings
         FROM jsonb_array_elements(v_settings->'redemptionItems') WITH ORDINALITY x(i,n);
@@ -222,6 +248,12 @@ BEGIN
   v_result := v_receipt||jsonb_build_object('siteId',p_site_id,'operationKey',p_operation_key,'membershipId',v_member_id);
   IF v_coupon_count>0 THEN
     v_result := v_result||jsonb_build_object('couponReturnOnCancel',p_plan->'couponReturnOnCancel','couponUses',v_coupon_uses);
+  END IF;
+  IF v_cancel_policy IS NOT NULL THEN
+    v_result := v_result||jsonb_build_object('offer',p_plan->'offer','cancellationPolicy',v_cancel_policy,'stockUses',v_stock_uses,
+      'pointTransactions',(SELECT coalesce(jsonb_agg(t),'[]'::jsonb) FROM jsonb_array_elements(v_transactions) t WHERE t->>'operatorId'='customer:'||v_account),
+      'resourceTerms',CASE WHEN v_kind='booking' THEN jsonb_build_object('appointmentAt',v_record->'appointmentAt','store',v_record->'store','item',v_record->'item',
+        'bookingBlockId',v_record->'bookingBlockId','bookingViewport',v_record->'bookingViewport') ELSE jsonb_build_object('items',v_record->'items','totalQuantity',v_record->'totalQuantity','totalAmount',v_record->'totalAmount') END);
   END IF;
   INSERT INTO faolla_checkout_design.bundle_results VALUES(p_site_id,p_operation_key,p_principal_key,p_request_hash,v_kind,v_id,v_result);
   RETURN jsonb_build_object('replayed',false,'receipt',v_result);
