@@ -4,6 +4,7 @@ import { checkoutPrincipalKey, MerchantCheckoutError } from "@/lib/merchantCheck
 import { isMemberCheckoutPilotEnabled } from "@/lib/merchantMemberCheckoutPilot.server";
 import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
 import { isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
+import { checkoutConfirmationHash } from "@/lib/merchantCheckoutConfirmation.server";
 const defaults = { preview: previewMemberCheckout, session: resolvePersonalAccountSessionFromRequest, enabled: isMemberCheckoutPilotEnabled };
 export type MemberCheckoutPreviewHttpDependencies = typeof defaults;
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: {
@@ -42,7 +43,7 @@ export async function handleMemberCheckoutPreview(request: Request, overrides: P
     const result = await deps.preview({ request: body, authorize });
     const after = await authorize();
     if (!after || checkoutPrincipalKey(after) !== initialKey) return json({ error: "checkout_unauthorized" }, 401);
-    return json({ ok: true, ...result });
+    return json({ ok: true, ...result, confirmationHash: checkoutConfirmationHash(result.quote, initial, result.slot) });
   } catch (error) {
     if (error instanceof Error && ["checkout_invalid_selection", "checkout_invalid_coupon_selection"].includes(error.message)) return json({ error: error.message }, 400);
     const safe = error instanceof MerchantCheckoutError && ["checkout_quote_changed", "checkout_offer_not_found", "checkout_source_changed", "checkout_module_unavailable",

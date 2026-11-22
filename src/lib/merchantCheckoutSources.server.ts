@@ -5,7 +5,12 @@ import { buildMerchantBookingRulesSnapshot, resolveMerchantBookingRuleOptionSets
 import { hasPublishedProductBlockForViewport } from "./merchantOrderCatalog";
 import type { CheckoutSourceChoice } from "./merchantCheckoutConfiguration";
 
-const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+// JSONB/HTTP may reorder object fields without changing a published source.
+// Keep arrays ordered, but hash object keys canonically on BOTH config/quote
+// paths. A key-order-only round trip is not a new price/rule revision.
+const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value, (_key, entry) =>
+  entry && typeof entry === "object" && !Array.isArray(entry)
+    ? Object.fromEntries(Object.entries(entry).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) : entry)).digest("hex");
 /** Server-produced exact choices from current published plans, never drafts or
  * free-text/name matching. Reading does not bootstrap/repair old catalog data. */
 export function buildCheckoutSourceChoices(input: { siteId: string; siteName: string; blocks: Block[]; catalog: MerchantCatalog | null;

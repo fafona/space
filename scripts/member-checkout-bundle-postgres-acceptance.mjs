@@ -19,6 +19,16 @@ import configurationStore from '../src/lib/merchantCheckoutConfigurationStore.se
 import memberPoints from '../src/lib/merchantMemberships.server.ts';
 import resultStore from '../src/lib/merchantMemberCheckoutResult.server.ts';
 import resultRoute from '../src/app/api/member-checkout/result/route-handler.ts';
+import submissionPlan from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
+import submission from '../src/lib/merchantCheckoutSubmission.server.ts';
+import submitRoute from '../src/app/api/member-checkout/submit/route-handler.ts';
+import recoverRoute from '../src/app/api/member-checkout/recover/route-handler.ts';
+import checkoutSources from '../src/lib/merchantCheckoutSources.server.ts';
+import bookingRules from '../src/lib/merchantBookingRules.ts';
+import workbench from '../src/lib/merchantBookingWorkbench.ts';
+import bookingTime from '../src/lib/merchantBookingTime.ts';
+import platformSnapshot from '../src/lib/platformMerchantSnapshot.ts';
+import platformControl from '../src/data/platformControlStore.ts';
 
 test('private composite proposal uses actual legacy PostgreSQL transactions, never separate financial commits',{timeout:120000},async t=>{
  const runtime=path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR||'.missing-test-runtime');
@@ -58,7 +68,7 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
   for(const [merchant,slug,blocks] of [[site,memberSlug,[member,foreign]],[site,couponSlug,[coupon]],[site,settingsSlug,configSettings],['__faolla_booking_persistence__',bookingSlug,{version:1,records:[foreignBooking]}]]){
    await admin.query('insert into pages(merchant_id,slug,blocks) values($1,$2,$3)',[merchant,slug,JSON.stringify(blocks)]);
   }
-  for(const file of ['scripts/supabase-migrations/202609080045_order_membership_atomic_mutation.sql','scripts/supabase-migrations/202609080046_redemption_atomic_mutation.sql','scripts/supabase-migrations/202610250211_booking_atomic_preparation.sql','scripts/supabase-migrations/202610250212_booking_atomic_runtime.sql','scripts/supabase-migrations/202611050213_booking_atomic_safeupdate_singleton.sql','database/proposals/20261122_member_checkout_design.sql','database/proposals/20261122_member_checkout_catalog.sql','database/proposals/20261122_member_checkout_bundle.sql','database/proposals/20261122_member_checkout_cancellation.sql','database/proposals/20261122_member_checkout_queries.sql']){
+  for(const file of ['scripts/supabase-migrations/202609080045_order_membership_atomic_mutation.sql','scripts/supabase-migrations/202609080046_redemption_atomic_mutation.sql','scripts/supabase-migrations/202610250211_booking_atomic_preparation.sql','scripts/supabase-migrations/202610250212_booking_atomic_runtime.sql','scripts/supabase-migrations/202611050213_booking_atomic_safeupdate_singleton.sql','database/proposals/20261122_member_checkout_design.sql','database/proposals/20261122_member_checkout_catalog.sql','database/proposals/20261122_member_checkout_bundle.sql','database/proposals/20261122_member_checkout_cancellation.sql','database/proposals/20261122_member_checkout_queries.sql','database/proposals/20261122_member_checkout_submission.sql']){
    await admin.query(await readFile(path.resolve(file),'utf8'));
   }
   // Test-only admin activation in this freshly created owned synthetic cluster.
@@ -412,6 +422,155 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
    assert.equal(final.closed,true);assert.equal(final.resource.status,'cancelled');assert.equal(final.cancellationAvailable,false);assert.equal(final.cancellation.couponsReturned,1);
    assert.equal(await resultStore.readMemberCheckoutResult({siteId:site,operationKey:f.key,principalKey:'account:50010106:foreign-synthetic'},rpc),null);
   });
+  const submissionFixture=async({kind='booking',couponAmount=20,stock=2,withCoupon=true}={})=>{
+   const stamp=new Date().toISOString(),blockId=`submit-${kind}-${randomUUID()}`,appointmentAt=`${bookingTime.bookingWallTimeAt(new Date(Date.now()+3*86400000),'Europe/Madrid').slice(0,10)}T12:00`;
+   const blocks=[kind==='booking'?{id:blockId,type:'booking',props:{bookingStoreOptions:['Synthetic'],bookingItemOptions:['Play'],bookingTitleOptions:['Mx'],bookingTimeSlotRules:[{timeRange:'10:00-18:00',maxBookings:1}]}}:
+    {id:blockId,type:'product',props:{products:[]}}];
+   const catalog=kind==='order'?{revision:1,updatedAt:stamp,pricePrefix:'€',categories:[],products:[{id:'submit-product',code:'P',name:'Synthetic product',description:'',price:'10.00',imageUrl:'',thumbnailUrl:'',tag:'',availability:'available'}],
+    collections:[{id:'submit-collection',blockId,viewport:'shared',productIds:['submit-product']}]}:null;
+   const source=checkoutSources.buildCheckoutSourceChoices({siteId:site,siteName:'Synthetic',blocks,catalog,allowBooking:kind==='booking',allowOrder:kind==='order'})[0];
+   const savePage=async(merchant,slug,value)=>{const found=await one(admin,'select id from pages where merchant_id is not distinct from $1 and slug=$2',[merchant,slug]);
+    if(found)await admin.query('update pages set blocks=$2 where id=$1',[found.id,JSON.stringify(value)]);
+    else await admin.query('insert into pages(merchant_id,slug,blocks) values($1,$2,$3)',[merchant,slug,JSON.stringify(value)]);};
+   const permissionConfig={...platformControl.createDefaultMerchantPermissionConfig(),allowBookingBlock:true,allowProductBlock:true,allowOrderManagement:true,allowMembershipManagement:true,allowPointsRedemption:true,allowCouponModule:true};
+   const siteView=platformSnapshot.buildPlatformMerchantSnapshotSite({id:site,name:'Synthetic',status:'online',serviceExpiresAt:'2099-01-01T00:00:00Z',permissionConfig});assert.ok(siteView);
+   await savePage(null,'__platform_merchant_snapshot__',platformSnapshot.buildPlatformMerchantSnapshotBlocks(platformSnapshot.normalizePlatformMerchantSnapshotPayload({revision:randomUUID(),snapshot:[siteView],defaultSortRule:'created_desc',merchantConfigHistoryBySiteId:{}})));
+   await savePage(site,'synthetic-checkout-public',blocks);
+   if(catalog)await savePage(site,`__merchant_catalog__:${site}`,{kind:'merchant_catalog',siteId:site,catalog});
+   if(kind==='booking'){
+    for(const [key,property,value]of [['rules','snapshots',bookingRules.buildMerchantBookingRulesSnapshot(site,blocks,stamp)],['workbench','settingsBySiteId',{...workbench.createDefaultMerchantBookingWorkbenchSettings(),timeZone:'Europe/Madrid'}]]){
+     const slug=key==='rules'?'__merchant_booking_rules__:v1':'__merchant_booking_workbench__:v1',current=(await one(admin,'select blocks from pages where slug=$1',[slug]))?.blocks??{version:1,[property]:{}};
+     await admin.query('select public.faolla_booking_atomic_configuration_v2($1,$2,$3)',[site,key,{...current,[property]:{...current[property],[site]:value}}]);
+    }
+   }
+   const memberRow=await one(admin,'select blocks,to_jsonb(updated_at) as stamp from pages where slug=$1',[memberSlug]),settingsRow=await one(admin,'select blocks,to_jsonb(updated_at) as stamp from pages where slug=$1',[settingsSlug]),couponRow=await one(admin,'select blocks,to_jsonb(updated_at) as stamp from pages where slug=$1',[couponSlug]);
+   const nextMember=membership.normalizeMerchantMembershipRecord({...memberRow.blocks[0],status:'active',pointBalance:1000,growthValue:0,levelId:'',birthday:'',transactions:[]});
+   const nextSettings=settings.createEmptyMerchantMembershipSettings(site);nextSettings.redemptionItems=[{...configSettings.redemptionItems[0],pointsCost:100,stock}];
+   const couponId=`submit-coupon-${randomUUID()}`,claimId=`submit-claim-${randomUUID()}`;
+   const nextCoupon=coupons.normalizeMerchantCouponRecord({id:couponId,siteId:site,code:`SB${randomUUID().replaceAll('-','').slice(0,16)}`,title:'Synthetic submission voucher',discountType:'points_voucher',discountValue:couponAmount,usageScenarios:['points_redemption'],createdAt:stamp,updatedAt:stamp,
+    claimEvents:[{id:claimId,at:stamp,accountId,userId,email:'synthetic@example.invalid',customerName:'Synthetic',code:'',settlementType:'qr',settlementCode:`PRIVATE-${randomUUID()}`,validUntil:null}]});assert.ok(nextCoupon);
+   await admin.query('select public.faolla_commit_redemption_v1($1,$2)',[site,{memberships:{expectedUpdatedAt:memberRow.stamp,next:[nextMember,...memberRow.blocks.slice(1)]},settings:{expectedUpdatedAt:settingsRow.stamp,next:nextSettings},coupons:{expectedUpdatedAt:couponRow.stamp,next:[nextCoupon,...couponRow.blocks]}}]);
+   const offerId=randomUUID(),revision=randomUUID(),offer={version:1,id:offerId,revision,siteId:site,enabled:true,title:'Synthetic submission',maxQuantity:kind==='booking'?1:5,
+    source:kind==='booking'?{kind,blockId,serviceId:offerId,timeZone:'Europe/Madrid'}:{kind,blockId,collectionId:source.collectionId,productId:source.productId},cash:{currency:'eur',unitAmountMinor:1000,initialPolicy:{mode:'full'}},unitPoints:100,allowOnSite:true,couponReturnOnCancel:true,
+    checkoutBinding:{sourceKey:source.key,sourceVersion:source.sourceVersion,viewport:source.viewport,...(kind==='booking'?{store:source.store,item:source.item}:{}),stockItemId:'item-synthetic',voucherCouponIds:[],durationMinutes:60,pointsReturnOnCancel:true,cancellationAdvanceMinutes:60}};
+   const current=(await one(admin,'select public.faolla_member_checkout_catalog_snapshot_v1($1) as result',[site])).result;
+   await admin.query('select public.faolla_member_checkout_catalog_save_v1($1,$2,$3,$4,$5)',[site,current.version,randomUUID(),'owner:synthetic-owner',offer]);
+   const request={siteId:site,offerId,offerRevision:revision,quantity:1,...(kind==='booking'?{appointmentAt}:{}),couponClaims:withCoupon?[{couponId,claimEventId:claimId}]:[],method:'points',nonce:randomUUID(),confirmationHash:'0'.repeat(64),customer:{name:'Synthetic',title:'Mx',email:'synthetic@example.invalid',phone:'000000000',note:''}};
+   const identity=submissionPlan.checkoutSubmissionIdentity(request,{accountId,userId}),snapshot=(await one(admin,'select public.faolla_member_checkout_submission_snapshot_v2($1,$2,$3,$4,$5) as result',[site,identity.operationKey,principal,identity.requestHash,offerId])).result.snapshot;
+   const view=await submissionPlan.quoteCheckoutSubmissionSnapshot(snapshot,identity,{accountId,userId});assert.equal(view.quote.options[0].totalPoints,100-(withCoupon?couponAmount:0));assert.ok(view.confirmationHash);
+   request.confirmationHash=view.confirmationHash;
+   return{request,offer,blockId,savePage};
+  };
+  const submitRpc=client=>async(name,args)=>{try{
+   const sql=name==='faolla_member_checkout_submission_snapshot_v2'?'select public.faolla_member_checkout_submission_snapshot_v2($1,$2,$3,$4,$5) as result':
+    name==='faolla_member_checkout_submission_commit_v2'?'select public.faolla_member_checkout_submission_commit_v2($1,$2,$3,$4,$5,$6,$7) as result':null;assert.ok(sql);
+   return{data:(await one(client,sql,[args.p_site_id,args.p_operation_key,args.p_principal_key,args.p_request_hash,...(name.includes('snapshot')?[args.p_offer_id]:[args.p_snapshot,args.p_plan,args.p_not_after])])).result,error:null};
+  }catch(error){return{data:null,error:{message:error.message}};}};
+  const submit=(f,client=a,override)=>submission.submitMemberCheckout({request:f.request,principal:{accountId,userId},authorize:async()=>({accountId,userId})},override??submitRpc(client));
+  const submitSnapshot=async f=>{const identity=submissionPlan.checkoutSubmissionIdentity(f.request,{accountId,userId});
+   const raw=(await submitRpc(admin)('faolla_member_checkout_submission_snapshot_v2',{p_site_id:site,p_operation_key:identity.operationKey,p_principal_key:principal,p_request_hash:identity.requestHash,p_offer_id:f.offer.id})).data;
+   assert.equal(raw.replayed,false);const snapshot=submissionPlan.parseCheckoutSubmissionSnapshot(raw.snapshot,identity),planned=await submissionPlan.planCheckoutSubmission(snapshot,identity,{accountId,userId});return{identity,snapshot,...planned};};
+  const commitPrepared=(f,client=b)=>one(client,'select public.faolla_member_checkout_submission_commit_v2($1,$2,$3,$4,$5,$6,$7) as result',[site,f.identity.operationKey,principal,f.identity.requestHash,f.snapshot,f.plan,f.notAfter]);
+  const recover=async f=>{
+   const response=await recoverRoute.handleMemberCheckoutRecover(new Request('https://synthetic.faolla.invalid/api/member-checkout/recover',{method:'POST',headers:{origin:'https://synthetic.faolla.invalid','content-type':'application/json'},body:JSON.stringify({siteId:site,nonce:f.request.nonce})}),
+    {enabled:()=>true,session:async()=>({accountId,userId,servicePaused:false,user:{id:userId,email_confirmed_at:at}}),read:input=>resultStore.readMemberCheckoutResult(input,async(name,args)=>{
+     assert.equal(name,'faolla_member_checkout_result_v2');return{data:(await one(admin,'select public.faolla_member_checkout_result_v2($1,$2,$3) as result',[args.p_site_id,args.p_operation_key,args.p_principal_key])).result,error:null};
+    })});
+   assert.equal(response.status,200);return response.json();
+  };
+  await t.test('actual submission HTTP and trusted snapshot planner commit points, coupon, finite stock and appointment once',async()=>{
+   const f=await submissionFixture(),before=await all(),deps={enabled:()=>true,session:async()=>({accountId,userId,servicePaused:false,user:{id:userId,email_confirmed_at:at}}),submit:input=>submission.submitMemberCheckout(input,submitRpc(a))};
+   const request=()=>new Request('https://synthetic.faolla.invalid/api/member-checkout/submit',{method:'POST',headers:{origin:'https://synthetic.faolla.invalid','content-type':'application/json'},body:JSON.stringify(f.request)});
+   const response=await submitRoute.handleMemberCheckoutSubmit(request(),deps);assert.equal(response.status,200);const first=await response.json();assert.equal(first.result.totalPoints,80);assert.equal(first.result.couponCount,1);assert.equal(first.result.resource.status,'active');
+   assert.ok(!/member-synthetic|customer-synthetic|PRIVATE|pointTransactions|editToken|principalKey|sourceRows/.test(JSON.stringify(first)));
+   const saved=await all();assert.equal(saved.pages.find(row=>row.slug===memberSlug).blocks[0].pointBalance,920);
+   assert.deepEqual(saved.pages.find(row=>row.slug===memberSlug).blocks.slice(1),before.pages.find(row=>row.slug===memberSlug).blocks.slice(1));
+   assert.equal(saved.pages.find(row=>row.slug===settingsSlug).blocks.redemptionItems[0].stock,1);
+   const replay=await submitRoute.handleMemberCheckoutSubmit(request(),deps);assert.equal(replay.status,200);assert.equal((await replay.json()).replayed,true);assert.deepEqual(await all(),saved);
+  });
+  await t.test('a lost actual commit response is recovered read-only from the original nonce after offer disable and membership leave',async()=>{
+   const f=await submissionFixture(),before=await all();
+   await assert.rejects(submit(f,a,async(name,args)=>{const response=await submitRpc(a)(name,args);if(name.includes('commit')&&!response.error)throw new Error('synthetic lost response');return response;}),/checkout_unconfirmed/);
+   const committed=await all();assert.equal(committed.results.length,before.results.length+1);assert.equal(committed.pages.find(row=>row.slug===memberSlug).blocks[0].pointBalance,920);
+   await admin.query('update faolla_checkout_design.offer_heads set enabled=false where site_id=$1 and offer_id=$2',[site,f.offer.id]);
+   const row=await one(admin,'select blocks,to_jsonb(updated_at) as stamp from pages where slug=$1',[memberSlug]),left=structuredClone(row.blocks);left[0].status='left';
+   await admin.query('select public.faolla_commit_order_membership_v1($1,$2)',[site,{memberships:{expectedUpdatedAt:row.stamp,next:left}}]);
+   const saved=await all(),recovered=await recover(f);assert.equal(recovered.state,'confirmed');assert.equal(recovered.result.totalPoints,80);
+   assert.equal(recovered.result.operationKey,submissionPlan.checkoutSubmissionIdentity(f.request,{accountId,userId}).operationKey);
+   const replay=await submit(f);assert.equal(replay.replayed,true);assert.deepEqual(replay.result,recovered.result);assert.deepEqual(await all(),saved);
+  });
+  await t.test('a read during an actually blocked submission is unconfirmed, then resolves the same original without another write',async()=>{
+   const f=await submissionFixture(),before=await all();await a.query('begin');let pending;
+   try{
+    await a.query("select pg_advisory_xact_lock(hashtextextended('faolla-order-membership:'||$1,0))",[site]);pending=submit(f,b).then(value=>({value}),error=>({error}));
+    let waiting=false;for(let i=0;i<200;i++){waiting=(await one(admin,"select wait_event_type='Lock' and wait_event='advisory' as waiting from pg_stat_activity where pid=$1",[b.processID]))?.waiting===true;if(waiting)break;await new Promise(resolve=>setTimeout(resolve,5));}
+    assert.equal(waiting,true);assert.deepEqual(await recover(f),{ok:true,state:'unconfirmed'});assert.deepEqual(await all(),before);
+    await a.query('commit');const result=await pending;assert.ok(result.value,result.error?.message);const recovered=await recover(f);
+    assert.equal(recovered.state,'confirmed');assert.deepEqual(recovered.result,result.value.result);assert.equal((await all()).results.length,before.results.length+1);
+   }catch(error){await a.query('rollback');if(pending)await pending;throw error;}
+  });
+  await t.test('distinct customer nonces competing for one appointment cannot both debit or consume coupons',async()=>{
+   const f=await submissionFixture({withCoupon:false}),second={...f,request:{...f.request,nonce:randomUUID()}},before=await all();
+   const outcomes=await Promise.allSettled([submit(f,a),submit(second,b)]);assert.equal(outcomes.filter(value=>value.status==='fulfilled').length,1);
+   const saved=await all();assert.equal(saved.results.length,before.results.length+1);assert.equal(saved.pages.find(row=>row.slug===memberSlug).blocks[0].pointBalance,900);
+   assert.equal(saved.pages.find(row=>row.slug===bookingSlug).blocks.records.filter(row=>row.bookingBlockId===f.blockId).length,1);
+   await assert.rejects(submit({...f,request:{...f.request,nonce:randomUUID()}},b),/checkout_quantity_unavailable/);assert.deepEqual(await all(),saved);
+  });
+  await t.test('changed authoritative permissions or published source after preparation reject the entire old bundle',async()=>{
+   for(const mode of ['permission','source','member','stock','coupon']){
+    const f=await submissionFixture(),prepared=await submitSnapshot(f);
+    if(mode==='permission'||mode==='source'){
+     const slug=mode==='permission'?'__platform_merchant_snapshot__':'synthetic-checkout-public',row=await one(admin,'select id,blocks from pages where slug=$1',[slug]),next=structuredClone(row.blocks);
+     if(mode==='permission')next[0].props.publishedMerchantSnapshot[0].permissionConfig.allowPointsRedemption=false;else next[0].props.bookingStoreOptions=['Changed'];
+     await admin.query('update pages set blocks=$2 where id=$1',[row.id,JSON.stringify(next)]);
+    }else{
+     const slug=mode==='member'?memberSlug:mode==='stock'?settingsSlug:couponSlug,row=await one(admin,'select blocks,to_jsonb(updated_at) as stamp from pages where slug=$1',[slug]),next=structuredClone(row.blocks);
+     if(mode==='member')next[0].pointBalance-=5;if(mode==='stock')next.redemptionItems[0].stock=0;if(mode==='coupon')next[0].status='paused';
+     await admin.query(mode==='member'?'select public.faolla_commit_order_membership_v1($1,$2)':'select public.faolla_commit_redemption_v1($1,$2)',[site,{[mode==='member'?'memberships':mode==='stock'?'settings':'coupons']:{expectedUpdatedAt:row.stamp,next}}]);
+    }
+    const before=await all();await assert.rejects(commitPrepared(prepared),/checkout_conflict/);assert.deepEqual(await all(),before);
+   }
+  });
+  await t.test('late appointment storage failure rolls back every trusted-prepared financial change',async()=>{
+   const f=await submissionFixture(),prepared=await submitSnapshot(f);prepared.plan.booking.mailJobs=[{invalid:'synthetic late failure'}];
+   const before=await all();await assert.rejects(commitPrepared(prepared),/booking_atomic_invalid_mail_intent/);assert.deepEqual(await all(),before);
+  });
+  await t.test('deadline is checked again after a real member lock wait and cannot permit a late debit',async()=>{
+   const f=await submissionFixture(),prepared=await submitSnapshot(f);prepared.notAfter=new Date(Date.now()+1200).toISOString();const before=await all();
+   await a.query('begin');let pending;
+   try{
+    await a.query("select pg_advisory_xact_lock(hashtextextended('faolla-order-membership:'||$1,0))",[site]);pending=commitPrepared(prepared,b).then(value=>({value}),error=>({error}));
+    let waiting=false;for(let i=0;i<200;i++){waiting=(await one(admin,"select wait_event_type='Lock' and wait_event='advisory' as waiting from pg_stat_activity where pid=$1",[b.processID]))?.waiting===true;if(waiting)break;await new Promise(resolve=>setTimeout(resolve,5));}
+    assert.equal(waiting,true);await admin.query('select pg_sleep(greatest(0,extract(epoch from ($1::timestamptz-clock_timestamp())))+0.05)',[prepared.notAfter]);await a.query('commit');const result=await pending;assert.match(result.error?.message??'',/checkout_quote_expired/);assert.deepEqual(await all(),before);
+   }catch(error){await a.query('rollback');if(pending)await pending;throw error;}
+  });
+  await t.test('points product order is not cash paid and cancellation returns its exact original points/coupon/stock',async()=>{
+   const f=await submissionFixture({kind:'order'}),result=await submit(f);
+   assert.equal(result.result.resourceKind,'order');const rows=(await admin.query('select blocks from pages where slug~$1',[`^__merchant_orders__:${site}:chunk:[0-9]+$`])).rows.flatMap(row=>row.blocks),order=rows.find(row=>row.id===result.result.resourceId);
+   assert.equal(order.totalAmount,0);assert.equal(order.totalQuantity,1);assert.equal(order.items[0].unitPrice,0);assert.equal(order.customerAccountId,accountId);
+   const cancelled=(await one(admin,'select public.faolla_member_checkout_cancel_v2($1,$2,$3,$4) as result',[site,result.result.operationKey,principal,result.result.resource.updatedAt])).result;
+   assert.equal(cancelled.receipt.pointsReturned,80);assert.equal(cancelled.receipt.couponsReturned,1);assert.equal(cancelled.receipt.stockReleased,1);
+   assert.equal((await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks[0].pointBalance,1000);
+  });
+  await t.test('crossing the trusted deadline inside inner storage rolls back every effect instead of returning an expired success',async()=>{
+   const f=await submissionFixture(),prepared=await submitSnapshot(f),before=await all();prepared.notAfter=new Date(Date.now()+1200).toISOString();
+   await admin.query(`create function public.synthetic_submit_delay() returns trigger language plpgsql as $$begin
+    if new.slug='${memberSlug}' then perform pg_sleep(greatest(0,extract(epoch from ('${prepared.notAfter}'::timestamptz-clock_timestamp())))+0.05);end if;return new;end;$$;
+    create trigger synthetic_submit_delay after update on public.pages for each row execute function public.synthetic_submit_delay();`);
+   try{await assert.rejects(commitPrepared(prepared),/checkout_quote_expired/);assert.deepEqual(await all(),before);}
+   finally{await admin.query('drop trigger synthetic_submit_delay on public.pages;drop function public.synthetic_submit_delay()');}
+  });
+  await t.test('fully coupon covered submission creates a real appointment but no invented point debit or cash charge',async()=>{
+   const f=await submissionFixture({couponAmount:100}),result=await submit(f);assert.equal(result.result.totalPoints,0);assert.equal(result.result.couponCount,1);
+   assert.equal((await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks[0].pointBalance,1000);
+  });
+  await t.test('a newer published-row insert during the write is detected and rolls the transaction back',async()=>{
+   const f=await submissionFixture(),prepared=await submitSnapshot(f),before=await all();
+   await admin.query(`create function public.synthetic_submit_phantom() returns trigger language plpgsql as $$begin
+    if new.slug='${memberSlug}' then insert into public.pages(merchant_id,slug,blocks) values('${site}','synthetic-phantom','[]'::jsonb);end if;return new;end;$$;
+    create trigger synthetic_submit_phantom after update on public.pages for each row execute function public.synthetic_submit_phantom();`);
+   try{await assert.rejects(commitPrepared(prepared),/checkout_conflict/);assert.deepEqual(await all(),before);}finally{await admin.query('drop trigger synthetic_submit_phantom on public.pages;drop function public.synthetic_submit_phantom()');}
+  });
   await t.test('all browser/API roles are denied the private composition function and tables',async()=>{
    for(const role of ['anon','authenticated','service_role']){
     const client=await connect(role);
@@ -422,6 +581,8 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
     await assert.rejects(client.query('select * from faolla_checkout_design.bundle_coupon_returns'),/permission denied/);
     await assert.rejects(client.query('select public.faolla_member_checkout_result_v2($1,$2,$3)',[site,op(),principal]),/permission denied/);
     await assert.rejects(client.query('select public.faolla_member_checkout_cancel_v2($1,$2,$3,$4)',[site,op(),principal,at]),/permission denied/);
+    await assert.rejects(client.query('select public.faolla_member_checkout_submission_snapshot_v2($1,$2,$3,$4,$5)',[site,op(),principal,op(),randomUUID()]),/permission denied/);
+    await assert.rejects(client.query('select public.faolla_member_checkout_submission_commit_v2($1,$2,$3,$4,$5,$6,$7)',[site,op(),principal,op(),{},{},at]),/permission denied/);
    }
   });
   console.log(`[member-checkout-pg] PostgreSQL ${(await one(admin,'show server_version')).server_version}; private checks finished (status in TAP); evidence: ${evidence}`);

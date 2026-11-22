@@ -35,3 +35,10 @@ test("published source versions change on rule edits and module gates do not inv
   const after = buildCheckoutSourceChoices(f); assert.equal(before[0].key, after[0].key); assert.notEqual(before[0].sourceVersion, after[0].sourceVersion);
   assert.deepEqual(buildCheckoutSourceChoices({ ...f, allowBooking: false, allowOrder: false }), []);
 });
+
+test("JSONB object key ordering cannot change an otherwise identical source identity/version", () => {
+  const f = fixture(), before = buildCheckoutSourceChoices(f);
+  const reverse = (value: unknown): unknown => Array.isArray(value) ? value.map(reverse) : value && typeof value === "object"
+    ? Object.fromEntries(Object.entries(value).reverse().map(([key, entry]) => [key, reverse(entry)])) : value;
+  assert.deepEqual(buildCheckoutSourceChoices(reverse(f) as ReturnType<typeof fixture>), before);
+});
