@@ -169,7 +169,8 @@ async function quote(input: {
 const SAFE_CODES = new Set(["checkout_invalid_selection", "checkout_invalid_offer", "checkout_offer_not_found", "checkout_quote_changed",
   "checkout_quantity_unavailable", "checkout_total_too_large", "checkout_invalid_site", "checkout_disabled", "checkout_unauthorized",
   "checkout_module_unavailable", "checkout_unavailable", "checkout_membership_scope_mismatch", "checkout_identity_changed", "checkout_coupon_unavailable",
-  "checkout_invalid_coupon_selection", "checkout_coupon_store_ambiguous", "checkout_coupon_policy_required", "checkout_membership_pricing_unavailable"]);
+  "checkout_invalid_coupon_selection", "checkout_coupon_store_ambiguous", "checkout_coupon_policy_required", "checkout_membership_pricing_unavailable",
+  "checkout_source_changed", "checkout_slot_unavailable", "checkout_booking_quantity_unsupported", "checkout_membership_unavailable"]);
 export async function quoteMerchantCheckout(input: Parameters<typeof quote>[0]): Promise<MerchantCheckoutQuoteView> {
   try { return await quote(input); }
   catch (error) {
