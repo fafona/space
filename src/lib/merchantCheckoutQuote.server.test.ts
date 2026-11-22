@@ -3,19 +3,20 @@ import test from "node:test";
 import { quoteMerchantCheckout, type CheckoutPrincipal, type MerchantCheckoutQuoteRepository, type CheckoutMembership,
   type CheckoutOnlineReadiness } from "./merchantCheckoutQuote.server";
 import type { MerchantCheckoutOffer } from "./merchantCheckoutCatalog";
+import { normalizeMerchantCouponRecord } from "./merchantCoupons";
 
 const principal: CheckoutPrincipal = { accountId: "50010105", userId: "user-synthetic-1001" };
 const id = "12345678-1234-4234-8234-123456789abc", revision = "87654321-4321-4321-8321-cba987654321", now = 1_800_000_000_000;
 function setup() {
   const offer: MerchantCheckoutOffer = { version: 1, id, revision, siteId: "10909095", enabled: true, title: "Synthetic session",
     source: { kind: "booking", blockId: "booking-test", serviceId: "service-test", timeZone: "Europe/Madrid" }, maxQuantity: 5,
-    cash: { currency: "eur", unitAmountMinor: 10_000, initialPolicy: { mode: "deposit_percent", basisPoints: 3000 } }, unitPoints: 500, allowOnSite: true };
+    cash: { currency: "eur", unitAmountMinor: 10_000, initialPolicy: { mode: "deposit_percent", basisPoints: 3000 } }, unitPoints: 500, allowOnSite: true, couponReturnOnCancel: true };
   const member: CheckoutMembership = { id: "member-synthetic-1", siteId: offer.siteId, ...principal, status: "active", pointBalance: 1500 };
   const readiness: CheckoutOnlineReadiness = { siteId: offer.siteId, connectedAccountId: "acct_synthetic", verifiedAt: now,
     settlementCurrency: "eur",
     chargesEnabled: true, platformFee: { policyId: "synthetic-fee-policy", basisPoints: 250 } };
   const counts = { members: 0, visible: 0, readiness: 0 };
-  const pilot = { enabled: true, bookings: true, orders: true, points: true };
+  const pilot = { enabled: true, bookings: true, orders: true, points: true, onlinePayments: true, coupons: false };
   const repository: MerchantCheckoutQuoteRepository = {
     pilot: async () => pilot, offer: async () => offer, sourceVisible: async () => { counts.visible++; return true; },
     availability: async () => ({ available: 5 }), ownMembership: async () => { counts.members++; return member; },
@@ -108,4 +109,88 @@ test("changing identity while a quote loads does not expose the previous account
 test("no merchant credential, provider object or SQL error is exposed from a repository failure", async () => {
   const f = setup(); f.input.repository.offer = async () => { throw new Error("SQL SELECT private_customer_email test_secret"); };
   await assert.rejects(() => quoteMerchantCheckout(f.input), { message: "checkout_unavailable" });
+});
+
+test("Stripe is not a prerequisite: disabled/unset online pilot makes no readiness call", async () => {
+  const f = setup(); f.pilot.onlinePayments = false;
+  f.input.repository.onlineReadiness = async () => { throw new Error("must not contact a payment provider"); };
+  const quote = await quoteMerchantCheckout(f.input);
+  assert.deepEqual(quote.options.map(row => row.method), ["points", "on_site"]);
+  assert.equal(quote.options.every(row => row.available), true);
+});
+
+function withCoupon(type: "points_voucher" | "amount_off" | "exchange_voucher" = "points_voucher") {
+  const f = setup(); f.pilot.onlinePayments = false; f.pilot.coupons = true;
+  const at = new Date(now).toISOString();
+  const coupon = normalizeMerchantCouponRecord({ id: "coupon-test", code: "TEST", siteId: f.offer.siteId,
+    title: "Synthetic member coupon", discountType: type, discountValue: type === "points_voucher" ? 900 : 20,
+    exchangeQuantity: 2, usageScenarios: ["order_cart", "points_redemption"],
+    claimEvents: [{ id: "claim-test", at, ...principal, email: "private@example.invalid", code: "", customerName: "Private",
+      settlementType: "qr", settlementCode: "PRIVATE-CODE", validUntil: null }], createdAt: at, updatedAt: at })!;
+  f.input.repository.coupons = async () => ({ rows: [coupon], tags: [], voucherCouponIds: [coupon.id] });
+  const selection = { ...f.input.selection, couponClaims: [{ couponId: coupon.id, claimEventId: "claim-test" }] };
+  return { ...f, coupon, selection };
+}
+
+test("points coupon reduces the actual points preview before balance check, never the cash amount", async () => {
+  const f = withCoupon(); f.member.pointBalance = 100;
+  const result = await quoteMerchantCheckout({ ...f.input, selection: f.selection });
+  const points = result.options.find(row => row.method === "points")!;
+  assert.equal(points.totalPoints, 100); assert.equal(points.available, true); assert.equal(points.couponDiscountPoints, 900);
+  assert.equal(result.cashTotalMinor, 20000); assert.equal(result.options.find(row => row.method === "on_site")?.reason, "coupon_not_applicable");
+  assert.equal(result.coupons?.previewOnly, true); assert.equal(result.coupons?.selected.length, 1);
+  assert.ok(!/PRIVATE-CODE|private@example|claimEvents|redeemEvents/.test(JSON.stringify(result)));
+});
+
+test("amount coupon reduces on-site due; points-only collection cannot silently ignore it", async () => {
+  const f = withCoupon("amount_off");
+  const result = await quoteMerchantCheckout({ ...f.input, selection: f.selection });
+  assert.equal(result.options.find(row => row.method === "on_site")?.remainingMinor, 18000);
+  assert.equal(result.options.find(row => row.method === "points")?.reason, "coupon_not_applicable");
+  assert.equal(result.totalPoints, 1000);
+});
+
+test("fully covered service previews zero points without pretending the service is completed", async () => {
+  const f = withCoupon("exchange_voucher");
+  const result = await quoteMerchantCheckout({ ...f.input, selection: f.selection });
+  assert.equal(result.options.find(row => row.method === "points")?.totalPoints, 0);
+  assert.equal(result.reservationCreated, false); assert.equal(result.coupons?.previewOnly, true);
+  assert.equal("bookingStatus" in result, false);
+});
+
+test("coupon inventory requires an active own membership, including for cash-only items", async () => {
+  const f = withCoupon("amount_off"); f.offer.unitPoints = null;
+  const result = await quoteMerchantCheckout({ ...f.input, selection: f.selection });
+  assert.equal(result.options[0].remainingMinor, 18000); assert.equal(f.counts.members, 1);
+  f.member.status = "left";
+  await assert.rejects(() => quoteMerchantCheckout({ ...f.input, selection: f.selection }), /checkout_coupon_unavailable/);
+});
+
+test("stolen, used, unapproved and incompatible coupon selections fail instead of disappearing from a charge", async () => {
+  for (const mode of ["foreign", "used", "module", "binding"] as const) {
+    const f = withCoupon(mode === "binding" ? "exchange_voucher" : "points_voucher");
+    if (mode === "foreign") f.coupon.claimEvents[0].accountId = "50010106";
+    if (mode === "used") f.coupon.redeemEvents.push({ id: "used-test", at: new Date(now).toISOString(), claimEventId: "claim-test",
+      settlementCode: "PRIVATE-CODE", accountId: principal.accountId, userId: principal.userId, operatorId: "merchant", note: "" });
+    if (mode === "module") f.pilot.coupons = false;
+    if (mode === "binding") f.input.repository.coupons = async () => ({ rows: [f.coupon], tags: [], voucherCouponIds: [] });
+    await assert.rejects(() => quoteMerchantCheckout({ ...f.input, selection: f.selection }), /checkout_coupon_unavailable/);
+  }
+});
+
+test("valid coupon with still-insufficient points shows the shortage rather than allowing a new charge", async () => {
+  const f = withCoupon(); f.member.pointBalance = 99;
+  const result = await quoteMerchantCheckout({ ...f.input, selection: f.selection });
+  assert.equal(result.options.find(row => row.method === "points")?.reason, "insufficient_points");
+});
+
+test("coupon return policy must be explicitly configured and is shown from the trusted offer, not browser choice", async () => {
+  const f = withCoupon(); delete f.offer.couponReturnOnCancel;
+  await assert.rejects(() => quoteMerchantCheckout({ ...f.input, selection: f.selection }), /checkout_coupon_policy_required/);
+  assert.equal((await quoteMerchantCheckout(f.input)).coupons?.returnOnCancel, null);
+  f.offer.couponReturnOnCancel = false;
+  assert.equal((await quoteMerchantCheckout({ ...f.input, selection: f.selection })).coupons?.returnOnCancel, false);
+  f.offer.couponReturnOnCancel = true;
+  assert.equal((await quoteMerchantCheckout({ ...f.input, selection: f.selection })).coupons?.returnOnCancel, true);
+  await assert.rejects(() => quoteMerchantCheckout({ ...f.input, selection: { ...f.selection, couponReturnOnCancel: true } }), /checkout_invalid_selection/);
 });

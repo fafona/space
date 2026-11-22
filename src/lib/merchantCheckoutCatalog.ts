@@ -1,4 +1,5 @@
 import { quoteMerchantInitialPayment, type MerchantInitialPaymentPolicy } from "./faollaPaymentPolicy";
+import { parseCheckoutCouponClaims, type CheckoutCouponClaim } from "./merchantCheckoutCoupons";
 
 export type MerchantCheckoutSource =
   | { kind: "booking"; blockId: string; serviceId: string; timeZone: string }
@@ -8,9 +9,12 @@ export type MerchantCheckoutOffer = {
   title: string; source: MerchantCheckoutSource; maxQuantity: number;
   cash: { currency: "eur"; unitAmountMinor: number; initialPolicy: MerchantInitialPaymentPolicy } | null;
   unitPoints: number | null; allowOnSite: boolean;
+  // New merchant-authored policy; copied into the original checkout. An old
+  // offer with no decision cannot start a coupon checkout. Never infer true.
+  couponReturnOnCancel?: boolean;
 };
 export type MerchantCheckoutSelection = {
-  offerId: string; offerRevision: string; quantity: number; slotKey?: string;
+  offerId: string; offerRevision: string; quantity: number; slotKey?: string; couponClaims?: CheckoutCouponClaim[];
 };
 
 const uuid = (s: unknown): s is string => typeof s === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(s);
@@ -21,12 +25,13 @@ function need(v: unknown, code = "checkout_invalid_offer"): asserts v { if (!v) 
 
 export function parseMerchantCheckoutSelection(raw: unknown): MerchantCheckoutSelection {
   const code = "checkout_invalid_selection";
-  need(record(raw) && Object.keys(raw).every(key => ["offerId", "offerRevision", "quantity", "slotKey"].includes(key)), code);
+  need(record(raw) && Object.keys(raw).every(key => ["offerId", "offerRevision", "quantity", "slotKey", "couponClaims"].includes(key)), code);
   need(["offerId", "offerRevision", "quantity"].every(key => Object.hasOwn(raw, key)), code);
   need(uuid(raw.offerId) && uuid(raw.offerRevision) && Number.isSafeInteger(raw.quantity) && Number(raw.quantity) >= 1 && Number(raw.quantity) <= 999, code);
   need(raw.slotKey === undefined || id(raw.slotKey), code);
   return { offerId: raw.offerId, offerRevision: raw.offerRevision, quantity: Number(raw.quantity),
-    ...(raw.slotKey !== undefined ? { slotKey: raw.slotKey } : {}) };
+    ...(raw.slotKey !== undefined ? { slotKey: raw.slotKey } : {}),
+    ...(raw.couponClaims !== undefined ? { couponClaims: parseCheckoutCouponClaims(raw.couponClaims) } : {}) };
 }
 
 /** Validate trusted server storage without coercing missing price/points to zero.
@@ -37,6 +42,7 @@ export function assertMerchantCheckoutOffer(value: unknown): asserts value is Me
   need(typeof value.title === "string" && value.title.trim() === value.title && value.title.length > 0 && value.title.length <= 200);
   need(Number.isSafeInteger(value.maxQuantity) && Number(value.maxQuantity) > 0 && Number(value.maxQuantity) <= 999);
   need(typeof value.allowOnSite === "boolean" && record(value.source) && id(value.source.blockId));
+  need(value.couponReturnOnCancel === undefined || typeof value.couponReturnOnCancel === "boolean");
   if (value.source.kind === "booking") {
     need(id(value.source.serviceId) && typeof value.source.timeZone === "string" && value.source.timeZone.length < 100);
     try { new Intl.DateTimeFormat("en", { timeZone: value.source.timeZone }).format(); } catch { need(false); }

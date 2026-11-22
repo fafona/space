@@ -12,7 +12,7 @@ export function MerchantSettlementBadge({ snapshot, locale = "zh-CN", showDetail
       {language === "zh" ? "结算状态待核对" : language === "es" ? "Pago pendiente de revisión" : "Payment status needs review"}
     </span>;
   }
-  const green = ["paid", "points_redeemed"].includes(summary.state);
+  const green = ["paid", "points_redeemed", "coupon_redeemed"].includes(summary.state);
   const red = ["disputed", "refund_failed", "partially_paid"].includes(summary.state);
   const amber = ["unpaid", "points_due", "deposit_paid"].includes(summary.state);
   const style = green ? "border-emerald-200 bg-emerald-50 text-emerald-800" : red ? "border-rose-200 bg-rose-50 text-rose-800"
@@ -27,11 +27,18 @@ export function MerchantSettlementBadge({ snapshot, locale = "zh-CN", showDetail
     : language === "zh" ? `总价 ${formatSettlementMoney(summary.totalMinor!, locale)} · 已收 ${formatSettlementMoney(summary.capturedMinor!, locale)} · 已退 ${formatSettlementMoney(summary.refundedMinor!, locale)}`
       : language === "es" ? `Total ${formatSettlementMoney(summary.totalMinor!, locale)} · Cobrado ${formatSettlementMoney(summary.capturedMinor!, locale)} · Devuelto ${formatSettlementMoney(summary.refundedMinor!, locale)}`
         : `Total ${formatSettlementMoney(summary.totalMinor!, locale)} · Received ${formatSettlementMoney(summary.capturedMinor!, locale)} · Refunded ${formatSettlementMoney(summary.refundedMinor!, locale)}`;
+  const couponDetail = summary.coupons ? language === "zh" ? `已用 ${summary.coupons.redeemedCount} 张券 · 已退 ${summary.coupons.returnedCount} 张`
+    : language === "es" ? `${summary.coupons.redeemedCount} cupones usados · ${summary.coupons.returnedCount} devueltos`
+      : `${summary.coupons.redeemedCount} coupons used · ${summary.coupons.returnedCount} returned` : null;
+  const couponOnly = summary.state.startsWith("coupon_");
   return <span className="inline-flex max-w-full flex-col items-start gap-1" data-settlement-state={summary.state}>
     <span role="status" className={`inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${style}`}>
       <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
-      {method[summary.method]} · {merchantSettlementLabel(summary.state, locale)}
+      {!couponOnly && `${method[summary.method]} · `}{merchantSettlementLabel(summary.state, locale)}
     </span>
-    {showDetails && <span className="text-xs leading-5 text-slate-600">{detail}</span>}
+    {showDetails && <span className="text-xs leading-5 text-slate-600">{couponOnly ? couponDetail : detail}</span>}
+    {!couponOnly && summary.coupons && <span role="status" className="text-xs leading-5 text-violet-800">
+      {merchantSettlementLabel(summary.coupons.state, locale)}{showDetails && ` · ${couponDetail}`}
+    </span>}
   </span>;
 }

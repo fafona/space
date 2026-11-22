@@ -43,6 +43,8 @@ CREATE TABLE faolla_checkout_design.settlements (
   total_minor bigint,
   initial_due_minor bigint,
   total_points bigint,
+  coupon_count integer NOT NULL DEFAULT 0 CHECK (coupon_count BETWEEN 0 AND 20),
+  coupon_return_on_cancel boolean,
   state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','committed','cancelled')),
   receipt jsonb,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -50,9 +52,12 @@ CREATE TABLE faolla_checkout_design.settlements (
   PRIMARY KEY (site_id,operation_key),
   UNIQUE (site_id,resource_kind,resource_id),
   FOREIGN KEY (site_id,offer_id,offer_revision,resource_kind) REFERENCES faolla_checkout_design.offer_versions(site_id,offer_id,revision,source_kind),
-  CHECK (((method = 'points' AND total_points BETWEEN 1 AND 99999999 AND currency IS NULL AND total_minor IS NULL AND initial_due_minor IS NULL)
+  CHECK ((coupon_count = 0 OR coupon_return_on_cancel IS NOT NULL) IS TRUE),
+  CHECK (((method = 'points' AND total_points BETWEEN 0 AND 99999999 AND (total_points>0 OR coupon_count>0)
+      AND currency IS NULL AND total_minor IS NULL AND initial_due_minor IS NULL)
     OR (method IN ('online','on_site') AND currency = 'eur' AND total_minor BETWEEN 1 AND 99999999
-      AND initial_due_minor BETWEEN 1 AND total_minor AND total_points IS NULL)) IS TRUE),
+      AND initial_due_minor BETWEEN 1 AND total_minor AND total_points IS NULL)
+    OR (method='on_site' AND currency='eur' AND total_minor=0 AND initial_due_minor=0 AND total_points IS NULL AND coupon_count>0)) IS TRUE),
   CHECK (((state = 'committed' AND jsonb_typeof(receipt) = 'object') OR (state <> 'committed' AND receipt IS NULL)) IS TRUE)
 );
 CREATE TABLE faolla_checkout_design.facts (

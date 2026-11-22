@@ -2,13 +2,16 @@ import { quoteMerchantInitialPayment } from "./faollaPaymentPolicy";
 import { assertMerchantCheckoutOffer, parseMerchantCheckoutSelection, quoteMerchantOfferAmounts,
   type MerchantCheckoutOffer, type MerchantCheckoutSelection } from "./merchantCheckoutCatalog";
 import type { MerchantSettlementMethod } from "./merchantSettlement";
+import type { MerchantCouponRecord } from "./merchantCoupons";
+import { checkoutCouponChoices, quoteCheckoutCoupons, type CheckoutCouponChoice, type CheckoutCouponClaim, type CheckoutCouponContext } from "./merchantCheckoutCoupons";
 
 export type CheckoutPrincipal = { accountId: string; userId: string };
 export type CheckoutMethodUnavailable = "login_required" | "membership_required" | "insufficient_points"
-  | "module_unavailable" | "merchant_payments_unavailable" | "commission_not_configured" | "amount_below_minimum";
+  | "module_unavailable" | "merchant_payments_unavailable" | "commission_not_configured" | "amount_below_minimum" | "coupon_not_applicable";
 export type MerchantCheckoutMethodOption = {
   method: MerchantSettlementMethod; available: boolean; reason?: CheckoutMethodUnavailable;
   payNowMinor: number | null; remainingMinor: number | null; totalPoints: number | null;
+  couponDiscountMinor?: number; couponDiscountPoints?: number; couponCount?: number;
 };
 export type MerchantCheckoutQuoteView = {
   version: 1; siteId: string; offerId: string; offerRevision: string; resourceKind: "booking" | "order";
@@ -16,6 +19,8 @@ export type MerchantCheckoutQuoteView = {
   ownPointBalance: number | null; options: MerchantCheckoutMethodOption[];
   // This is a selection preview, NOT a reserved slot, debit or paid receipt.
   reservationCreated: false;
+  coupons?: { points: CheckoutCouponChoice[]; on_site: CheckoutCouponChoice[]; selected: CheckoutCouponClaim[];
+    returnOnCancel: boolean | null; previewOnly: true };
 };
 export type CheckoutMembership = {
   id: string; siteId: string; accountId: string; userId: string;
@@ -32,12 +37,15 @@ export type CheckoutOnlineReadiness = {
  * source IDs, real module permissions and current membership, not browser data.
  * No default Supabase connection, HTTP route, environment fallback or writes. */
 export type MerchantCheckoutQuoteRepository = {
-  pilot: (siteId: string) => Promise<{ enabled: boolean; bookings: boolean; orders: boolean; points: boolean }>;
+  pilot: (siteId: string) => Promise<{ enabled: boolean; bookings: boolean; orders: boolean; points: boolean; coupons?: boolean; onlinePayments?: boolean }>;
   offer: (siteId: string, offerId: string) => Promise<unknown>;
   sourceVisible: (offer: MerchantCheckoutOffer) => Promise<boolean>;
   availability: (offer: MerchantCheckoutOffer, selection: MerchantCheckoutSelection) => Promise<{ available: number }>;
   ownMembership: (siteId: string, principal: CheckoutPrincipal) => Promise<CheckoutMembership | null>;
   onlineReadiness: (siteId: string) => Promise<CheckoutOnlineReadiness | null>;
+  coupons?: (siteId: string, principal: CheckoutPrincipal, offer: MerchantCheckoutOffer) => Promise<{
+    rows: MerchantCouponRecord[]; voucherCouponIds: string[]; tags: string[]; durationMinutes?: number;
+  }>;
 };
 
 export class MerchantCheckoutError extends Error {
@@ -71,7 +79,7 @@ async function quote(input: {
   const availability = await repo.availability(structuredClone(offer), structuredClone(selection));
   if (!Number.isSafeInteger(availability.available) || availability.available < 0) fail("checkout_unavailable", 503);
   if (selection.quantity > availability.available) fail("checkout_quantity_unavailable");
-  const member = principal && pilot.points === true && amounts.totalPoints !== null
+  const member = principal && ((pilot.points === true && amounts.totalPoints !== null) || pilot.coupons === true)
     ? await repo.ownMembership(input.siteId, structuredClone(principal)) : null;
   if (member && (member.siteId !== input.siteId || typeof member.id !== "string" || !/^[A-Za-z0-9:_-]{1,180}$/.test(member.id) ||
     (member.accountId !== "" && member.accountId !== principal!.accountId) ||
@@ -79,9 +87,36 @@ async function quote(input: {
     (!member.accountId && !member.userId) || !Number.isSafeInteger(member.pointBalance) || member.pointBalance < 0 ||
     !["active", "left"].includes(member.status))) fail("checkout_membership_scope_mismatch", 403);
   const ownPointBalance = member?.status === "active" ? member.pointBalance : null;
+  const selectedCoupons = selection.couponClaims ?? [];
+  if (selectedCoupons.length && typeof offer.couponReturnOnCancel !== "boolean") fail("checkout_coupon_policy_required");
+  if (selectedCoupons.length && (!principal || member?.status !== "active" || pilot.coupons !== true || !repo.coupons)) fail("checkout_coupon_unavailable");
+  const ledger = principal && member?.status === "active" && pilot.coupons === true && repo.coupons
+    ? await repo.coupons(input.siteId, structuredClone(principal), structuredClone(offer)) : null;
+  const quoteTime = (input.now ?? Date.now)();
+  const couponContext = (method: "points" | "on_site"): CheckoutCouponContext => ({ siteId: input.siteId,
+    accountId: principal!.accountId, userId: principal!.userId, membershipActive: true, kind: offer.source.kind, method,
+    targetId: offer.source.kind === "booking" ? offer.source.serviceId : offer.source.productId,
+    tags: ledger!.tags, voucherCouponIds: ledger!.voucherCouponIds, quantity: selection.quantity,
+    unitCashMinor: offer.cash?.unitAmountMinor ?? null, unitPoints: offer.unitPoints, durationMinutes: ledger!.durationMinutes,
+    now: new Date(quoteTime).toISOString() });
+  const couponChoices = {
+    points: ledger && offer.unitPoints !== null ? checkoutCouponChoices(ledger.rows, couponContext("points")) : [],
+    on_site: ledger && offer.cash ? checkoutCouponChoices(ledger.rows, couponContext("on_site")) : [],
+  };
+  let couponCompatible = false;
+  const discounted = (method: "points" | "on_site") => {
+    if (!selectedCoupons.length || !ledger) return null;
+    try { const value = quoteCheckoutCoupons(ledger.rows, couponContext(method), selectedCoupons); couponCompatible = true; return value; }
+    catch (error) {
+      if (!(error instanceof Error) || !["checkout_coupon_unavailable", "checkout_coupon_stack_not_allowed", "checkout_coupon_no_benefit"].includes(error.message)) throw error;
+      return false;
+    }
+  };
   const options: MerchantCheckoutMethodOption[] = [];
-  if (offer.cash && amounts.cashTotalMinor !== null) {
-    const readiness = await repo.onlineReadiness(input.siteId), now = (input.now ?? Date.now)();
+  // Stripe is deferred. No account readiness/provider work until explicitly
+  // enabled by the trusted server pilot; this is never a browser setting.
+  if (pilot.onlinePayments === true && offer.cash && amounts.cashTotalMinor !== null) {
+    const readiness = await repo.onlineReadiness(input.siteId), now = quoteTime;
     const fresh = readiness && readiness.siteId === input.siteId && readiness.settlementCurrency === "eur" && /^acct_[A-Za-z0-9]+$/.test(readiness.connectedAccountId)
       && Number.isFinite(now) && Number.isFinite(readiness.verifiedAt) && now >= readiness.verifiedAt && now - readiness.verifiedAt <= 300_000
       && readiness.chargesEnabled === true;
@@ -94,25 +129,38 @@ async function quote(input: {
     // to charge the entire price or silently choose another payment method.
     if (!priced.ok && !["commission_not_configured", "invalid_commission"].includes(priced.error)) fail("checkout_invalid_offer", 503);
     if (!pilot.bookings && offer.source.kind === "booking") reason = "module_unavailable";
+    if (selectedCoupons.length) reason = "coupon_not_applicable";
     options.push({ method: "online", available: reason === undefined, ...(reason ? { reason } : {}),
       payNowMinor: priced.ok ? priced.value.payNowMinor : null, remainingMinor: priced.ok ? priced.value.remainingMinor : null, totalPoints: null });
   }
   if (amounts.totalPoints !== null) {
+    const couponQuote = discounted("points"), payable = couponQuote ? couponQuote.payablePoints! : amounts.totalPoints;
     const reason: CheckoutMethodUnavailable | undefined = pilot.points !== true ? "module_unavailable" : !principal ? "login_required"
-      : ownPointBalance === null ? "membership_required" : ownPointBalance < amounts.totalPoints ? "insufficient_points" : undefined;
+      : ownPointBalance === null ? "membership_required" : couponQuote === false ? "coupon_not_applicable"
+        : ownPointBalance < payable ? "insufficient_points" : undefined;
     options.push({ method: "points", available: reason === undefined, ...(reason ? { reason } : {}),
-      payNowMinor: null, remainingMinor: null, totalPoints: amounts.totalPoints });
+      payNowMinor: null, remainingMinor: null, totalPoints: payable,
+      ...(couponQuote ? { couponDiscountPoints: couponQuote.pointsDiscount, couponCount: couponQuote.claims.length } : {}) });
   }
-  if (offer.allowOnSite) options.push({ method: "on_site", available: true, payNowMinor: 0, remainingMinor: amounts.cashTotalMinor, totalPoints: null });
+  if (offer.allowOnSite) {
+    const couponQuote = discounted("on_site");
+    options.push({ method: "on_site", available: couponQuote !== false, ...(couponQuote === false ? { reason: "coupon_not_applicable" as const } : {}),
+      payNowMinor: 0, remainingMinor: couponQuote ? couponQuote.payableCashMinor : amounts.cashTotalMinor, totalPoints: null,
+      ...(couponQuote ? { couponDiscountMinor: couponQuote.cashDiscountMinor, couponCount: couponQuote.claims.length } : {}) });
+  }
+  if (selectedCoupons.length && !couponCompatible) fail("checkout_coupon_unavailable");
   const current = await input.authorize();
   if ((current ? checkoutPrincipalKey(current) : null) !== scope) fail("checkout_identity_changed", 401);
   return { version: 1, siteId: input.siteId, offerId: offer.id, offerRevision: offer.revision, resourceKind: offer.source.kind,
-    title: offer.title, quantity: selection.quantity, ...amounts, ownPointBalance, options, reservationCreated: false };
+    title: offer.title, quantity: selection.quantity, ...amounts, ownPointBalance, options, reservationCreated: false,
+    ...(ledger ? { coupons: { ...couponChoices, selected: selectedCoupons, returnOnCancel: offer.couponReturnOnCancel ?? null,
+      previewOnly: true as const } } : {}) };
 }
 
 const SAFE_CODES = new Set(["checkout_invalid_selection", "checkout_invalid_offer", "checkout_offer_not_found", "checkout_quote_changed",
   "checkout_quantity_unavailable", "checkout_total_too_large", "checkout_invalid_site", "checkout_disabled", "checkout_unauthorized",
-  "checkout_module_unavailable", "checkout_unavailable", "checkout_membership_scope_mismatch", "checkout_identity_changed"]);
+  "checkout_module_unavailable", "checkout_unavailable", "checkout_membership_scope_mismatch", "checkout_identity_changed", "checkout_coupon_unavailable",
+  "checkout_invalid_coupon_selection", "checkout_coupon_store_ambiguous", "checkout_coupon_policy_required"]);
 export async function quoteMerchantCheckout(input: Parameters<typeof quote>[0]): Promise<MerchantCheckoutQuoteView> {
   try { return await quote(input); }
   catch (error) {

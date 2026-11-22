@@ -44,4 +44,5 @@ test("missing prices, non-integral points, invalid time zone and oversized total
     { unitPoints: NaN }, { maxQuantity: "5" }, { cash: null, unitPoints: null }, { cash: null, allowOnSite: true },
     { source: { ...offer().source, timeZone: "not-a-zone" } }]) assert.throws(() => assertMerchantCheckoutOffer({ ...offer(), ...patch }), /checkout_invalid_offer/);
   assert.throws(() => quoteMerchantOfferAmounts({ ...offer(), unitPoints: 99_999_999 }, selection()), /checkout_total_too_large/);
+  assert.throws(() => assertMerchantCheckoutOffer({ ...offer(), couponReturnOnCancel: "yes" }), /checkout_invalid_offer/);
 });

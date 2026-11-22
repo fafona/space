@@ -81,3 +81,26 @@ test("compact labels and currency formatting cover the Chinese, Spanish and Engl
   assert.match(formatSettlementMoney(12345, "en-GB"), /123\.45/);
   assert.throws(() => formatSettlementMoney(-1), /settlement_invalid_snapshot/);
 });
+
+test("a fully coupon-covered checkout is coupon redemption, not fake cash captured or invalid zero points", () => {
+  const coupons = { redeemedCount: 1, returnedCount: 0, returnPending: false };
+  for (const snapshot of [points({ totalPoints: 0, coupons }), cash({ method: "on_site", totalMinor: 0, initialDueMinor: 0, coupons })]) {
+    const result = summary(snapshot);
+    assert.equal(result.state, "coupon_redeemed"); assert.equal(result.collectibleMinor, 0); assert.equal(result.canPayBalance, false);
+    assert.equal(result.coupons?.redeemedCount, 1);
+  }
+  assert.throws(() => summary(cash({ totalMinor: 0, initialDueMinor: 0, coupons })), /settlement_invalid_snapshot/, "zero-value online provider charges stay forbidden");
+});
+
+test("coupon return status is separate from points/cash returns and cannot extend the refundable count", () => {
+  for (const [returnedCount, returnPending, state] of [[0, true, "coupon_return_pending"], [1, false, "coupon_partially_returned"], [2, false, "coupon_returned"]] as const) {
+    const coupons = { redeemedCount: 2, returnedCount, returnPending };
+    assert.equal(summary(points({ totalPoints: 0, coupons })).state, state);
+    const mixed = summary(points({ debitedPoints: 500, coupons }));
+    assert.equal(mixed.state, "points_redeemed"); assert.equal(mixed.coupons?.state, state); assert.equal(mixed.returnedPoints, 0);
+  }
+  for (const coupons of [{ redeemedCount: 0, returnedCount: 0, returnPending: false }, { redeemedCount: 1, returnedCount: 2, returnPending: false },
+    { redeemedCount: 1, returnedCount: 1, returnPending: true }, { redeemedCount: 1.5, returnedCount: 0, returnPending: false }]) {
+    assert.throws(() => summary(points({ totalPoints: 0, coupons })), /settlement_invalid_snapshot/);
+  }
+});

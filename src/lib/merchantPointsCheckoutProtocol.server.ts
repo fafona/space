@@ -51,6 +51,9 @@ export function pointsCheckoutIdentity(intent: PointsCheckoutIntent, principal: 
   need(intent && /^\d{8}$/.test(intent.siteId) && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(intent.nonce), "checkout_invalid_intent");
   need(intent.resourceKind === "booking" || intent.resourceKind === "order", "checkout_invalid_intent");
   const selection = parseMerchantCheckoutSelection(intent.selection);
+  // v1 cannot atomically consume coupons. Do not let a coupon selection fall
+  // through to a points-only commit while the combination bridge is pending.
+  need(!selection.couponClaims?.length, "checkout_coupon_commit_unavailable");
   need((intent.resourceKind === "booking") === (selection.slotKey !== undefined), "checkout_invalid_intent");
   const principalKey = checkoutPrincipalKey(principal);
   return { siteId: intent.siteId, principalKey, resourceKind: intent.resourceKind, selection,
@@ -135,7 +138,7 @@ async function execute(input: {
 const SAFE_CODES = new Set(["checkout_invalid_response", "checkout_unauthorized", "checkout_invalid_intent", "checkout_invalid_selection",
   "checkout_invalid_deadline", "checkout_deadline_exceeded", "checkout_unconfirmed", "checkout_unavailable", "checkout_conflict",
   "checkout_cancelled", "checkout_quote_changed", "checkout_membership_unavailable", "checkout_insufficient_points",
-  "checkout_quantity_unavailable", "checkout_operation_conflict", "checkout_invalid_plan"]);
+  "checkout_quantity_unavailable", "checkout_operation_conflict", "checkout_invalid_plan", "checkout_coupon_commit_unavailable", "checkout_invalid_coupon_selection"]);
 export async function executePointsCheckout(input: Parameters<typeof execute>[0]): ReturnType<typeof execute> {
   try { return await execute(input); }
   catch (error) {

@@ -136,3 +136,9 @@ test("a non-JSON planner value is rejected before any financial write", async ()
   await assert.rejects(() => executePointsCheckout(f.input), /checkout_invalid_plan/);
   assert.equal(f.calls.filter(x => x.name.endsWith("commit_v1")).length, 0);
 });
+
+test("points-only v1 never silently accepts a coupon until the combination commit is implemented", async () => {
+  const f = setup(); f.input.intent.selection.couponClaims = [{ couponId: "coupon-test", claimEventId: "claim-test" }];
+  await assert.rejects(() => executePointsCheckout(f.input), /checkout_coupon_commit_unavailable/);
+  assert.equal(f.calls.length, 0);
+});

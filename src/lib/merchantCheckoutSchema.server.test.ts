@@ -73,6 +73,15 @@ test("private checkout design compiles and enforces scope, units, history and ro
       }), /check constraint/);
       assert.equal((await db.query("SELECT 1 FROM faolla_checkout_design.settlements WHERE operation_key=$1", [key])).rows.length, 0);
     });
+    await t.test("zero-point coupon settlement requires a positive coupon count and explicit snapshotted return policy", async () => {
+      const insertCoupon = (key: string, count: number, policy: boolean | null) => db.query(`INSERT INTO faolla_checkout_design.settlements
+        (site_id,operation_key,request_hash,principal_key,offer_id,offer_revision,resource_kind,resource_id,method,total_points,coupon_count,coupon_return_on_cancel)
+        VALUES($1,$2,$3,'account:test-owner',$4,$5,'booking',$6,'points',0,$7,$8)`, [site, key, requestHash, offerId, revision, `coupon-${key.slice(0, 4)}`, count, policy]);
+      await assert.rejects(insertCoupon("0".repeat(64), 0, null), /check constraint/);
+      await assert.rejects(insertCoupon("0".repeat(64), 1, null), /check constraint/);
+      await insertCoupon("0".repeat(64), 1, false);
+      await assert.rejects(db.query("UPDATE faolla_checkout_design.settlements SET coupon_return_on_cancel=true WHERE operation_key=$1", ["0".repeat(64)]), /checkout_operation_immutable/);
+    });
     await t.test("browser/API roles have neither private schema access nor exposed write functions", async () => {
       for (const role of ["anon", "authenticated", "service_role"]) {
         await db.exec(`SET ROLE ${role}`);
@@ -85,6 +94,17 @@ test("private checkout design compiles and enforces scope, units, history and ro
       const tables = await db.query<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>(`SELECT relrowsecurity,relforcerowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='faolla_checkout_design' AND c.relkind='r'`);
       assert.equal(tables.rows.length, 4); assert.ok(tables.rows.every(row => row.relrowsecurity && row.relforcerowsecurity));
       assert.equal((await db.query("SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='faolla_checkout_design' AND prosecdef")).rows.length, 0);
+    });
+    await t.test("private composition proposal compiles against legacy row types without exposing an RPC", async () => {
+      // Declaration/grammar check only. Full original migrations and real
+      // multi-connection commits are exercised by the separate PostgreSQL test.
+      await db.exec(`CREATE TABLE public.pages(id uuid,merchant_id text,slug text,blocks jsonb,updated_at timestamptz);
+        CREATE TABLE public.faolla_booking_atomic_control(singleton boolean,generation uuid,revision bigint,active boolean,protocol integer);`);
+      await db.exec(await fs.readFile(path.resolve("database/proposals/20261122_member_checkout_bundle.sql"), "utf8"));
+      for (const role of ["anon", "authenticated", "service_role"]) {
+        const result = await db.query<{ allowed: boolean }>("SELECT has_function_privilege($1,'faolla_checkout_design.commit_bundle(text,text,text,text,jsonb)','EXECUTE') AS allowed", [role]);
+        assert.equal(result.rows[0].allowed, false);
+      }
     });
   } finally { await db.close(); }
 });
