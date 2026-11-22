@@ -590,6 +590,74 @@ function resolveMerchantMembershipsVersion(memberships: MerchantMembershipRecord
   }, fallback);
 }
 
+/** NEW self-checkout preparation only. The existing scheduled writer and
+ * cashier paths are unchanged. Reuse their level/gift/discount primitives in
+ * the same policy order, but perform NO storage, mirroring, email or retries.
+ * All returned private state still needs the composite CAS transaction. */
+export function prepareMemberCheckoutAvailablePoints(input: {
+  membership: MerchantMembershipRecord; settings: MerchantMembershipSettings; now: string; unitPoints: number; quantity: number;
+}) {
+  const { settings, now } = input, nowDate = new Date(now);
+  if (!Number.isFinite(nowDate.getTime()) || input.membership.status !== "active" || input.membership.siteId !== settings.siteId
+    || !Number.isSafeInteger(input.membership.pointBalance) || input.membership.pointBalance < 0
+    || !Number.isSafeInteger(input.unitPoints) || input.unitPoints <= 0 || input.unitPoints > 99_999_999
+    || !Number.isSafeInteger(input.quantity) || input.quantity <= 0 || input.quantity > 999) throw new Error("checkout_membership_unavailable");
+  let next = applyScheduledLevelBenefits({ membership: structuredClone(input.membership), settings, nowDate, now });
+  const monthDay = readBirthdayMonthDay(next.birthday), birthday = Boolean(monthDay && monthDay === formatMonthDay(nowDate));
+  const year = String(nowDate.getFullYear()), marker = `[birthday-points:${year}]`;
+  if (birthday && settings.pointsRules.birthdayPoints > 0 && !transactionHasMarker(next, marker)) {
+    next = { ...next, pointBalance: next.pointBalance + settings.pointsRules.birthdayPoints,
+      transactions: [createMerchantMemberTransaction({ type: "recharge", at: now, pointDelta: settings.pointsRules.birthdayPoints,
+        note: `生日自动赠送积分 ${marker}`, operatorId: "system" }), ...next.transactions], updatedAt: now };
+  }
+  if (birthday) {
+    const level = getMembershipLevel(settings, next);
+    if (level) next = applyLevelGift(next, level, "birthday", `[level-birthday:${level.id}:${year}]`, now);
+  }
+  const expiryDays = settings.pointsRules.pointsNeverExpire ? 0 : settings.pointsRules.pointsValidDays;
+  const expiredPoints = expiryDays > 0 ? calculateExpiredMerchantMemberPoints({ transactions: next.transactions,
+    pointBalance: next.pointBalance, cutoffTimestamp: nowDate.getTime() - expiryDays * 86_400_000 }) : 0;
+  if (expiredPoints > 0) next = { ...next, pointBalance: next.pointBalance - expiredPoints,
+    transactions: [createMerchantMemberTransaction({ type: "redeem", at: now, pointDelta: -expiredPoints,
+      note: "积分过期 [points-expired]", operatorId: "system" }), ...next.transactions], updatedAt: now };
+  const unitPoints = getRedemptionPointCostForMember({ pointsCost: input.unitPoints }, next, settings), grossPoints = unitPoints * input.quantity;
+  if (!Number.isSafeInteger(next.pointBalance) || next.pointBalance < 0 || !Number.isSafeInteger(grossPoints) || grossPoints > 99_999_999) throw new Error("checkout_total_too_large");
+  return { membership: next, unitPoints, grossPoints, spendablePoints: next.pointBalance, expiredPoints };
+}
+
+export function prepareMemberCheckoutPointDebit(input: {
+  original: MerchantMembershipRecord; prepared: MerchantMembershipRecord; settings: MerchantMembershipSettings;
+  points: number; couponCount: number; accountId: string; userId: string; operationKey: string; now: string; title: string;
+}) {
+  const { original, settings, points, now } = input, current = structuredClone(input.prepared);
+  if (!/^[a-f0-9]{64}$/.test(input.operationKey) || !/^\d{8}$/.test(input.accountId) || !/^[A-Za-z0-9_-]{8,128}$/.test(input.userId) || !Number.isFinite(Date.parse(now))
+    || !Number.isSafeInteger(points) || points < 0 || points > 99_999_999 || !Number.isSafeInteger(input.couponCount) || input.couponCount < 0 || input.couponCount > 20
+    || points === 0 && input.couponCount === 0 || original.id !== current.id || original.siteId !== current.siteId || settings.siteId !== current.siteId
+    || current.status !== "active" || original.status !== "active"
+    || [original, current].some(member => (!member.accountId && !member.userId)
+      || member.accountId && member.accountId !== input.accountId || member.userId && member.userId !== input.userId)
+    || !Number.isSafeInteger(current.pointBalance) || current.pointBalance < 0
+    || !Number.isFinite(current.growthValue) || current.growthValue < 0
+    || !Number.isFinite(settings.growthRules.spendPointGrowth) || settings.growthRules.spendPointGrowth < 0) throw new Error("checkout_invalid_plan");
+  if (points > current.pointBalance) throw new Error("checkout_insufficient_points");
+  const marker = buildMutationOperationMarker("member-self-checkout", input.operationKey);
+  if (transactionHasMarker(current, marker)) throw new Error("checkout_operation_requires_receipt");
+  const growthDelta = normalizeGrowthValue(points * settings.growthRules.spendPointGrowth);
+  let next = points > 0 ? { ...current, pointBalance: current.pointBalance - points,
+    transactions: [createMerchantMemberTransaction({ type: "redeem", at: now, pointDelta: -points, growthDelta,
+      note: buildMembershipMutationNote("", `会员自助兑换：${trimText(input.title, 200)}`, marker), operatorId: `customer:${input.accountId}` }), ...current.transactions], updatedAt: now } : current;
+  next = applyMembershipGrowthAndLevel({ membership: next, settings, growthDelta, now });
+  const oldIds = new Set(original.transactions.map(transaction => transaction.id));
+  const transactions = next.transactions.filter(transaction => !oldIds.has(transaction.id));
+  if (new Set(next.transactions.map(transaction => transaction.id)).size !== next.transactions.length
+    || transactions.length > 256 || !Number.isSafeInteger(next.pointBalance) || next.pointBalance < 0
+    || !Number.isFinite(next.growthValue) || next.growthValue < 0 || next.growthValue > Number.MAX_SAFE_INTEGER
+    || next.transactions.length !== original.transactions.length + transactions.length
+    || JSON.stringify(next.transactions.filter(transaction => oldIds.has(transaction.id))) !== JSON.stringify(original.transactions)) throw new Error("checkout_invalid_plan");
+  return { membership: next, mutation: { id: original.id, transactions,
+    nextState: { pointBalance: next.pointBalance, growthValue: next.growthValue, levelId: next.levelId } } };
+}
+
 export async function getMerchantMembershipsSnapshot(
   siteId: string,
   options: { applyScheduledRules?: boolean } = {},

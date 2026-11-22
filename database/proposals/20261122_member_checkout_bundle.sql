@@ -28,6 +28,7 @@ DECLARE
   v_result jsonb; v_receipt jsonb; v_order_versions jsonb;
   v_account text; v_user text; v_member_id text; v_kind text; v_id text; v_stamp text;
   v_debit bigint; v_coupon_count integer; v_new_points numeric; v_transaction_delta numeric;
+  v_member_state jsonb; v_level_id text;
 BEGIN
   IF p_site_id IS NULL OR p_site_id !~ '^[0-9]{8}$' OR p_operation_key IS NULL OR p_operation_key !~ '^[a-f0-9]{64}$'
     OR p_request_hash IS NULL OR p_request_hash !~ '^[a-f0-9]{64}$'
@@ -97,11 +98,16 @@ BEGIN
     RAISE EXCEPTION 'checkout_membership_unavailable';
   END IF;
   v_transactions := p_plan#>'{membership,transactions}';
-  IF jsonb_typeof(v_transactions) IS DISTINCT FROM 'array' OR jsonb_array_length(v_transactions)>30
+  IF jsonb_typeof(v_transactions) IS DISTINCT FROM 'array' OR jsonb_array_length(v_transactions)>256
     OR EXISTS(SELECT 1 FROM jsonb_array_elements(v_transactions) t WHERE jsonb_typeof(t) IS DISTINCT FROM 'object'
+      OR coalesce(t->>'id','')='' OR length(t->>'id')>180 OR t->>'status' IS DISTINCT FROM 'completed'
       OR jsonb_typeof(t->'pointDelta') IS DISTINCT FROM 'number' OR (t->>'pointDelta')::numeric<>trunc((t->>'pointDelta')::numeric)
       OR t->>'operatorId' IS NULL OR t->>'operatorId' NOT IN ('system','customer:'||v_account)
-      OR t->'balanceDelta' IS DISTINCT FROM '0'::jsonb OR t->'growthDelta' IS DISTINCT FROM '0'::jsonb) THEN RAISE EXCEPTION 'checkout_invalid_plan'; END IF;
+      OR t->'balanceDelta' IS DISTINCT FROM '0'::jsonb OR jsonb_typeof(t->'growthDelta') IS DISTINCT FROM 'number'
+      OR (t->>'growthDelta')::numeric<0 OR (t->>'growthDelta')::numeric>9007199254740991
+      OR round((t->>'growthDelta')::numeric,2)<>(t->>'growthDelta')::numeric)
+    OR EXISTS(SELECT 1 FROM jsonb_array_elements(v_transactions) t GROUP BY t->>'id' HAVING count(*)>1)
+    OR EXISTS(SELECT 1 FROM jsonb_array_elements(v_transactions) t CROSS JOIN jsonb_array_elements(v_member->'transactions') old WHERE t->>'id'=old->>'id') THEN RAISE EXCEPTION 'checkout_invalid_plan'; END IF;
   IF (SELECT coalesce(-sum((t->>'pointDelta')::numeric),0) FROM jsonb_array_elements(v_transactions) t WHERE t->>'operatorId'='customer:'||v_account)<>v_debit
     OR EXISTS(SELECT 1 FROM jsonb_array_elements(v_transactions) t WHERE t->>'operatorId'='customer:'||v_account
       AND ((t->>'pointDelta')::numeric>=0 OR t->>'type' IS DISTINCT FROM 'redeem')) THEN RAISE EXCEPTION 'checkout_invalid_plan'; END IF;
@@ -111,10 +117,34 @@ BEGIN
   -- Transaction cost has a pilot cap; an existing member balance keeps the
   -- original safe-integer range. Do not silently impose the order-cost cap.
   IF v_new_points>9007199254740991 OR trunc(v_new_points)<>v_new_points THEN RAISE EXCEPTION 'checkout_invalid_plan'; END IF;
+  v_member_state := p_plan#>'{membership,nextState}';
+  -- The trusted server prepares existing expiry/level/birthday benefits and
+  -- annual growth rules against the exact settings/member CAS snapshots.
+  -- This PRIVATE OWNER-ONLY prototype is not a financial authorization API:
+  -- no role grants may be added without the reviewed pricing/ACL rollout.
+  IF v_member_state IS NOT NULL THEN
+    IF jsonb_typeof(v_member_state) IS DISTINCT FROM 'object'
+      OR EXISTS(SELECT 1 FROM jsonb_object_keys(v_member_state) k WHERE k NOT IN ('pointBalance','growthValue','levelId'))
+      OR v_member_state->'pointBalance' IS DISTINCT FROM to_jsonb(v_new_points)
+      OR jsonb_typeof(v_member_state->'growthValue') IS DISTINCT FROM 'number'
+      OR (v_member_state->>'growthValue')::numeric NOT BETWEEN 0 AND 9007199254740991
+      OR round((v_member_state->>'growthValue')::numeric,2)<>(v_member_state->>'growthValue')::numeric
+      OR jsonb_typeof(v_member_state->'levelId') IS DISTINCT FROM 'string' THEN RAISE EXCEPTION 'checkout_invalid_plan'; END IF;
+    SELECT coalesce(l->>'id','') INTO v_level_id FROM jsonb_array_elements(v_settings->'levels') WITH ORDINALITY x(l,n)
+      WHERE l->'enabled'='true'::jsonb AND coalesce(l->>'name','')<>''
+        AND (l->>'requiredGrowthValue')::numeric<=(v_member_state->>'growthValue')::numeric
+      ORDER BY (l->>'requiredGrowthValue')::numeric DESC,(l->>'sort')::numeric DESC,n DESC LIMIT 1;
+    IF v_member_state->>'levelId' IS DISTINCT FROM coalesce(v_level_id,'') THEN RAISE EXCEPTION 'checkout_invalid_plan'; END IF;
+  ELSIF EXISTS(SELECT 1 FROM jsonb_array_elements(v_transactions) t WHERE t->'growthDelta' IS DISTINCT FROM '0'::jsonb) THEN
+    RAISE EXCEPTION 'checkout_invalid_plan';
+  END IF;
   v_stamp := to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   -- Only the target member changes. Other members and old transactions remain
   -- original JSON; the request carries NEW transactions, never a whole tenant.
   v_next_member := v_member||jsonb_build_object('pointBalance',v_new_points,'transactions',v_transactions||(v_member->'transactions'),'updatedAt',v_stamp);
+  IF v_member_state IS NOT NULL THEN
+    v_next_member := v_next_member||jsonb_build_object('growthValue',v_member_state->'growthValue','levelId',v_member_state->'levelId');
+  END IF;
   SELECT jsonb_agg(CASE WHEN m->>'id'=v_member_id THEN v_next_member ELSE m END ORDER BY n) INTO v_next_members
     FROM jsonb_array_elements(v_members) WITH ORDINALITY x(m,n);
   v_redemption := jsonb_build_object('operation',jsonb_build_object('id','self-checkout:'||p_operation_key,'fingerprint',p_request_hash,'membershipId',v_member_id),

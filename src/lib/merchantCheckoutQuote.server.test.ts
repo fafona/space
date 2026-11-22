@@ -11,7 +11,7 @@ function setup() {
   const offer: MerchantCheckoutOffer = { version: 1, id, revision, siteId: "10909095", enabled: true, title: "Synthetic session",
     source: { kind: "booking", blockId: "booking-test", serviceId: "service-test", timeZone: "Europe/Madrid" }, maxQuantity: 5,
     cash: { currency: "eur", unitAmountMinor: 10_000, initialPolicy: { mode: "deposit_percent", basisPoints: 3000 } }, unitPoints: 500, allowOnSite: true, couponReturnOnCancel: true };
-  const member: CheckoutMembership = { id: "member-synthetic-1", siteId: offer.siteId, ...principal, status: "active", pointBalance: 1500 };
+  const member: CheckoutMembership = { id: "member-synthetic-1", siteId: offer.siteId, ...principal, status: "active", pointBalance: 1500, unitPoints: 500 };
   const readiness: CheckoutOnlineReadiness = { siteId: offer.siteId, connectedAccountId: "acct_synthetic", verifiedAt: now,
     settlementCurrency: "eur",
     chargesEnabled: true, platformFee: { policyId: "synthetic-fee-policy", basisPoints: 250 } };
@@ -140,6 +140,20 @@ test("points coupon reduces the actual points preview before balance check, neve
   assert.equal(result.cashTotalMinor, 20000); assert.equal(result.options.find(row => row.method === "on_site")?.reason, "coupon_not_applicable");
   assert.equal(result.coupons?.previewOnly, true); assert.equal(result.coupons?.selected.length, 1);
   assert.ok(!/PRIVATE-CODE|private@example|claimEvents|redeemEvents/.test(JSON.stringify(result)));
+});
+
+test("member-level per-unit discount precedes point coupons and the same price drives the balance check", async () => {
+  const f = withCoupon(); f.member.unitPoints = 450; f.member.pointBalance = 800; f.coupon.discountValue = 100;
+  f.input.repository.ownMembership = async (site, p, offer) => {
+    assert.equal(site, f.offer.siteId); assert.deepEqual(p, principal); assert.deepEqual(offer, f.offer); return f.member;
+  };
+  const quote = await quoteMerchantCheckout({ ...f.input, selection: f.selection });
+  assert.equal(quote.totalPoints, 900); assert.equal(quote.ownPointBalance, 800);
+  assert.equal(quote.options.find(row => row.method === "points")?.totalPoints, 800);
+  assert.equal(quote.options.find(row => row.method === "points")?.available, true); assert.equal(quote.cashTotalMinor, 20000);
+  for (const invalid of [null, 0, 501, 1.5, Number.NaN]) {
+    f.member.unitPoints = invalid; await assert.rejects(() => quoteMerchantCheckout(f.input), /checkout_membership_pricing_unavailable/);
+  }
 });
 
 test("amount coupon reduces on-site due; points-only collection cannot silently ignore it", async () => {

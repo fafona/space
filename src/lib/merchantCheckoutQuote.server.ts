@@ -27,6 +27,9 @@ export type CheckoutMembership = {
   // Adapter must compute spendable points with the existing expiration/hold
   // rules without write-on-read. This is not permission to use a raw stale sum.
   status: "active" | "left"; pointBalance: number;
+  // Effective per-unit price after the existing member-level discount. Null
+  // only for cash-only offers. The adapter prepares BOTH from one snapshot.
+  unitPoints: number | null;
 };
 export type CheckoutOnlineReadiness = {
   siteId: string; connectedAccountId: string; verifiedAt: number;
@@ -41,7 +44,7 @@ export type MerchantCheckoutQuoteRepository = {
   offer: (siteId: string, offerId: string) => Promise<unknown>;
   sourceVisible: (offer: MerchantCheckoutOffer) => Promise<boolean>;
   availability: (offer: MerchantCheckoutOffer, selection: MerchantCheckoutSelection) => Promise<{ available: number }>;
-  ownMembership: (siteId: string, principal: CheckoutPrincipal) => Promise<CheckoutMembership | null>;
+  ownMembership: (siteId: string, principal: CheckoutPrincipal, offer: MerchantCheckoutOffer) => Promise<CheckoutMembership | null>;
   onlineReadiness: (siteId: string) => Promise<CheckoutOnlineReadiness | null>;
   coupons?: (siteId: string, principal: CheckoutPrincipal, offer: MerchantCheckoutOffer) => Promise<{
     rows: MerchantCouponRecord[]; voucherCouponIds: string[]; tags: string[]; durationMinutes?: number;
@@ -80,13 +83,19 @@ async function quote(input: {
   if (!Number.isSafeInteger(availability.available) || availability.available < 0) fail("checkout_unavailable", 503);
   if (selection.quantity > availability.available) fail("checkout_quantity_unavailable");
   const member = principal && ((pilot.points === true && amounts.totalPoints !== null) || pilot.coupons === true)
-    ? await repo.ownMembership(input.siteId, structuredClone(principal)) : null;
+    ? await repo.ownMembership(input.siteId, structuredClone(principal), structuredClone(offer)) : null;
   if (member && (member.siteId !== input.siteId || typeof member.id !== "string" || !/^[A-Za-z0-9:_-]{1,180}$/.test(member.id) ||
     (member.accountId !== "" && member.accountId !== principal!.accountId) ||
     (member.userId !== "" && member.userId !== principal!.userId) ||
     (!member.accountId && !member.userId) || !Number.isSafeInteger(member.pointBalance) || member.pointBalance < 0 ||
     !["active", "left"].includes(member.status))) fail("checkout_membership_scope_mismatch", 403);
   const ownPointBalance = member?.status === "active" ? member.pointBalance : null;
+  let unitPoints = offer.unitPoints;
+  if (member?.status === "active" && unitPoints !== null && pilot.points === true) {
+    if (!Number.isSafeInteger(member.unitPoints) || member.unitPoints === null || member.unitPoints <= 0 || member.unitPoints > unitPoints) fail("checkout_membership_pricing_unavailable", 503);
+    unitPoints = member.unitPoints;
+    amounts.totalPoints = unitPoints * selection.quantity;
+  }
   const selectedCoupons = selection.couponClaims ?? [];
   if (selectedCoupons.length && typeof offer.couponReturnOnCancel !== "boolean") fail("checkout_coupon_policy_required");
   if (selectedCoupons.length && (!principal || member?.status !== "active" || pilot.coupons !== true || !repo.coupons)) fail("checkout_coupon_unavailable");
@@ -97,7 +106,7 @@ async function quote(input: {
     accountId: principal!.accountId, userId: principal!.userId, membershipActive: true, kind: offer.source.kind, method,
     targetId: offer.source.kind === "booking" ? offer.source.serviceId : offer.source.productId,
     tags: ledger!.tags, voucherCouponIds: ledger!.voucherCouponIds, quantity: selection.quantity,
-    unitCashMinor: offer.cash?.unitAmountMinor ?? null, unitPoints: offer.unitPoints, durationMinutes: ledger!.durationMinutes,
+    unitCashMinor: offer.cash?.unitAmountMinor ?? null, unitPoints, durationMinutes: ledger!.durationMinutes,
     now: new Date(quoteTime).toISOString() });
   const couponChoices = {
     points: ledger && offer.unitPoints !== null ? checkoutCouponChoices(ledger.rows, couponContext("points")) : [],
@@ -160,7 +169,7 @@ async function quote(input: {
 const SAFE_CODES = new Set(["checkout_invalid_selection", "checkout_invalid_offer", "checkout_offer_not_found", "checkout_quote_changed",
   "checkout_quantity_unavailable", "checkout_total_too_large", "checkout_invalid_site", "checkout_disabled", "checkout_unauthorized",
   "checkout_module_unavailable", "checkout_unavailable", "checkout_membership_scope_mismatch", "checkout_identity_changed", "checkout_coupon_unavailable",
-  "checkout_invalid_coupon_selection", "checkout_coupon_store_ambiguous", "checkout_coupon_policy_required"]);
+  "checkout_invalid_coupon_selection", "checkout_coupon_store_ambiguous", "checkout_coupon_policy_required", "checkout_membership_pricing_unavailable"]);
 export async function quoteMerchantCheckout(input: Parameters<typeof quote>[0]): Promise<MerchantCheckoutQuoteView> {
   try { return await quote(input); }
   catch (error) {
