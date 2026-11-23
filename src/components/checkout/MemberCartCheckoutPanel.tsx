@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { createCartCheckoutController } from "@/lib/merchantCheckoutCartClient";
 import type { CartClientOriginal, CartClientSelection } from "@/lib/merchantCheckoutCartReview";
@@ -8,6 +8,7 @@ import { checkoutCouponClaimKey } from "@/lib/merchantCheckoutCoupons";
 import { merchantSettlementLanguage, formatSettlementMoney } from "@/lib/merchantSettlement";
 import { SERVICE_IDENTITY_CHANGED } from "@/components/service-center/serviceCenterClient";
 import { MerchantCheckoutCouponPicker } from "./MerchantCheckoutCouponPicker";
+import type { CheckoutDraftLease } from "@/lib/merchantCheckoutDraftLease";
 
 const copy = {
   zh: { title: "购物车 · 会员结算", intro: "一次核对并提交全部所选商品。积分与现金分开计算；此处不在线扣款。", name: "姓名", email: "联系邮箱", phone: "联系电话", note: "备注", points: "积分兑换", cash: "到店付款", method: "结算方式", item: "商品", quantity: "数量", review: "核对整车与优惠券", confirm: "确认整车结算", agreed: "已核对全部商品、积分或金额及逐项取消规则", working: "正在核对…", unknown: "正在确认原单结果。请读取原单，不要重复提交。", recover: "读取原单", done: "整车原单", closed: "原单已取消", unpaid: "待到店付款 · 尚未收款", redeemed: "积分／券已兑换", covered: "优惠券已抵扣应付金额 · 未收取现金", policy: "取消规则", returnPoints: "按原单退积分", keepPoints: "不退积分", returnCoupons: "退回原券，原有效期不变", keepCoupons: "不退券", coupons: "券只分配给一个商品；需更换商品时先取消原选择。", clear: "清除全部所选券", total: "整车合计", balance: "当前可用积分", insufficient: "整车所需积分超过可用积分，不能提交。", acknowledged: "已核对原单，开始另一单", cancel: "取消整车原单", cancelConfirm: "确认取消整车（不能只取消其中一个商品）", reviewRequired: "原单资料需人工核对，请勿重复提交。", single: "找到原有的单项目结算，请先查看原单。", detail: "查看原单", login: "请登录本人账号后使用会员结算。", loginButton: "用户登录", invalid: "请填写姓名、有效邮箱及电话；姓名最多40字节，备注最多100字节。", failed: "暂时无法完成，请重新核对商品、会员或优惠券。", storage: "无法可靠保存原单编号，已暂停提交。请保留本页。", changed: "身份已变化，请重新打开购物车核对。", noReceipt: "提交不是在线付款；到店金额以商户核实收款为准。" },
@@ -20,8 +21,8 @@ const button = "min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-3 t
 const primaryButton = "min-h-11 w-full rounded-xl bg-teal-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50";
 type Props = { siteId: string; accountId: string | null; initialSelection: CartClientSelection; initialCustomer?: CheckoutCustomerDraft;
   locale?: string; controllerFactory?: typeof createCartCheckoutController; allowNewCheckout?: boolean; intentEnabled?: boolean;
-  beforeSubmit?: (customer: CheckoutCustomerDraft) => void | Promise<void>;
-  beforeRelease?: (original: CartClientOriginal, context: { createdHere: boolean }) => void | Promise<void>; onReleased?: () => void; onReturnToCart?: () => void };
+  prepareInsideLock?: boolean; beforeSubmit?: (customer: CheckoutCustomerDraft, lease?: CheckoutDraftLease) => void | Promise<void>;
+  beforeRelease?: (original: CartClientOriginal, context: { createdHere: boolean; lease: CheckoutDraftLease }) => void | Promise<void>; onReleased?: () => void; onReturnToCart?: () => void };
 /** Shared review for standalone tests and the independently gated real cart.
  * Host callbacks own durable draft preservation; no implicit cart cleanup,
  * member change, cash collection or online payment happens here. */
@@ -31,12 +32,15 @@ export function MemberCartCheckoutPanel(props: Props) {
   return <Active key={JSON.stringify([props.siteId, props.accountId, props.initialSelection])} {...props} accountId={props.accountId}/>;
 }
 function Active({ siteId, accountId, initialSelection, initialCustomer, locale = "zh-CN", controllerFactory = createCartCheckoutController,
-  allowNewCheckout = true, intentEnabled = false, beforeSubmit, beforeRelease, onReleased, onReturnToCart }: Props & { accountId: string }) {
+  allowNewCheckout = true, intentEnabled = false, prepareInsideLock = false, beforeSubmit, beforeRelease, onReleased, onReturnToCart }: Props & { accountId: string }) {
   const t = copy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId, intentEnabled }), [siteId, accountId, intentEnabled, controllerFactory]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [selection, setSelection] = useState(() => structuredClone(initialSelection)), [customer, setCustomer] = useState(() => initialCustomer ? structuredClone(initialCustomer) : blank());
   const [agreed, setAgreed] = useState(false), [cancelConfirm, setCancelConfirm] = useState(false), [blocked, setBlocked] = useState(false);
   const [draftFailed, setDraftFailed] = useState(false), [draftBusy, setDraftBusy] = useState(false);
+  // React state alone does not exclude two click handlers in the same frame.
+  // Keep draft preparation/ack callbacks single-dispatch too, not just finance.
+  const draftBusyRef = useRef(false);
   const busy = ["quoting", "submitting", "recovering", "cancelling", "acknowledging"].includes(state.phase), frozen = busy || state.pending;
   useEffect(() => {
     void controller.activate();
@@ -52,14 +56,15 @@ function Active({ siteId, accountId, initialSelection, initialCustomer, locale =
   const preview = (next = selection) => { setAgreed(false); setCancelConfirm(false); void controller.preview(next, customer); };
   const editField = (key: "name" | "email" | "phone" | "note", value: string) => { controller.edit(); setAgreed(false); setDraftFailed(false);
     const next = { ...customer, [key]: value }; setCustomer(next); };
-  const submit = async () => { if (draftBusy) return; setDraftBusy(true); setDraftFailed(false);
-    try { await beforeSubmit?.(structuredClone(customer)); await controller.submit(); } catch { setDraftFailed(true); } finally { setDraftBusy(false); } };
-  const acknowledge = async () => { if (draftBusy) return; setDraftBusy(true); setDraftFailed(false);
+  const submit = async () => { if (draftBusyRef.current) return; draftBusyRef.current = true; setDraftBusy(true); setDraftFailed(false);
+    try { if (prepareInsideLock) await controller.submit(lease => beforeSubmit?.(structuredClone(customer), lease));
+      else { await beforeSubmit?.(structuredClone(customer)); await controller.submit(); } } catch { setDraftFailed(true); } finally { draftBusyRef.current = false; setDraftBusy(false); } };
+  const acknowledge = async () => { if (draftBusyRef.current) return; draftBusyRef.current = true; setDraftBusy(true); setDraftFailed(false);
     try { await controller.startAnother(beforeRelease); const next = controller.getSnapshot(); if (!next.pending && next.phase === "idle") onReleased?.(); }
-    catch { setDraftFailed(true); } finally { setDraftBusy(false); } };
-  const returnToCart = async () => { if (draftBusy || busy || state.pending || !onReturnToCart) return; setDraftBusy(true); setDraftFailed(false);
+    catch { setDraftFailed(true); } finally { draftBusyRef.current = false; setDraftBusy(false); } };
+  const returnToCart = async () => { if (draftBusyRef.current || busy || state.pending || !onReturnToCart) return; draftBusyRef.current = true; setDraftBusy(true); setDraftFailed(false);
     try { await beforeSubmit?.(structuredClone(customer)); if (!controller.getSnapshot().pending) onReturnToCart(); }
-    catch { setDraftFailed(true); } finally { setDraftBusy(false); } };
+    catch { setDraftFailed(true); } finally { draftBusyRef.current = false; setDraftBusy(false); } };
   const field = (key: "name" | "email" | "phone" | "note", type = "text") => <label className="min-w-0 space-y-1 text-sm"><span>{t[key]}</span>{key === "note"
     ? <textarea className={input} rows={2} aria-label={t[key]} value={customer[key]} onChange={e => editField(key, e.target.value)}/>
     : <input className={input} aria-label={t[key]} type={type} value={customer[key]} onChange={e => editField(key, e.target.value)}/>}</label>;

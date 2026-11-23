@@ -3,7 +3,7 @@ import test from "node:test";
 import { cartReviewFixture } from "../../scripts/fixtures/member-checkout-cart-review";
 import { handleCheckoutIntent, type CheckoutIntentHttpDependencies } from "./merchantCheckoutIntentHttp.server";
 import { handleCartCheckout } from "./merchantCheckoutCartHttp.server";
-import { isMemberCheckoutIntentPilotEnabled } from "./merchantCheckoutCartPilot.server";
+import { isMemberCheckoutIntentPilotEnabled, isMemberCheckoutAccountDraftPilotEnabled } from "./merchantCheckoutCartPilot.server";
 import { handleCartCheckoutEntry } from "../app/api/member-checkout/cart/entry/route-handler";
 const origin = "https://intent.synthetic.invalid";
 async function fixture() {
@@ -125,4 +125,15 @@ test("whole HTTP deadline is not renewed by creating the inner service after slo
   const x = await fixture(); let now = Date.now(), sessions = 0; context.mock.method(Date, "now", () => now);
   const response = await handleCheckoutIntent("pending", x.req({ siteId: x.siteId }), { ...x.deps, session: async () => { if (++sessions === 1) now += 13_000; return x.session; } });
   assert.equal(response.status, 503); assert.equal(x.calls.length, 0);
+});
+test("owned draft discovery is independently default-closed and rejects a changing rollout mode", async () => {
+  const site = "10909994", env = { MERCHANT_MEMBER_CHECKOUT_PILOT_SITES: site, MERCHANT_MEMBER_CHECKOUT_CART_PILOT_SITES: site, MERCHANT_MEMBER_CHECKOUT_CART_UI_PILOT_SITES: site, MERCHANT_MEMBER_CHECKOUT_INTENT_PILOT_SITES: site };
+  assert.equal(isMemberCheckoutAccountDraftPilotEnabled(site, env), false);
+  assert.equal(isMemberCheckoutAccountDraftPilotEnabled(site, { ...env, MERCHANT_MEMBER_CHECKOUT_ACCOUNT_DRAFT_PILOT_SITES: site }), true);
+  for (const value of ["*", site + ",", "other", new Array(51).fill(site).join(",")]) assert.equal(isMemberCheckoutAccountDraftPilotEnabled(site, { ...env, MERCHANT_MEMBER_CHECKOUT_ACCOUNT_DRAFT_PILOT_SITES: value }), false);
+  assert.equal(isMemberCheckoutAccountDraftPilotEnabled(site, { MERCHANT_MEMBER_CHECKOUT_ACCOUNT_DRAFT_PILOT_SITES: site }), false);
+  const x = await fixture(), body = { siteId: x.siteId, kind: "order", blockId: "products", viewport: "desktop" }; let draft = true;
+  const deps = { enabled: () => true, intentEnabled: () => true, draftEnabled: () => draft, session: async () => x.session, read: async () => [] };
+  const ok = await handleCartCheckoutEntry(x.req(body), deps); assert.equal((await ok.json()).ownedDraft, true);
+  const bad = await handleCartCheckoutEntry(x.req(body), { ...deps, read: async () => { draft = false; return []; } }); assert.equal(bad.status, 503);
 });

@@ -3,6 +3,7 @@ import { cartClientOriginalKey, parseCartClientOriginal, parseCartClientReview, 
   type CartClientOriginal, type CartClientReview, type CartClientSelection } from "./merchantCheckoutCartReview";
 import { checkoutIntentTransport } from "./merchantCheckoutIntentTransport";
 import { parsePendingCheckoutSnapshot, parseCheckoutIntentReview, parseCheckoutIntentAckResult, type CheckoutIntentReview } from "./merchantCheckoutPendingIntent";
+import { withCheckoutDraftLease, type CheckoutDraftLease } from "./merchantCheckoutDraftLease";
 
 export type CartClientState = { phase: "idle" | "quoting" | "ready" | "submitting" | "recovering" | "unconfirmed" | "confirmed" | "cancelling" | "acknowledging" | "error";
   pending: boolean; review: CartClientReview | null; original: CartClientOriginal | null; error: string; intentReviewRequired?: boolean };
@@ -123,13 +124,14 @@ export function createCartCheckoutController(options: { siteId: string; accountI
         const review = parseCartClientReview(response, chosen); selection = chosen; person = captured; publish({ phase: "ready", review, error: "" });
       } catch (error) { if (valid(run)) failed(error); } finally { if (valid(run)) busy = false; }
     },
-    async submit() {
+    async submit(prepare?: (lease: CheckoutDraftLease) => void | Promise<void>) {
       if (!active || busy || nonce || options.intentEnabled && (!intentReady || intent) || state.phase !== "ready" || !state.review?.quote.methodAvailable || !selection || !person) return;
       const chosen = structuredClone(selection), customer = structuredClone(person), review = structuredClone(state.review), run = epoch;
       busy = true; publish({ phase: "submitting", error: "" });
-      try { const locked = await exclusive(key, async () => {
+      try { const locked = await exclusive(key, () => withCheckoutDraftLease(key, async lease => {
         if (!valid(run)) return; if (read()) { await recover(run); return; }
         if (options.intentEnabled) { await pendingIntent(run, true); if (!valid(run) || intent || !intentReady) return; }
+        await prepare?.(lease); if (!valid(run)) return; if (read()) { await recover(run); return; }
         const next = freshNonce(); write(next, null); nonce = next; publish({}); if (!valid(run)) return;
         let financialResponseReceived = false;
         try {
@@ -154,7 +156,7 @@ export function createCartCheckoutController(options: { siteId: string; accountI
             write(null, next); nonce = null; selection = null; person = null; publish({ ...empty(), phase: "error", error: error.code }); return;
           } throw error;
         }
-      }); if (valid(run) && !locked) throw new CheckoutClientError("checkout_other_tab");
+      })); if (valid(run) && !locked) throw new CheckoutClientError("checkout_other_tab");
       } catch (error) { if (valid(run)) failed(error); } finally { if (valid(run)) busy = false; }
     },
     async cancel() {
@@ -176,17 +178,17 @@ export function createCartCheckoutController(options: { siteId: string; accountI
       }); if (valid(run) && !locked) throw new CheckoutClientError("checkout_other_tab");
       } catch (error) { if (valid(run)) failed(error); } finally { if (valid(run)) busy = false; }
     },
-    async startAnother(beforeRelease?: (original: CartClientOriginal, context: { createdHere: boolean }) => void | Promise<void>) {
+    async startAnother(beforeRelease?: (original: CartClientOriginal, context: { createdHere: boolean; lease: CheckoutDraftLease }) => void | Promise<void>) {
       if (!active || busy || !nonce && !intent || state.phase !== "confirmed" || !state.original || intent?.reviewRequired || state.original.kind === "cart" && state.original.result.reviewRequired) return;
       const ref = nonce, op = cartClientOriginalKey(state.original), displayedHash = intent?.reviewHash, run = epoch; busy = true;
-      try { const locked = await exclusive(key, async () => {
+      try { const locked = await exclusive(key, () => withCheckoutDraftLease(key, async lease => {
         if (!valid(run)) return; await recover(run);
         if (!valid(run) || state.phase !== "confirmed" || !state.original || nonce !== ref || cartClientOriginalKey(state.original) !== op
           || state.original.kind === "cart" && state.original.result.reviewRequired) return;
         if (options.intentEnabled && (!intent || intent.reviewRequired || intent.reviewHash !== displayedHash)) { publish({ error: "checkout_intent_changed" }); return; }
         // An embedding cart must durably preserve/consume its own draft BEFORE
         // the shared nonce is released. A failed callback retains the original.
-        if (beforeRelease && (!options.intentEnabled || preparedOperation !== op)) { await beforeRelease(structuredClone(state.original), { createdHere: createdOperation === op });
+        if (beforeRelease && (!options.intentEnabled || preparedOperation !== op)) { await beforeRelease(structuredClone(state.original), { createdHere: createdOperation === op, lease });
           if (options.intentEnabled) preparedOperation = op; }
         if (!valid(run) || read() !== ref) throw new CheckoutClientError("checkout_other_tab");
         if (options.intentEnabled) {
@@ -199,7 +201,7 @@ export function createCartCheckoutController(options: { siteId: string; accountI
         }
         if (ref) write(null, ref); nonce = null; intent = null; intentReady = true; createdOperation = null; preparedOperation = null; selection = null; person = null; publish(empty());
         if (options.intentEnabled) await recover(run);
-      }); if (valid(run) && !locked) throw new CheckoutClientError("checkout_other_tab");
+      })); if (valid(run) && !locked) throw new CheckoutClientError("checkout_other_tab");
       } catch (error) { if (valid(run)) failed(error); } finally { if (valid(run)) busy = false; }
     },
   }; return controller;

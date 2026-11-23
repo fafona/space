@@ -41,6 +41,16 @@ function legacySource() {
   }
   unwrap(integration); assert.equal(adapters.length, 1);
   let unwrapped = replaceRanges(source, adapters);
+  assert.equal((unwrapped.match(/  \/\/ BEGIN ACCOUNT-OWNED CART:[\s\S]*?  \/\/ END ACCOUNT-OWNED CART\n/g) ?? []).length, 1);
+  unwrapped = unwrapped.replace(/  \/\/ BEGIN ACCOUNT-OWNED CART:[\s\S]*?  \/\/ END ACCOUNT-OWNED CART\n/, "")
+    .replaceAll("  let [cart", "  const [cart")
+    .replace('const cartStorageKey = ownedDraft !== undefined ? ownedDraft?.storageKey ?? "" : ', 'const cartStorageKey = ')
+    .replaceAll("    if (props.runtimeCheckoutAdapter?.ownedDraft !== undefined) return;\n", "")
+    .replace("[cartEnabled, cartOpen, props.runtimeCheckoutAdapter]", "[cartEnabled, cartOpen]")
+    .replace("[cartEnabled, cartStorageIdentity, cartStorageKey, pricePrefix, props.runtimeCheckoutAdapter, setCartItems, setCartCustomer, setCartClientRequestId]", "[cartEnabled, cartStorageIdentity, cartStorageKey, pricePrefix, props.runtimeCheckoutAdapter]")
+    .replace("[cartCustomerDefaults, cartEnabled, props.runtimeCheckoutAdapter, setCartCustomer]", "[cartCustomerDefaults, cartEnabled, props.runtimeCheckoutAdapter]")
+    .replace("[cartEnabled, pricePrefix, productAvailabilityById, products, props.runtimeCheckoutAdapter, setCartItems]", "[cartEnabled, pricePrefix, productAvailabilityById, products, props.runtimeCheckoutAdapter]")
+    .replace("    pricePrefix,\n    props.runtimeCheckoutAdapter,", "    pricePrefix,");
   for (const line of ['import type { ProductCartCheckoutAdapter } from "../checkout/ProductCartCheckoutAdapter";\n',
     'import { persistProductCheckoutDraft, productCartAfterAcknowledgement } from "@/lib/merchantCheckoutProductCart";\n',
     '    runtimeCheckoutAdapter?: ProductCartCheckoutAdapter;\n']) { assert.ok(unwrapped.includes(line)); unwrapped = unwrapped.replace(line, ""); }

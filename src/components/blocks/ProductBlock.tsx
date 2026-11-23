@@ -1002,10 +1002,10 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [scrollActiveTag, setScrollActiveTag] = useState<string | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [cartOpen, setCartOpen] = useState(false);
-  const [cartItems, setCartItems] = useState<ProductCartItemState[]>([]);
-  const [cartClientRequestId, setCartClientRequestId] = useState("");
+  let [cartItems, setCartItems] = useState<ProductCartItemState[]>([]);
+  let [cartClientRequestId, setCartClientRequestId] = useState("");
   const [loadedCartStorageIdentity, setLoadedCartStorageIdentity] = useState("");
-  const [cartCustomer, setCartCustomer] = useState<MerchantOrderCustomerInput>({});
+  let [cartCustomer, setCartCustomer] = useState<MerchantOrderCustomerInput>({});
   const [cartCustomerDefaults, setCartCustomerDefaults] = useState<MerchantOrderCustomerInput>({});
   const [cartCustomerAuthProof, setCartCustomerAuthProof] = useState("");
   const [cartCustomerOpen, setCartCustomerOpen] = useState(false);
@@ -1015,6 +1015,20 @@ export default function ProductBlock(props: ProductBlockProps) {
   const [cartCustomerShakeKey, setCartCustomerShakeKey] = useState(0);
   const [cartFlyItems, setCartFlyItems] = useState<ProductCartFlyItem[]>([]);
   const [cartPulse, setCartPulse] = useState(false);
+  // BEGIN ACCOUNT-OWNED CART: no legacy read/write/defaults while resolving
+  // identity or using the independently gated owned draft. Parent subscribes
+  // to its store; all mutations publish only after durable locked readback.
+  const ownedDraft = props.runtimeCheckoutAdapter?.ownedDraft;
+  if (ownedDraft !== undefined) {
+    const snapshot = ownedDraft?.getSnapshot();
+    cartItems = snapshot?.ready ? snapshot.data.items : [];
+    cartCustomer = snapshot?.ready ? snapshot.data.customer : {};
+    cartClientRequestId = "";
+    setCartClientRequestId = () => {};
+    setCartItems = next => { void ownedDraft?.edit(data => ({ ...data, items: typeof next === "function" ? next(data.items) : next })); };
+    setCartCustomer = next => { void ownedDraft?.edit(data => ({ ...data, customer: normalizeCartCustomer(typeof next === "function" ? next(data.customer) : next) })); };
+  }
+  // END ACCOUNT-OWNED CART
   const rootRef = useRef<HTMLElement | null>(null);
   usePublicTrafficExposure(rootRef, "product", runtimeBlockId);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
@@ -1033,7 +1047,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     (runtimeCatalogState.key === runtimeCatalogKey && runtimeCatalogState.status === "ready");
   const cartEnabled = Boolean(cartRuntimeEnabled && runtimeBlockId && runtimeCatalogReadyForOrdering);
   const cartRuntimeReady = Boolean(cartEnabled && effectiveRuntimeSiteId && runtimeBlockId);
-  const cartStorageKey = cartRuntimeReady ? getProductCartStorageKey(effectiveRuntimeSiteId, runtimeBlockId) : "";
+  const cartStorageKey = ownedDraft !== undefined ? ownedDraft?.storageKey ?? "" : cartRuntimeReady ? getProductCartStorageKey(effectiveRuntimeSiteId, runtimeBlockId) : "";
   const cartStorageIdentity = cartStorageKey ? `${cartStorageKey}\u0001${pricePrefix}` : "";
   const overlayWithinBlock = props.runtimeInteractiveOverlayWithinBlock === true;
   const disableCartPortal = props.runtimeDisableCartPortal === true;
@@ -1099,6 +1113,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   }, [props.runtimeOrderManagementEnabled, runtimeBlockId]);
 
   useEffect(() => {
+    if (props.runtimeCheckoutAdapter?.ownedDraft !== undefined) return;
     if (!cartEnabled) {
       if (props.runtimeCheckoutAdapter) return;
       setCartItems([]);
@@ -1115,7 +1130,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     setCartCustomer(stored.customer ?? {});
     setCartClientRequestId(stored.clientRequestId ?? "");
     setLoadedCartStorageIdentity(cartStorageIdentity);
-  }, [cartEnabled, cartStorageIdentity, cartStorageKey, pricePrefix, props.runtimeCheckoutAdapter]);
+  }, [cartEnabled, cartStorageIdentity, cartStorageKey, pricePrefix, props.runtimeCheckoutAdapter, setCartItems, setCartCustomer, setCartClientRequestId]);
 
   useEffect(() => {
     if (overlayWithinBlock || disableCartPortal || typeof document === "undefined") {
@@ -1252,6 +1267,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   }, [cartEnabled]);
 
   useEffect(() => {
+    if (props.runtimeCheckoutAdapter?.ownedDraft !== undefined) return;
     if (!cartEnabled) {
       setCartCustomerDefaults({});
       setCartCustomerAuthProof("");
@@ -1286,15 +1302,17 @@ export default function ProductBlock(props: ProductBlockProps) {
     return () => {
       cancelled = true;
     };
-  }, [cartEnabled, cartOpen]);
+  }, [cartEnabled, cartOpen, props.runtimeCheckoutAdapter]);
 
   useEffect(() => {
+    if (props.runtimeCheckoutAdapter?.ownedDraft !== undefined) return;
     if (!cartEnabled) return;
     if (props.runtimeCheckoutAdapter?.isLocked()) return;
     setCartCustomer((current) => mergeCartCustomerDefaults(current, cartCustomerDefaults));
-  }, [cartCustomerDefaults, cartEnabled, props.runtimeCheckoutAdapter]);
+  }, [cartCustomerDefaults, cartEnabled, props.runtimeCheckoutAdapter, setCartCustomer]);
 
   useEffect(() => {
+    if (props.runtimeCheckoutAdapter?.ownedDraft !== undefined) return;
     if (!cartEnabled || !cartStorageKey || loadedCartStorageIdentity !== cartStorageIdentity) return;
     saveProductCartStorageState(cartStorageKey, {
       customer: normalizeCartCustomer(cartCustomer),
@@ -1310,6 +1328,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     cartStorageKey,
     loadedCartStorageIdentity,
     pricePrefix,
+    props.runtimeCheckoutAdapter,
   ]);
 
   useEffect(() => {
@@ -1760,7 +1779,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       if (!changed) return current;
       return normalizeCartItems(next, pricePrefix);
     });
-  }, [cartEnabled, pricePrefix, productAvailabilityById, products, props.runtimeCheckoutAdapter]);
+  }, [cartEnabled, pricePrefix, productAvailabilityById, products, props.runtimeCheckoutAdapter, setCartItems]);
 
   const renderCard = (
     item: ReturnType<typeof normalizeProductItems>[number],
@@ -2407,10 +2426,12 @@ export default function ProductBlock(props: ProductBlockProps) {
               {props.runtimeCheckoutAdapter ? props.runtimeCheckoutAdapter.render({
                 items: cartItems, customer: { ...normalizeCartCustomer(cartCustomer), title: "" } as { name: string; title: string; email: string; phone: string; note: string },
                 clientRequestId: cartClientRequestId, storageKey: cartStorageKey,
-                serializedDraft: JSON.stringify({ customer: normalizeCartCustomer(cartCustomer), items: normalizeCartItems(cartItems, pricePrefix), clientRequestId: cartClientRequestId }),
-                persist: (expected, customer, ack) => {
+                serializedDraft: ownedDraft ? ownedDraft.getSnapshot().raw : JSON.stringify({ customer: normalizeCartCustomer(cartCustomer), items: normalizeCartItems(cartItems, pricePrefix), clientRequestId: cartClientRequestId }),
+                persist: (expected, customer, ack, lease) => {
                   const nextItems = ack ? productCartAfterAcknowledgement(cartItems, cartItems, ack.selection, ack.original, ack.fresh) : cartItems;
                   const nextCustomer = normalizeCartCustomer(customer), requestId = nextItems === cartItems ? cartClientRequestId : "";
+                  if (ownedDraft) { const data = { customer: nextCustomer, items: normalizeCartItems(nextItems, pricePrefix), clientRequestId: "" };
+                    return lease ? ownedDraft.persist(expected, data, lease) : ownedDraft.save(expected, data); }
                   const serialized = JSON.stringify({ customer: nextCustomer, items: normalizeCartItems(nextItems, pricePrefix), clientRequestId: requestId });
                   persistProductCheckoutDraft(window.localStorage, cartStorageKey, expected, serialized);
                   setCartItems(nextItems); setCartCustomer(nextCustomer); setCartClientRequestId(requestId); return serialized;

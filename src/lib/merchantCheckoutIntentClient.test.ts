@@ -4,6 +4,7 @@ import { cartReviewFixture } from "../../scripts/fixtures/member-checkout-cart-r
 import { createCartCheckoutController } from "./merchantCheckoutCartClient";
 import { CheckoutClientError, checkoutClientStorageKey, type CheckoutClientRequest } from "./merchantCheckoutClient";
 import { checkoutIntentTransport } from "./merchantCheckoutIntentTransport";
+import { assertCheckoutDraftLease } from "./merchantCheckoutDraftLease";
 const nonce = "33333333-3333-4333-8333-333333333333";
 async function fixture(existing = false) {
   const x = await cartReviewFixture(), store = new Map<string, string>(), calls: string[] = [], events: string[] = [];
@@ -148,4 +149,21 @@ test("cross-device whole-cart cancellation uses the original operation without c
   } });
   await c.activate(); await c.cancel(); const original = c.getSnapshot().original;
   assert.equal(original?.kind === "cart" && original.result.closed, true); assert.equal(x.store.size, 0); assert.equal(c.getSnapshot().pending, true);
+});
+test("owned cart preparation runs inside the common live lock before nonce and finance", async () => {
+  const x = await fixture(), c = x.create(); await c.activate(); await c.preview(x.f.request, x.customer);
+  await c.submit(lease => { assertCheckoutDraftLease(lease, x.key); assert.equal(x.store.size, 0); assert.equal(x.calls.filter(p => p.endsWith("submit")).length, 0); });
+  assert.equal(c.getSnapshot().phase, "confirmed");
+});
+test("a failed or identity-invalidated owned draft preparation dispatches no financial request and creates no nonce", async () => {
+  for (const mode of ["failure", "identity"] as const) {
+    const x = await fixture(), c = x.create(); await c.activate(); await c.preview(x.f.request, x.customer);
+    await c.submit(() => { if (mode === "failure") throw new Error("draft failure"); c.deactivate(); });
+    assert.equal(x.store.size, 0); assert.equal(x.calls.filter(p => p.endsWith("submit")).length, 0);
+  }
+});
+test("draft acknowledgement receives the same live lock lease and that lease expires afterward", async () => {
+  const x = await fixture(true), c = x.create(); await c.activate(); let saved: Parameters<typeof assertCheckoutDraftLease>[0];
+  await c.startAnother((_original, context) => { saved = context.lease; assertCheckoutDraftLease(saved, x.key); });
+  assert.throws(() => assertCheckoutDraftLease(saved, x.key)); assert.equal(x.events.filter(e => e === "ack").length, 1);
 });

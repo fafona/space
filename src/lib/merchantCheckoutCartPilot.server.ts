@@ -22,3 +22,9 @@ export function isMemberCheckoutIntentPilotEnabled(siteId: string, env: Record<s
   return isMemberCheckoutCartUiPilotEnabled(siteId, env) && Boolean(raw.trim()) && sites.length <= 50
     && sites.every(s => /^\d{8}$/.test(s)) && sites.includes(siteId);
 }
+/** Unreleased account-owned draft path; never auto-imports unowned v1 data. */
+export function isMemberCheckoutAccountDraftPilotEnabled(siteId: string, env: Record<string, string | undefined> = process.env) {
+  const raw = env.MERCHANT_MEMBER_CHECKOUT_ACCOUNT_DRAFT_PILOT_SITES ?? "", sites = raw.split(",").map(s => s.trim());
+  return isMemberCheckoutIntentPilotEnabled(siteId, env) && Boolean(raw.trim()) && sites.length <= 50
+    && sites.every(s => /^\d{8}$/.test(s)) && sites.includes(siteId);
+}
