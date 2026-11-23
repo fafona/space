@@ -46,6 +46,11 @@ export function checkoutSubmissionIdentity(raw: unknown, principal: CheckoutPrin
       request.customer.name, request.customer.title, request.customer.email, request.customer.phone, request.customer.note]), request };
 }
 export type CheckoutSubmissionIdentity = ReturnType<typeof checkoutSubmissionIdentity>;
+/** Read-only selection context. Deliberately lacks nonce, customer and a
+ * confirmation hash, so a cart quote is not a financial submission identity. */
+export type CheckoutSelectionQuoteIdentity = Pick<CheckoutSubmissionIdentity, "siteId" | "principalKey" | "operationKey" | "requestHash"> & {
+  request: Pick<CheckoutSubmissionIdentity["request"], "selection" | "appointmentAt">;
+};
 
 /** Recovery needs only the locally retained nonce, never browser-selected
  * financial totals or a principal supplied in a URL/body. Absence of a result
@@ -57,7 +62,7 @@ export function checkoutSubmissionRecoveryIdentity(raw: unknown, principal: Chec
   return { siteId: raw.siteId, principalKey, operationKey: digest(["member-checkout-v2", raw.siteId, principalKey, raw.nonce.toLowerCase()]) };
 }
 
-export function parseCheckoutSubmissionSnapshot(raw: unknown, identity: CheckoutSubmissionIdentity): CheckoutSubmissionSnapshot {
+export function parseCheckoutSubmissionSnapshot(raw: unknown, identity: CheckoutSelectionQuoteIdentity): CheckoutSubmissionSnapshot {
   if (!object(raw) || raw.version !== 2 || typeof raw.databaseNow !== "string" || !Number.isFinite(Date.parse(raw.databaseNow))) return fail();
   for (const key of ["siteId", "principalKey", "operationKey", "requestHash"] as const) if (raw[key] !== identity[key]) return fail();
   const rows = (value: unknown, tenant: boolean) => {
@@ -89,7 +94,7 @@ export function parseCheckoutSubmissionSnapshot(raw: unknown, identity: Checkout
 
 /** No I/O or writes. Only raw database snapshots enter this planner; selection
  * previews, browser prices and arbitrary member identities are not accepted. */
-async function prepareCheckoutSubmissionContext(snapshot: CheckoutSubmissionSnapshot, identity: CheckoutSubmissionIdentity, principal: CheckoutPrincipal) {
+async function prepareCheckoutSubmissionContext(snapshot: CheckoutSubmissionSnapshot, identity: CheckoutSelectionQuoteIdentity, principal: CheckoutPrincipal) {
   if (checkoutPrincipalKey(principal) !== identity.principalKey) return fail("checkout_unauthorized");
   snapshot = parseCheckoutSubmissionSnapshot(structuredClone(snapshot), identity);
   const offer = snapshot.offer, now = new Date(snapshot.databaseNow), nowIso = now.toISOString(), siteId = snapshot.siteId;
@@ -139,14 +144,15 @@ async function prepareCheckoutSubmissionContext(snapshot: CheckoutSubmissionSnap
   });
   return { snapshot, offer, now, nowIso, siteId, site, data, document, original, booking, request, preview };
 }
-export async function quoteCheckoutSubmissionSnapshot(snapshot: CheckoutSubmissionSnapshot, identity: CheckoutSubmissionIdentity, principal: CheckoutPrincipal) {
+export async function quoteCheckoutSubmissionSnapshot(snapshot: CheckoutSubmissionSnapshot, identity: CheckoutSelectionQuoteIdentity, principal: CheckoutPrincipal) {
   identity = structuredClone(identity); principal = structuredClone(principal);
   const { preview } = await prepareCheckoutSubmissionContext(snapshot, identity, principal);
   return { ...preview, confirmationHash: checkoutConfirmationHash(preview.quote, principal, preview.slot) };
 }
 export async function planCheckoutSubmission(snapshot: CheckoutSubmissionSnapshot, identity: CheckoutSubmissionIdentity, principal: CheckoutPrincipal) {
   identity = structuredClone(identity); principal = structuredClone(principal);
-  const { snapshot: stableSnapshot, offer, now, nowIso, siteId, site, data, document, original, booking, request, preview } = await prepareCheckoutSubmissionContext(snapshot, identity, principal);
+  const { snapshot: stableSnapshot, offer, now, nowIso, siteId, site, data, document, original, booking, preview } = await prepareCheckoutSubmissionContext(snapshot, identity, principal);
+  const request = identity.request;
   snapshot = stableSnapshot;
   if (!data.settings || offer.unitPoints === null) return fail("checkout_membership_unavailable");
   const memberRow = document("__merchant_memberships__:"), settingsRow = document("__merchant_membership_settings__:");

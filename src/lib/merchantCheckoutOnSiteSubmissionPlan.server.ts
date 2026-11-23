@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { parseMemberCheckoutPreviewRequest, parseCheckoutPreviewRows } from "./merchantCheckoutPreview.server";
 import { checkoutPrincipalKey, type CheckoutPrincipal } from "./merchantCheckoutQuote.server";
-import { checkoutSubmissionRecoveryIdentity, type CheckoutSubmissionSnapshot } from "./merchantCheckoutSubmissionPlan.server";
+import { checkoutSubmissionRecoveryIdentity, type CheckoutSelectionQuoteIdentity, type CheckoutSubmissionSnapshot } from "./merchantCheckoutSubmissionPlan.server";
 import { parseCheckoutConfigurationSnapshot } from "./merchantCheckoutConfigurationStore.server";
 import { readPlatformMerchantSnapshotBlocksValidated } from "./platformAdminBackupValidation";
 import { pickPublishedPageRow } from "./publishedSiteData";
@@ -43,7 +43,7 @@ export function onSiteSubmissionIdentity(raw: unknown, principal: CheckoutPrinci
 export type OnSiteSubmissionIdentity = ReturnType<typeof onSiteSubmissionIdentity>;
 
 /** Separate method/version: never forge a points request to reuse its parser. */
-export function parseOnSiteSubmissionSnapshot(raw: unknown, identity: OnSiteSubmissionIdentity): OnSiteSubmissionSnapshot {
+export function parseOnSiteSubmissionSnapshot(raw: unknown, identity: CheckoutSelectionQuoteIdentity): OnSiteSubmissionSnapshot {
   if (!object(raw) || raw.version !== 3 || raw.method !== "on_site" || typeof raw.databaseNow !== "string" || !Number.isFinite(Date.parse(raw.databaseNow))) return fail();
   for (const key of ["siteId", "principalKey", "operationKey", "requestHash"] as const) if (raw[key] !== identity[key]) return fail();
   const rows = (value: unknown, tenant: boolean) => {
@@ -73,7 +73,7 @@ export function parseOnSiteSubmissionSnapshot(raw: unknown, identity: OnSiteSubm
 
 /** Read-only preparation from raw DB snapshots. Does not call points-benefit,
  * expiry, wallet, scheduled award, shadow write, catalog repair or Stripe ports. */
-function context(raw: OnSiteSubmissionSnapshot, identity: OnSiteSubmissionIdentity, principal: CheckoutPrincipal) {
+function context(raw: OnSiteSubmissionSnapshot, identity: CheckoutSelectionQuoteIdentity, principal: CheckoutPrincipal) {
   if (checkoutPrincipalKey(principal) !== identity.principalKey) return fail("checkout_unauthorized");
   const snapshot = parseOnSiteSubmissionSnapshot(raw, identity), { offer, siteId } = snapshot, now = new Date(snapshot.databaseNow), request = identity.request;
   const roots = snapshot.sourceRows.filter(row => row.slug === "__platform_merchant_snapshot__" && row.merchant_id === null);
@@ -146,13 +146,14 @@ function context(raw: OnSiteSubmissionSnapshot, identity: OnSiteSubmissionIdenti
     slot ? [slot.key, slot.appointmentAt, slot.timeZone] : null]);
   return { snapshot, offer, siteId, site, now, request, data, document, member: own[0], booking, quote, confirmationHash, tags };
 }
-export function quoteOnSiteSubmissionSnapshot(snapshot: OnSiteSubmissionSnapshot, identity: OnSiteSubmissionIdentity, principal: CheckoutPrincipal) {
+export function quoteOnSiteSubmissionSnapshot(snapshot: OnSiteSubmissionSnapshot, identity: CheckoutSelectionQuoteIdentity, principal: CheckoutPrincipal) {
   const c = context(structuredClone(snapshot), structuredClone(identity), structuredClone(principal));
   return { ...c.quote, confirmationHash: c.confirmationHash };
 }
 export function planOnSiteSubmission(snapshot: OnSiteSubmissionSnapshot, identity: OnSiteSubmissionIdentity, principal: CheckoutPrincipal) {
   identity = structuredClone(identity); principal = structuredClone(principal);
-  const c = context(structuredClone(snapshot), identity, principal), { offer, siteId, site, now, request, data, document, booking, member, quote } = c;
+  const c = context(structuredClone(snapshot), identity, principal), { offer, siteId, site, now, data, document, booking, member, quote } = c;
+  const request = identity.request;
   if (request.confirmationHash !== c.confirmationHash) return fail("checkout_quote_changed");
   const nowIso = now.toISOString(), deadlines = [now.getTime() + 30_000, Date.parse(site.serviceExpiresAt!)];
   for (const selected of quote.selected) {
