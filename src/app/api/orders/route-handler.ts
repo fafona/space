@@ -597,6 +597,8 @@ export async function handleMerchantOrderPost(
 
     return privateOrderJson({ ok: true, order });
   } catch (error) {
+    const checkoutError = checkoutLegacyErrorDetails(error);
+    if (checkoutError) return privateOrderJson({ error: checkoutError.error, message: checkoutError.message }, checkoutError.status);
     return privateOrderJson(
       {
         error: "order_create_failed",

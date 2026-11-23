@@ -113,14 +113,18 @@ export async function listPersonalMerchantOrders(input: {
   return listStoredMerchantOrdersByCustomer(supabase, input);
 }
 
-export async function createMerchantOrderRecord(input: MerchantOrderCreateInput) {
-  const supabase = requireOrdersStoreClient();
+export type MerchantOrderCreateDependencies = Pick<MerchantOrderUpdateDependencies, "createClient" | "loadOrders" | "saveOrders" | "mirrorOrders">;
+const ORDER_CREATE_DEPENDENCIES: MerchantOrderCreateDependencies = {
+  createClient: requireOrdersStoreClient, loadOrders: loadStoredMerchantOrders, saveOrders: saveStoredMerchantOrders, mirrorOrders: mirrorMerchantOrderTransitions,
+};
+export async function createMerchantOrderRecord(input: MerchantOrderCreateInput, overrides: Partial<MerchantOrderCreateDependencies> = {}) {
+  const dependencies = { ...ORDER_CREATE_DEPENDENCIES, ...overrides }, supabase = dependencies.createClient();
   const siteId = String(input.siteId ?? "").trim();
   if (!siteId) {
     throw new Error("invalid_site_id");
   }
   return withMerchantOrderMutationLock(siteId, async () => {
-    const stored = await loadStoredMerchantOrders(supabase, siteId);
+    const stored = await dependencies.loadOrders(supabase, siteId);
     const existingOrders = normalizeMerchantOrderRecords(stored?.orders ?? []);
     const clientRequestId = trimText(input.clientRequestId);
     if (clientRequestId) {
@@ -133,7 +137,7 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
             existingRequest.customerLoginEmail === trimText(input.customerLoginEmail).toLowerCase()) ||
           (input.customerGuestHash && existingRequest.customerGuestHash === trimText(input.customerGuestHash));
         if (!sameOwner) throw new Error("order_request_conflict");
-        await mirrorMerchantOrderTransitions(supabase, [{ next: existingRequest }]);
+        await dependencies.mirrorOrders(supabase, [{ next: existingRequest }]);
         return existingRequest;
       }
     }
@@ -156,7 +160,7 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
       throw new Error("order_items_required");
     }
     const orders = [next, ...existingOrders];
-    const saved = await saveStoredMerchantOrders(supabase, {
+    const saved = await dependencies.saveOrders(supabase, {
       siteId: next.siteId,
       orders,
       expectedRows: stored?.storageRows ?? [],
@@ -166,7 +170,7 @@ export async function createMerchantOrderRecord(input: MerchantOrderCreateInput)
     if (saved.error) {
       throw new Error(saved.error);
     }
-    await mirrorMerchantOrderTransitions(supabase, [{ next }]);
+    await dependencies.mirrorOrders(supabase, [{ next }]);
     return next;
   });
 }

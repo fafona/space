@@ -14,23 +14,27 @@ import { isMemberCheckoutOnSitePilotEnabled } from "./merchantCheckoutOnSitePilo
 import { parseCheckoutOriginalResult } from "./merchantCheckoutOriginalResult";
 import { parseOnSiteCancellation, type OnSiteCheckoutResult } from "./merchantCheckoutOnSiteResult";
 import { cancelOnSiteCheckout } from "./merchantCheckoutOnSiteResult.server";
-import { isMemberCheckoutCartManagementEnabled, isMemberCheckoutCartPilotEnabled } from "./merchantCheckoutCartPilot.server";
+import { isMemberCheckoutCartManagementEnabled, isMemberCheckoutCartPilotEnabled, isMemberCheckoutIntentPilotEnabled } from "./merchantCheckoutCartPilot.server";
 import { bridgeCartCheckoutManagement } from "./merchantCheckoutCartManagement.server";
 import { bridgeCartCheckoutPersonalCancellation } from "./merchantCheckoutCartPersonalBoundary.server";
 import { checkoutOwnerDependencies } from "./merchantCheckoutOwnerAccess.server";
 import { MerchantCheckoutError } from "./merchantCheckoutQuote.server";
+import { commitLegacyOrderWithCheckoutIntent } from "./merchantCheckoutLegacyCreateBoundary.server";
 
 const id = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9:_-]{1,160}$/.test(v);
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 const safeCodes = new Set(["checkout_not_found", "checkout_conflict", "checkout_cancellation_review_required", "checkout_cancellation_not_allowed", "checkout_cancellation_deadline",
-  "checkout_resource_locked", "checkout_change_requires_review", "checkout_original_cancellation_required", "checkout_batch_requires_single", "checkout_unauthorized", "checkout_owner_required", "checkout_unconfirmed", "checkout_unavailable", "checkout_cancellation_requires_refund"]);
+  "checkout_resource_locked", "checkout_change_requires_review", "checkout_original_cancellation_required", "checkout_batch_requires_single", "checkout_unauthorized", "checkout_owner_required", "checkout_unconfirmed", "checkout_unavailable", "checkout_cancellation_requires_refund", "checkout_original_pending", "checkout_intent_review_required", "checkout_create_unconfirmed"]);
 export class CheckoutLegacyBoundaryError extends Error {
   constructor(readonly code: string, readonly status: number = 409) { super(code); }
 }
 export function checkoutLegacyErrorDetails(error: unknown) {
   const code = error instanceof CheckoutLegacyBoundaryError ? error.code : error instanceof Error ? error.message : "";
   if (!safeCodes.has(code)) return null;
-  const message = code === "checkout_batch_requires_single" ? "包含新结算记录，请逐笔取消并按原单规则退还。"
+  const message = code === "checkout_original_pending" ? "有一笔结算原单尚未核对，请先查看本人原单，不要从旧入口重复下单。"
+    : code === "checkout_intent_review_required" ? "原结算需人工核对，暂不能另外下单；请联系商户核对原单。"
+    : code === "checkout_create_unconfirmed" ? "下单结果尚未确认，请重新读取原订单，不要再次提交。"
+    : code === "checkout_batch_requires_single" ? "包含新结算记录，请逐笔取消并按原单规则退还。"
     : code === "checkout_change_requires_review" ? "本单已关联结算，暂不支持直接改价、换项目或改期，请先核对原单。"
       : code === "checkout_original_cancellation_required" ? "请从已登录账号取消原结算，不能直接取消或恢复这笔记录。"
         : code === "checkout_owner_required" ? "新结算记录的取消暂需商户负责人处理。"
@@ -40,7 +44,7 @@ export function checkoutLegacyErrorDetails(error: unknown) {
               : code === "checkout_unconfirmed" ? "取消结果尚未确认，请重新读取原单，不要另开一笔或重复扣减。"
                 : code === "checkout_unavailable" ? "暂时无法核对原结算，请稍后重新读取，不要重复扣减。"
                   : "原结算或业务记录已变化，请重新读取并核对原单。";
-  return { error: code, message, status: error instanceof CheckoutLegacyBoundaryError ? error.status : code === "checkout_unconfirmed" || code === "checkout_unavailable" ? 503 : 409 };
+  return { error: code, message, status: error instanceof CheckoutLegacyBoundaryError ? error.status : code === "checkout_unconfirmed" || code === "checkout_unavailable" || code === "checkout_create_unconfirmed" ? 503 : 409 };
 }
 function rpc(signal?: AbortSignal): MemberCheckoutResultRpc {
   const client = createServerSupabaseServiceClient();
@@ -54,7 +58,7 @@ function anyEnabled() {
 function anyCashEnabled() { return (process.env.MERCHANT_MEMBER_CHECKOUT_PILOT_SITES ?? "").split(",").some(siteId => isMemberCheckoutOnSitePilotEnabled(siteId.trim())); }
 const defaults = { enabled: isMemberCheckoutPilotEnabled, anyEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, anyCashEnabled,
   session: resolvePersonalAccountSessionFromRequest, actor: resolveMerchantBusinessActor, rpc };
-export type CheckoutLegacyBoundaryDependencies = typeof defaults & { cartEnabled?: (siteId: string) => boolean; cartPersonalEnabled?: (siteId: string) => boolean; cartSite?: typeof checkoutOwnerDependencies.site };
+export type CheckoutLegacyBoundaryDependencies = typeof defaults & { cartEnabled?: (siteId: string) => boolean; cartPersonalEnabled?: (siteId: string) => boolean; cartSite?: typeof checkoutOwnerDependencies.site; intentEnabled?: (siteId: string) => boolean };
 type Link = { siteId: string; kind: "booking" | "order"; id: string; operationKey: string; record: Record<string, unknown> }
   & ({ method: "points"; result: MemberCheckoutResult } | { method: "on_site"; result: OnSiteCheckoutResult });
 async function call(callRpc: MemberCheckoutResultRpc, name: string, args: Record<string, unknown>, writing = false) {
@@ -257,7 +261,7 @@ export async function legacyCheckoutPointTransitions<T extends { previous: Merch
   const sites = new Set(transitions.map(t => t.next.siteId));
   const deps = { enabled: isMemberCheckoutPilotEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, rpc, ...overrides };
   if (sites.size !== 1 || !deps.enabled(transitions[0].next.siteId)) return transitions;
-  const linked = await linkedCheckoutOrderOrBookingIds(transitions[0].next.siteId, "order", [...new Set(transitions.map(t => t.next.id))], deps.rpc(), deps.cashEnabled(transitions[0].next.siteId), (deps.cartEnabled ?? isMemberCheckoutCartManagementEnabled)(transitions[0].next.siteId));
+  const linked = await linkedCheckoutOrderOrBookingIds(transitions[0].next.siteId, "order", [...new Set(transitions.map(t => t.next.id))], deps.rpc(), deps.cashEnabled(transitions[0].next.siteId), (deps.cartEnabled ?? (site => isMemberCheckoutCartManagementEnabled(site) || isMemberCheckoutIntentPilotEnabled(site)))(transitions[0].next.siteId));
   return transitions.filter(t => !linked.has(t.next.id));
 }
 
@@ -272,7 +276,7 @@ export async function preserveCheckoutOrderStorage(siteId: string, next: Merchan
   if (!deps.enabled(siteId)) return next;
   const ids = next.map(r => r.id).filter(id);
   if (!ids.length) return next;
-  const linked = await linkedCheckoutOrderOrBookingIds(siteId, "order", [...new Set(ids)], deps.rpc(), deps.cashEnabled(siteId), (deps.cartEnabled ?? isMemberCheckoutCartManagementEnabled)(siteId));
+  const linked = await linkedCheckoutOrderOrBookingIds(siteId, "order", [...new Set(ids)], deps.rpc(), deps.cashEnabled(siteId), (deps.cartEnabled ?? (site => isMemberCheckoutCartManagementEnabled(site) || isMemberCheckoutIntentPilotEnabled(site)))(siteId));
   if (!linked.size) return next;
   const chunks = expectedRows.filter(row => new RegExp(`^__merchant_orders__:${siteId}:chunk:[0-9]+$`).test(row.slug));
   const rows = chunks.length ? chunks : expectedRows.filter(row => row.slug === `__merchant_orders__:${siteId}`);
@@ -295,12 +299,12 @@ export async function preserveCheckoutOrderStorage(siteId: string, next: Merchan
  * of an enabled pilot use the snapshot-aware adapter; it commits through the
  * SAME CAS transaction, never direct page writes or a second financial call. */
 export async function saveCheckoutAwareMerchantOrders(client: Parameters<typeof saveStoredMerchantOrders>[0], input: Parameters<typeof saveStoredMerchantOrders>[1],
-  overrides: Partial<Pick<CheckoutLegacyBoundaryDependencies, "enabled" | "cashEnabled" | "rpc" | "cartEnabled">> = {}): Promise<{ error: string | null }> {
-  const deps = { enabled: isMemberCheckoutPilotEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, rpc, ...overrides }, siteId = input.siteId.trim();
+  overrides: Partial<Pick<CheckoutLegacyBoundaryDependencies, "enabled" | "cashEnabled" | "rpc" | "cartEnabled" | "intentEnabled">> = {}): Promise<{ error: string | null }> {
+  const deps = { enabled: isMemberCheckoutPilotEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, intentEnabled: isMemberCheckoutIntentPilotEnabled, rpc, ...overrides }, siteId = input.siteId.trim();
   if (!deps.enabled(siteId)) return saveStoredMerchantOrders(client, input);
   if (!Array.isArray(input.expectedRows)) return { error: "order_update_conflict" };
-  const next = await preserveCheckoutOrderStorage(siteId, normalizeMerchantOrderRecords(input.orders), input.expectedRows, deps);
-  return commitMerchantOrderMembershipTransaction(client, siteId, {
+  const next = await preserveCheckoutOrderStorage(siteId, normalizeMerchantOrderRecords(input.orders), input.expectedRows, { ...deps, cartEnabled: deps.cartEnabled ?? (site => isMemberCheckoutCartManagementEnabled(site) || deps.intentEnabled(site)) });
+  return (deps.intentEnabled(siteId) ? commitLegacyOrderWithCheckoutIntent : commitMerchantOrderMembershipTransaction)(client, siteId, {
     orders: { expectedRows: input.expectedRows, next },
     ...(input.memberships ? { memberships: input.memberships } : {}),
   });
