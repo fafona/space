@@ -4,6 +4,7 @@ import { bridgeLegacyCheckoutMutation, checkoutLegacyErrorDetails, CheckoutLegac
 import { createMerchantOrder, normalizeMerchantOrderRecords } from "./merchantOrders";
 import { handleMerchantOrderPatch } from "@/app/api/orders/route-handler";
 import type { MerchantBusinessActor } from "./merchantBusinessActor.server";
+import type { OnSiteCheckoutResult } from "./merchantCheckoutOnSiteResult";
 
 const siteId = "10909095", operationKey = "a".repeat(64), stamp = "2026-11-23T12:00:00Z";
 function fixture(kind: "booking" | "order" = "booking") {
@@ -33,11 +34,56 @@ function fixture(kind: "booking" | "order" = "booking") {
     link = { ...link, record: { ...link.record, status: "cancelled" }, result: { ...link.result, closed: true, cancellationAvailable: false, resource: { status: "cancelled", updatedAt: stamp }, cancellation } };
     return { data: { replayed: false, receipt: { ...cancellation, siteId, operationKey, closed: true } }, error: null };
   };
-  const deps: CheckoutLegacyBoundaryDependencies = { enabled: () => true, anyEnabled: () => true, session: async () => session, actor: async () => actor, rpc: () => rpc };
+  const deps: CheckoutLegacyBoundaryDependencies = { enabled: () => true, anyEnabled: () => true, cashEnabled: () => false, anyCashEnabled: () => false, session: async () => session, actor: async () => actor, rpc: () => rpc };
   const input = { request: new Request("https://launch.faolla.com/api/orders"), mode: "personal" as "personal" | "merchant", siteId, kind, ids: [link.id], action: "cancel", actor };
   return { deps, input, session, user, actor, calls, rpc, missing: () => { missing = true; }, link: () => link, replace: (next: typeof link) => { link = next; } };
 }
 const writes = (f: ReturnType<typeof fixture>) => f.calls.filter(([name]) => name.includes("cancel"));
+function cashFixture(kind: "booking" | "order" = "booking") {
+  const f = fixture(kind); f.deps.cashEnabled = () => true; f.deps.anyCashEnabled = () => true;
+  let result: OnSiteCheckoutResult = { version: 2, siteId, operationKey, terms: { version: 2, method: "on_site", resourceKind: kind, resourceId: f.link().id, currency: "eur", grossMinor: 1000, discountMinor: 200, dueMinor: 800, capturedMinor: 0, totalPoints: null, couponCount: 1, paymentState: "unpaid" },
+    resource: { ...f.link().result.resource }, termsMatch: true, closed: false, collection: null, cancellation: null, cancellationAvailable: true,
+    cancellationPolicy: { returnCoupons: true, advanceMinutes: 0, cancellableUntil: kind === "booking" ? "2030-01-01T00:00:00Z" : null } };
+  f.deps.rpc = () => async (name, args) => {
+    f.calls.push([name, args]);
+    if (name === "faolla_checkout_resource_link_v2") return { data: { ...f.link(), result: undefined, record: { ...f.link().record, status: result.resource!.status }, original: { method: "on_site", result } }, error: null };
+    if (name === "faolla_member_checkout_reporting_v2") return { data: { version: 2, siteId, rows: (args.p_resources as Array<{ kind: string; id: string }>).map(r => ({ ...r, result: null, termsMatch: r.id === f.link().id, ...(r.id === f.link().id ? { onSite: result } : {}) })) }, error: null };
+    assert.ok(["faolla_member_checkout_on_site_cancel_v1", "faolla_checkout_on_site_merchant_cancel_v1"].includes(name));
+    const cancellation = { version: 2 as const, method: "on_site" as const, siteId, operationKey, resourceKind: kind, resourceId: f.link().id, closed: true as const, pointsReturned: 0 as const, cashReturnedMinor: 0 as const, couponsReturned: 1, stockReleased: 1, cancelledAt: stamp };
+    result = { ...result, closed: true, resource: { status: "cancelled", updatedAt: stamp }, cancellationAvailable: false, cancellation };
+    return { data: { replayed: false, receipt: cancellation }, error: null };
+  };
+  return { ...f, cash: () => result };
+}
+
+test("cash legacy cancellation uses its own original customer/owner command and never the points or legacy write", async () => {
+  for (const kind of ["booking", "order"] as const) for (const mode of ["personal", "merchant"] as const) {
+    const f = cashFixture(kind); f.input.mode = mode;
+    const result = await bridgeLegacyCheckoutMutation(f.input, f.deps); assert.equal(result?.record.status, "cancelled");
+    assert.equal(writes(f).length, 1); assert.equal(writes(f)[0][0], mode === "personal" ? "faolla_member_checkout_on_site_cancel_v1" : "faolla_checkout_on_site_merchant_cancel_v1");
+    assert.equal(writes(f)[0][1][mode === "personal" ? "p_principal_key" : "p_actor_key"], mode === "personal" ? "account:50010105:synthetic-user" : "owner:synthetic-owner");
+    assert.ok(!/PRIVATE|editToken|operationKey/.test(JSON.stringify(result))); await bridgeLegacyCheckoutMutation(f.input, f.deps); assert.equal(writes(f).length, 1);
+    await assert.rejects(bridgeLegacyCheckoutMutation({ ...f.input, action: "restore" }, f.deps), /checkout_original_cancellation_required/);
+  }
+});
+test("cash linked batch is blocked and business completion skips legacy points preparation without erasing original storage", async () => {
+  const f = cashFixture("order"); f.input.mode = "merchant";
+  await assert.rejects(bridgeLegacyCheckoutMutation({ ...f.input, ids: [f.link().id, "legacy"] }, f.deps), /checkout_batch_requires_single/);
+  const previous = normalizeMerchantOrderRecords([f.link().record])[0], next = { ...previous, status: "completed" as const };
+  assert.deepEqual(await legacyCheckoutPointTransitions([{ previous, next }], f.deps), []);
+  assert.deepEqual(await preserveCheckoutOrderStorage(siteId, [previous], [{ slug: `__merchant_orders__:${siteId}`, blocks: [f.link().record] }], f.deps), [f.link().record]);
+  assert.equal(writes(f).length, 0);
+});
+test("cash cancelled outcome stays unknown on a lost write, and a known refund requirement cannot fall back to old cancellation", async () => {
+  for (const mode of ["lost", "refund", "disabled"]) {
+    const f = cashFixture(), get = f.deps.rpc; let calls = 0;
+    f.deps.rpc = () => async (name, args) => { if (!name.includes("cancel")) return get()(name, args); calls++;
+      if (mode === "refund") return { data: null, error: { message: "checkout_cancellation_requires_refund" } }; await get()(name, args); throw new Error("lost response"); };
+    if (mode === "disabled") f.deps.cashEnabled = () => false;
+    await assert.rejects(bridgeLegacyCheckoutMutation(f.input, f.deps), mode === "refund" ? /checkout_cancellation_requires_refund/ : mode === "disabled" ? /checkout_unavailable/ : /checkout_unconfirmed/);
+    assert.equal(calls, mode === "disabled" ? 0 : 1);
+  }
+});
 test("off pilot and unlinked legacy records preserve old behavior, including old unverified identities", async () => {
   const f = fixture(); f.deps.enabled = () => false; f.deps.anyEnabled = () => false;
   assert.equal(await bridgeLegacyCheckoutMutation(f.input, f.deps), null); assert.deepEqual(f.calls, []);

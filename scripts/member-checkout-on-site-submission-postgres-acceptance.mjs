@@ -70,7 +70,7 @@ test('trusted cash submission verifies real published sources and original atomi
    'database/proposals/20261122_member_checkout_cancellation.sql','database/proposals/20261122_member_checkout_queries.sql','database/proposals/20261123_member_checkout_legacy_boundary.sql',
    'database/proposals/20261123_member_checkout_on_site_pending.sql','database/proposals/20261123_member_checkout_on_site_cancellation.sql',
    'database/proposals/20261122_member_checkout_submission.sql','database/proposals/20261123_member_checkout_on_site_submission.sql',
-   'database/proposals/20261123_member_checkout_reporting.sql','database/proposals/20261123_member_checkout_presentation.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
+   'database/proposals/20261123_member_checkout_reporting.sql','database/proposals/20261123_member_checkout_presentation.sql','database/proposals/20261123_member_checkout_on_site_management.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
   await admin.query('update faolla_booking_atomic_control set active=true where singleton');
   await admin.query('insert into faolla_checkout_design.bundle_pilots(site_id,enabled) values($1,true)',[site]);
   const page=slug=>one(admin,'select *,to_jsonb(updated_at) as stamp from pages where slug=$1',[slug]);

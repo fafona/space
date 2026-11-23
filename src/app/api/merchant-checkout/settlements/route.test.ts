@@ -8,7 +8,7 @@ function fixture() {
   const actor: MerchantBusinessActor = { type: "owner", siteId, authUserId: "synthetic-owner", principalKey: "owner:synthetic-owner", authorizationVersion: "owner", displayName: "Private", email: "private@example.invalid", authorizationSource: "database", collaborationPermissions: [], businessPermissions: [] };
   const site = { id: siteId, status: "online", serviceExpiresAt: "2099-01-01T00:00:00Z", permissionConfig: { allowOrderManagement: true } } as unknown as NonNullable<Awaited<ReturnType<CheckoutReportingDependencies["site"]>>>;
   const report = { version: 1 as const, siteId, rows: [{ ...scope.resources[0], termsMatch: false, result: null }] };
-  const deps: CheckoutReportingDependencies = { enabled: () => true, mixedEnabled: () => false, readMixed: async () => { throw new Error("unexpected mixed read"); }, actor: async () => { calls.push("actor"); return actor; }, site: async () => { calls.push("site"); return site; }, read: async input => { calls.push("read"); assert.deepEqual(input, scope); return report; } };
+  const deps: CheckoutReportingDependencies = { enabled: () => true, mixedEnabled: () => false, collectionEnabled: () => false, readMixed: async () => { throw new Error("unexpected mixed read"); }, actor: async () => { calls.push("actor"); return actor; }, site: async () => { calls.push("site"); return site; }, read: async input => { calls.push("read"); assert.deepEqual(input, scope); return report; } };
   const request = (input: unknown = scope, headers: HeadersInit = {}, suffix = "", method = "POST") => new Request(origin + "/api/merchant-checkout/settlements" + suffix,
     { method, headers: { origin, "content-type": "application/json", ...headers }, ...(method === "GET" ? {} : { body: typeof input === "string" ? input : JSON.stringify(input) }) });
   return { calls, scope, actor, site, report, deps, request };
@@ -27,6 +27,12 @@ test("mixed mode is separately gated, owner-bound and never falls back to a poin
   let enabled = true; f.deps.mixedEnabled = () => enabled;
   f.deps.readMixed = async () => { enabled = false; return { ...f.report, version: 2 }; };
   assert.equal((await handleCheckoutReporting(f.request(), f.deps)).status, 503);
+});
+test("receipt capability is only a separately gated UI hint and disappears if its gate changes during the read", async () => {
+  const f = fixture(); let allowed = true; f.deps.mixedEnabled = () => true; f.deps.collectionEnabled = () => allowed; f.deps.readMixed = async () => ({ ...f.report, version: 2 });
+  assert.equal((await (await handleCheckoutReporting(f.request(), f.deps)).json()).canRecordOnSiteReceipt, true);
+  allowed = false; assert.equal((await (await handleCheckoutReporting(f.request(), f.deps)).json()).canRecordOnSiteReceipt, undefined);
+  allowed = true; f.deps.readMixed = async () => { allowed = false; return { ...f.report, version: 2 }; }; assert.equal((await handleCheckoutReporting(f.request(), f.deps)).status, 503);
 });
 test("disabled, foreign, employee and paused/expired access never query the ledger", async () => {
   for (const mode of ["off", "foreign", "employee", "paused", "expired", "unauthenticated"] as const) {

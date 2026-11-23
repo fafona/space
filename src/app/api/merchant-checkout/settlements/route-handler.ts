@@ -1,18 +1,15 @@
 import { NextResponse } from "next/server";
-import { createHash } from "node:crypto";
-import { resolveMerchantBusinessActor, MerchantBusinessAccessError } from "@/lib/merchantBusinessActor.server";
-import { loadAuthoritativeCurrentMerchantSnapshotSites } from "@/lib/publishedMerchantService";
-import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
+import { MerchantBusinessAccessError } from "@/lib/merchantBusinessActor.server";
+import { authorizeCheckoutOwner as reportingOwner, checkoutOwnerDependencies } from "@/lib/merchantCheckoutOwnerAccess.server";
 import { isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { isMemberCheckoutPilotEnabled } from "@/lib/merchantMemberCheckoutPilot.server";
 import { parseCheckoutReportingRequest, parseCheckoutReportingSnapshot } from "@/lib/merchantCheckoutReporting";
 import { readCheckoutReporting, readMixedCheckoutReporting } from "@/lib/merchantCheckoutReporting.server";
-import { isMemberCheckoutOnSitePilotEnabled } from "@/lib/merchantCheckoutOnSitePilot.server";
+import { isMemberCheckoutOnSitePilotEnabled, isMemberCheckoutOnSiteCollectionEnabled } from "@/lib/merchantCheckoutOnSitePilot.server";
 import { isTrustedCheckoutReadRequest } from "@/lib/merchantCheckoutReadRequest";
 
-const defaults = { enabled: isMemberCheckoutPilotEnabled, actor: resolveMerchantBusinessActor,
-  site: async (id: string) => (await loadAuthoritativeCurrentMerchantSnapshotSites()).find(s => s.id === id) ?? null, read: readCheckoutReporting,
-  mixedEnabled: isMemberCheckoutOnSitePilotEnabled, readMixed: readMixedCheckoutReporting };
+const defaults = { ...checkoutOwnerDependencies, enabled: isMemberCheckoutPilotEnabled, read: readCheckoutReporting,
+  mixedEnabled: isMemberCheckoutOnSitePilotEnabled, readMixed: readMixedCheckoutReporting, collectionEnabled: isMemberCheckoutOnSiteCollectionEnabled };
 export type CheckoutReportingDependencies = typeof defaults;
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: {
   "cache-control": "private, no-store", pragma: "no-cache", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "cross-origin-resource-policy": "same-origin", vary: "Cookie, Authorization",
@@ -35,24 +32,6 @@ async function body(request: Request) {
   } finally { reader.releaseLock(); }
 }
 
-async function reportingOwner(request: Request, siteId: string, deps: CheckoutReportingDependencies) {
-  const initial = await deps.actor(request, { siteId });
-  if (initial.type !== "owner" || initial.siteId !== siteId) throw new MerchantBusinessAccessError("owner_required", 403);
-  const ownerSignature = JSON.stringify([initial.authUserId, initial.principalKey, initial.authorizationVersion]);
-  const initialSite = await deps.site(siteId);
-  if (!initialSite || initialSite.id !== siteId || initialSite.status !== "online" || getMerchantServiceState(initialSite.status, initialSite.serviceExpiresAt).reason !== null) throw new MerchantBusinessAccessError("permission_denied", 403);
-  const permissionSignature = JSON.stringify(initialSite.permissionConfig);
-  const serviceExpiresAt = initialSite.serviceExpiresAt;
-  const identityKey = createHash("sha256").update(JSON.stringify([siteId, ownerSignature, permissionSignature, serviceExpiresAt])).digest("hex");
-  const reauthorize = async () => {
-    const current = await deps.actor(request, { siteId }), site = await deps.site(siteId);
-    if (current.type !== "owner" || current.siteId !== siteId
-      || JSON.stringify([current.authUserId, current.principalKey, current.authorizationVersion]) !== ownerSignature
-      || !site || site.id !== siteId || site.status !== "online" || getMerchantServiceState(site.status, site.serviceExpiresAt).reason !== null
-      || JSON.stringify(site.permissionConfig) !== permissionSignature || site.serviceExpiresAt !== serviceExpiresAt || !deps.enabled(siteId)) throw new MerchantBusinessAccessError("permission_denied", 403);
-  };
-  return { identityKey, reauthorize };
-}
 
 /** UI discovery only, never an authorization token. No ledger/profile read.
  * The existing report still checks the actual owner before and after its read. */
@@ -86,12 +65,12 @@ export async function handleCheckoutReporting(request: Request, overrides: Parti
     const expectedIdentity = request.headers.get("x-checkout-owner-scope");
     if (expectedIdentity !== null && expectedIdentity !== identityKey) return json({ error: "permission_denied" }, 403);
     await reauthorize();
-    const mixed = deps.mixedEnabled(scope.siteId), report = await (mixed ? deps.readMixed : deps.read)(scope);
+    const mixed = deps.mixedEnabled(scope.siteId), collect = mixed && deps.collectionEnabled(scope.siteId), report = await (mixed ? deps.readMixed : deps.read)(scope);
     await reauthorize();
-    if (deps.mixedEnabled(scope.siteId) !== mixed) throw new Error("checkout_reporting_unavailable");
+    if (deps.mixedEnabled(scope.siteId) !== mixed || (mixed && deps.collectionEnabled(scope.siteId)) !== collect) throw new Error("checkout_reporting_unavailable");
     let snapshot;
     try { snapshot = parseCheckoutReportingSnapshot(report, scope); } catch { throw new Error("checkout_reporting_unavailable"); }
-    return json({ ok: true, snapshot });
+    return json({ ok: true, snapshot, ...(collect ? { canRecordOnSiteReceipt: true } : {}) });
   } catch (error) {
     if (error instanceof MerchantBusinessAccessError) return json({ error: error.code }, error.status);
     const message = error instanceof Error ? error.message : "";

@@ -18,6 +18,7 @@ import orders from '../src/lib/merchantOrders.ts';
 import bookingTime from '../src/lib/merchantBookingTime.ts';
 import pending from '../src/lib/merchantCheckoutOnSitePending.server.ts';
 import results from '../src/lib/merchantCheckoutOnSiteResult.server.ts';
+import {onSiteManagementCases} from './member-checkout-on-site-management-postgres-cases.mjs';
 
 test('cash original cancellation and result use real original writers and immutable facts in isolated PostgreSQL',{timeout:120000},async t=>{
  const runtime=path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR||'.missing-test-runtime'),relative=path.relative(tmpdir(),runtime);
@@ -56,7 +57,8 @@ test('cash original cancellation and result use real original writers and immuta
    'scripts/supabase-migrations/202610250211_booking_atomic_preparation.sql','scripts/supabase-migrations/202610250212_booking_atomic_runtime.sql','scripts/supabase-migrations/202611050213_booking_atomic_safeupdate_singleton.sql',
    'database/proposals/20261122_member_checkout_design.sql','database/proposals/20261122_member_checkout_catalog.sql','database/proposals/20261122_member_checkout_bundle.sql',
    'database/proposals/20261122_member_checkout_cancellation.sql','database/proposals/20261122_member_checkout_queries.sql','database/proposals/20261123_member_checkout_legacy_boundary.sql',
-   'database/proposals/20261123_member_checkout_on_site_pending.sql','database/proposals/20261123_member_checkout_on_site_cancellation.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
+   'database/proposals/20261123_member_checkout_on_site_pending.sql','database/proposals/20261123_member_checkout_on_site_cancellation.sql',
+   'database/proposals/20261123_member_checkout_reporting.sql','database/proposals/20261123_member_checkout_presentation.sql','database/proposals/20261123_member_checkout_on_site_management.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
   await admin.query('update faolla_booking_atomic_control set active=true where singleton');
   await admin.query('insert into faolla_checkout_design.bundle_pilots(site_id,enabled) values($1,true)',[site]);
   const page=slug=>one(admin,'select *,to_jsonb(updated_at) as stamp from pages where slug=$1',[slug]);
@@ -254,6 +256,7 @@ test('cash original cancellation and result use real original writers and immuta
     await assert.rejects(c.query('select * from faolla_checkout_design.on_site_collections'),/permission denied/);
    }
   });
+  await onSiteManagementCases(t,{admin,a,b,one,all,fixture,page,site,accountId,userId,principal,actor,memberSlug,cancel,rawRead,connect});
   console.log(`[cash-cancel-pg] PostgreSQL ${(await one(admin,'show server_version')).server_version}; checks finished (status in TAP); evidence: ${evidence}`);
  }finally{
   await Promise.all(clients.map(c=>c.end().catch(()=>{})));

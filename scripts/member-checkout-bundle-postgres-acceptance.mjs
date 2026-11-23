@@ -90,6 +90,7 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
   await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_on_site_cancellation.sql'),'utf8'));
   await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_on_site_submission.sql'),'utf8'));
   await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_presentation.sql'),'utf8'));
+  await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_on_site_management.sql'),'utf8'));
   // Test-only admin activation in this freshly created owned synthetic cluster.
   // No equivalent application endpoint or production activation exists.
   await admin.query('update faolla_booking_atomic_control set active=true where singleton');
@@ -848,6 +849,7 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
     return{data:(await one(admin,'select public.faolla_member_checkout_reporting_v2($1,$2) as result',[args.p_site_id,JSON.stringify(args.p_resources)])).result,error:null};});
    assert.equal(reads,1);assert.equal(mixed.version,2);assert.equal(mixed.rows[0].result.totalPoints,originals[0].receipt.totalPoints);assert.equal(mixed.rows[0].onSite,undefined);
    assert.equal(mixed.rows[1].result,null);assert.equal(mixed.rows[1].onSite.terms.method,'on_site');assert.equal(mixed.rows[1].onSite.terms.capturedMinor,0);
+   await assert.rejects(admin.query('select public.faolla_checkout_on_site_collect_v1($1,$2,$3,$4,$5,$6)',[originals[0].site_id,originals[0].operation_key,'owner:synthetic-owner',new Date().toISOString(),800,new Date(Date.now()+10000).toISOString()]),/checkout_collection_not_allowed/);
    assert.ok(!/principalKey|membershipId|couponUses|editToken|customerName/.test(JSON.stringify(mixed)));
    for(const [index,original]of originals.entries()){
     const neutral=(await one(admin,'select public.faolla_member_checkout_original_result_v1($1,$2,$3) as result',[original.site_id,original.operation_key,original.principal_key])).result;
