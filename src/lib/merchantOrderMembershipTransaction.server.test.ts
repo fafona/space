@@ -35,7 +35,7 @@ for (const message of ["order_update_conflict", "merchant_memberships_conflict"]
   });
 }
 
-for (const message of ["checkout_resource_locked", "checkout_change_requires_review", "checkout_original_cancellation_required"]) {
+for (const message of ["checkout_resource_locked", "checkout_change_requires_review", "checkout_original_cancellation_required", "checkout_original_pending", "checkout_intent_review_required"]) {
   test(`linked checkout guard ${message} reaches the caller without retry or raw SQL`, async () => {
     let calls = 0;
     assert.equal((await commitMerchantOrderMembershipTransaction({ rpc: async () => {

@@ -73,6 +73,27 @@ export async function legacyBookingIntentCases(t,{admin,a,b,seed,submit,ack,stat
     for(const patch of [{customerAccountId:'',customerUserId:'',customerLoginEmail:'',customerGuestHash:'synthetic-guest'},{customerAccountId:'59999999',customerUserId:'other-synthetic'}])assert.ok((await create({...input(f),...patch})).booking.id);
    }finally{await admin.query('update faolla_checkout_design.intent_pilots set enabled=true where site_id=$1',[site]);}
   });
+  await t.test('all application gates closed: actual booking POST still cannot create past the durable original, then review restores native create/replay',async()=>{
+   const f=await seed();await submit(f);keys.forEach(k=>{process.env[k]='';});await admin.query('update faolla_checkout_design.intent_pilots set enabled=false where site_id=$1',[site]);
+   try{const before=await state(),names=[],response=await post(f,undefined,a,{names});assert.equal(response.status,409);assert.equal((await response.json()).error,'checkout_original_pending');assert.ok(names.includes('faolla_booking_atomic_commit_v1'));assert.ok(!names.includes('faolla_checkout_legacy_booking_commit_v1'));assert.deepEqual(await state(),before);assert.deepEqual(effects,[]);
+    await ack(f);const nonce=randomUUID(),created=await post(f,nonce,a,{names});assert.equal(created.status,200);const id=(await created.json()).booking.id,stable=await state(),replay=await post(f,nonce,b);assert.equal(replay.status,200);assert.equal((await replay.json()).booking.id,id);assert.deepEqual(await state(),stable);
+   }finally{keys.forEach(k=>{process.env[k]=site;});await admin.query('update faolla_checkout_design.intent_pilots set enabled=true where site_id=$1',[site]);}
+  });
+  await t.test('original booking CAS rejects an inverted checkout lock immediately and rolls back its command, primary, backup and outbox',async()=>{
+   const f=await seed(),ident=preparation.bookingAtomicCommandIdentity({...identity(input(f)),siteId:site}),response=await rpc(admin)('faolla_booking_atomic_snapshot_v1',ident);assert.equal(response.error,null);const snapshot=response.data;
+   const mutation={generation:snapshot.generation,revision:snapshot.revision,rows:snapshot.rows,next:{version:1,records:[...snapshot.rows.find(r=>r.slug===primary).blocks.records,{id:'R-closed-gate-'+randomUUID(),...input(f),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'active',editToken:'b'.repeat(36)}]},result:{},mailJobs:[]},before=await state();
+   await a.query('begin');try{await a.query("select pg_advisory_xact_lock(hashtextextended('faolla-customer-checkout:'||$1,0))",[site]);await b.query('set statement_timeout=1500');
+    await assert.rejects(one(b,'select public.faolla_booking_atomic_commit_v1($1,$2,$3,$4)',[site,ident.p_command_key,ident.p_request_hash,mutation]),error=>{assert.equal(error.message,'checkout_resource_locked');assert.equal(error.code,'P0001');return true;});assert.deepEqual(await state(),before);
+   }finally{await a.query('rollback');await b.query('set statement_timeout=15000');}
+  });
+  await t.test('closed gate permits an existing ordinary booking update while a newer financial original is pending',async()=>{
+   const f=await seed(),created=await create(input(f));await submit(f);const before=await state();
+   const ident=preparation.bookingAtomicCommandIdentity({...identity(input(f)),siteId:site}),response=await rpc(admin)('faolla_booking_atomic_snapshot_v1',ident);assert.equal(response.error,null);const snapshot=response.data;
+   const next=structuredClone(snapshot.rows.find(r=>r.slug===primary).blocks);const record=next.records.find(r=>r.id===created.booking.id);assert.ok(record);record.note='An existing ordinary booking update';record.updatedAt=new Date().toISOString();
+   await one(a,'select public.faolla_booking_atomic_commit_v1($1,$2,$3,$4)',[site,ident.p_command_key,ident.p_request_hash,{generation:snapshot.generation,revision:snapshot.revision,rows:snapshot.rows,next,result:{},mailJobs:[]}]);
+   const after=await state();for(const k of Object.keys(before).filter(k=>k.startsWith('faolla_checkout_design.')||k==='public.faolla_redemption_operations'))assert.deepEqual(after[k],before[k],k);
+   assert.equal((await one(admin,'select blocks from pages where slug=$1',[primary])).blocks.records.find(r=>r.id===created.booking.id).note,record.note);assert.deepEqual(effects,[]);
+  });
   await t.test('final booking wrapper waits on the shared checkout lock and then sees a newly committed claim',async()=>{
    const f=await seed(),ident=preparation.bookingAtomicCommandIdentity({...identity(input(f)),siteId:site}),response=await rpc(admin)('faolla_booking_atomic_snapshot_v1',ident);assert.equal(response.error,null);const snapshot=response.data;
    const mutation={generation:snapshot.generation,revision:snapshot.revision,rows:snapshot.rows,next:{version:1,records:[...snapshot.rows.find(r=>r.slug===primary).blocks.records,{id:'R-synthetic-'+randomUUID(),...input(f),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'active',editToken:'b'.repeat(36)}]},result:{},mailJobs:[]};

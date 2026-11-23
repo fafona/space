@@ -315,7 +315,8 @@ test('whole product cart commit/recover/cancel uses original PostgreSQL writers 
   await cartPersonalBoundaryAcceptance({t,admin,a,b,site,one,seed,submit,all,temporary,definitions,beforeDefinitions,
    sql:()=>readFile(path.resolve('database/proposals/20261123_member_checkout_cart_personal_boundary.sql'),'utf8')});
   await pendingIntentAcceptance({t,admin,a,b,site,one,seed,prepare,commit,cancel,all,temporary,connect,definitions,beforeDefinitions,
-   sql:async()=> (await Promise.all(['database/proposals/20261123_member_checkout_pending_intents.sql','database/proposals/20261123_member_checkout_intent_review.sql'].map(file=>readFile(path.resolve(file),'utf8')))).join('\n')});
+   sql:async()=> (await Promise.all(['database/proposals/20261123_member_checkout_pending_intents.sql','database/proposals/20261123_member_checkout_intent_review.sql'].map(file=>readFile(path.resolve(file),'utf8')))).join('\n'),
+   closedGateSql:()=>readFile(path.resolve('database/proposals/20261123_member_checkout_closed_gate_creation.sql'),'utf8')});
   console.log(`CART_SUBMISSION_EVIDENCE=${evidence}`);
  }finally{
   await Promise.all(clients.map(c=>c.end().catch(()=>{})));if(started){const lines=(await readFile(path.join(cluster,'postmaster.pid'),'utf8')).split(/\r?\n/);

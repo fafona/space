@@ -33,6 +33,8 @@ const SAFE_ERROR_CODES = new Set([
   "checkout_resource_locked",
   "checkout_change_requires_review",
   "checkout_original_cancellation_required",
+  "checkout_original_pending",
+  "checkout_intent_review_required",
 ]);
 
 function transactionError(error: unknown) {

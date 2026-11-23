@@ -147,6 +147,21 @@ export async function pendingIntentAcceptance(p){
   }finally{await b.query('rollback');}
   assert.deepEqual(await state(),before);await ack(f,pending);
  });
+ // The preceding historical-corruption case must still exercise its original
+ // read fallback. Install the new tripwire AFTER that pre-cutover fixture; do
+ // not disable it, relax it or remove the old assertions to inject corruption.
+ await admin.query(await p.closedGateSql());
+ await t.test('after the new guard is installed, a malformed order write is refused rather than masking the original as unpaid',async()=>{
+  const f=await seedOwn(),prepared=await prepare(f);await commit(prepared);const pending=(await read(f)).pending,before=await state();
+  const target=await one(admin,"select p.id from pages p cross join lateral jsonb_array_elements(case when jsonb_typeof(p.blocks)='array' then p.blocks else '[]'::jsonb end) r where p.merchant_id=$1 and p.slug~$2 and r->>'id'=$3",[site,`^__merchant_orders__:${site}:chunk:[0-9]+$`,pending.original.result.resourceId]);assert.ok(target);
+  await assert.rejects(b.query("update pages set blocks='{\"syntheticMalformedOrder\":true}'::jsonb where id=$1",[target.id]),/checkout_resource_locked/);assert.deepEqual(await state(),before);assert.equal((await read(f)).pending.reviewRequired,false);await ack(f,pending);
+ });
+ await t.test('new create tripwire preserves original single points, venue and whole-cart financial writers without replacing their SQL',async()=>{
+  const f=await seedOwn();
+  for(const method of ['points','on_site']){const prepared=await single(f,method);await prepared.dispatch();const pending=(await read(f)).pending,before=await state();assert.equal(pending.original.kind,'single');assert.equal(pending.original.original.method,method);
+   assert.equal((await prepared.dispatch()).result.replayed,true);assert.deepEqual(await state(),before);await ack(f,pending);}
+  const prepared=await prepare(another(f));await guarded(prepared);const pending=(await read(f)).pending;assert.equal(pending.original.kind,'cart');await ack(f,pending);assert.deepEqual(await definitions(),beforeDefinitions);
+ });
  await t.test('bounded injected server service reads and explicitly acknowledges the actual private PostgreSQL projection',async()=>{
   const f=await seedOwn(),prepared=await prepare(f);await commit(prepared);let calls=0;
   const rpc=async(name,args,signal)=>{assert.ok(signal instanceof AbortSignal);calls++;const spec=name==='faolla_member_checkout_pending_intent_v1'?['$1,$2',['p_site_id','p_principal_key']]:['$1,$2,$3,$4,$5,$6',['p_site_id','p_operation_key','p_principal_key','p_generation','p_review_hash','p_not_after']];
