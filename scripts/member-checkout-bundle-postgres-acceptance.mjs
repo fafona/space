@@ -41,6 +41,7 @@ import workbench from '../src/lib/merchantBookingWorkbench.ts';
 import bookingTime from '../src/lib/merchantBookingTime.ts';
 import platformSnapshot from '../src/lib/platformMerchantSnapshot.ts';
 import platformControl from '../src/data/platformControlStore.ts';
+import {onSitePendingPostgresCases} from './member-checkout-on-site-postgres-cases.mjs';
 
 test('private composite proposal uses actual legacy PostgreSQL transactions, never separate financial commits',{timeout:120000},async t=>{
  const runtime=path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR||'.missing-test-runtime');
@@ -434,7 +435,9 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
    assert.equal(final.closed,true);assert.equal(final.resource.status,'cancelled');assert.equal(final.cancellationAvailable,false);assert.equal(final.cancellation.couponsReturned,1);
    assert.equal(await resultStore.readMemberCheckoutResult({siteId:site,operationKey:f.key,principalKey:'account:50010106:foreign-synthetic'},rpc),null);
   });
-  const submissionFixture=async({kind='booking',couponAmount=20,stock=2,withCoupon=true}={})=>{
+  const defaultFixtureSite=site;
+  const submissionFixture=async({kind='booking',couponAmount=20,stock=2,withCoupon=true,testSite=defaultFixtureSite}={})=>{
+   const site=testSite,memberSlug=`__merchant_memberships__:${site}`,settingsSlug=`__merchant_membership_settings__:${site}`,couponSlug=`__merchant_coupons__:${site}`;
    const stamp=new Date().toISOString(),blockId=`submit-${kind}-${randomUUID()}`,appointmentAt=`${bookingTime.bookingWallTimeAt(new Date(Date.now()+3*86400000),'Europe/Madrid').slice(0,10)}T12:00`;
    const blocks=[kind==='booking'?{id:blockId,type:'booking',props:{bookingStoreOptions:['Synthetic'],bookingItemOptions:['Play'],bookingTitleOptions:['Mx'],bookingTimeSlotRules:[{timeRange:'10:00-18:00',maxBookings:1}]}}:
     {id:blockId,type:'product',props:{products:[]}}];
@@ -480,7 +483,7 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
   }catch(error){return{data:null,error:{message:error.message}};}};
   const submit=(f,client=a,override)=>submission.submitMemberCheckout({request:f.request,principal:{accountId,userId},authorize:async()=>({accountId,userId})},override??submitRpc(client));
   const submitSnapshot=async f=>{const identity=submissionPlan.checkoutSubmissionIdentity(f.request,{accountId,userId});
-   const raw=(await submitRpc(admin)('faolla_member_checkout_submission_snapshot_v2',{p_site_id:site,p_operation_key:identity.operationKey,p_principal_key:principal,p_request_hash:identity.requestHash,p_offer_id:f.offer.id})).data;
+   const raw=(await submitRpc(admin)('faolla_member_checkout_submission_snapshot_v2',{p_site_id:identity.siteId,p_operation_key:identity.operationKey,p_principal_key:principal,p_request_hash:identity.requestHash,p_offer_id:f.offer.id})).data;
    assert.equal(raw.replayed,false);const snapshot=submissionPlan.parseCheckoutSubmissionSnapshot(raw.snapshot,identity),planned=await submissionPlan.planCheckoutSubmission(snapshot,identity,{accountId,userId});return{identity,snapshot,...planned};};
   const commitPrepared=(f,client=b)=>one(client,'select public.faolla_member_checkout_submission_commit_v2($1,$2,$3,$4,$5,$6,$7) as result',[site,f.identity.operationKey,principal,f.identity.requestHash,f.snapshot,f.plan,f.notAfter]);
   const recover=async f=>{
@@ -823,6 +826,7 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
     await assert.rejects(client.query('select public.faolla_member_checkout_submission_commit_v2($1,$2,$3,$4,$5,$6,$7)',[site,op(),principal,op(),{},{},at]),/permission denied/);
    }
   });
+  await onSitePendingPostgresCases(t,{admin,a,b,one,all,site,accountId,userId,principal,op,submissionFixture,submitSnapshot,memberSlug,settingsSlug,couponSlug,bookingSlug,connect});
   console.log(`[member-checkout-pg] PostgreSQL ${(await one(admin,'show server_version')).server_version}; private checks finished (status in TAP); evidence: ${evidence}`);
  }finally{
   await Promise.all(clients.map(client=>client.end().catch(()=>{})));
