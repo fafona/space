@@ -84,6 +84,10 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
   for(const file of ['scripts/supabase-migrations/202609080045_order_membership_atomic_mutation.sql','scripts/supabase-migrations/202609080046_redemption_atomic_mutation.sql','scripts/supabase-migrations/202610250211_booking_atomic_preparation.sql','scripts/supabase-migrations/202610250212_booking_atomic_runtime.sql','scripts/supabase-migrations/202611050213_booking_atomic_safeupdate_singleton.sql','database/proposals/20261122_member_checkout_design.sql','database/proposals/20261122_member_checkout_catalog.sql','database/proposals/20261122_member_checkout_bundle.sql','database/proposals/20261122_member_checkout_cancellation.sql','database/proposals/20261122_member_checkout_queries.sql','database/proposals/20261122_member_checkout_submission.sql','database/proposals/20261123_member_checkout_reporting.sql']){
    await admin.query(await readFile(path.resolve(file),'utf8'));
   }
+  // Install the new cash-only proposal alongside ALL existing points cases.
+  // The owner-audit table it references is installed by the legacy-boundary
+  // proposal below, before any owner cash command is exercised.
+  await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_on_site_cancellation.sql'),'utf8'));
   // Test-only admin activation in this freshly created owned synthetic cluster.
   // No equivalent application endpoint or production activation exists.
   await admin.query('update faolla_booking_atomic_control set active=true where singleton');
@@ -827,6 +831,14 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
    }
   });
   await onSitePendingPostgresCases(t,{admin,a,b,one,all,site,accountId,userId,principal,op,submissionFixture,submitSnapshot,memberSlug,settingsSlug,couponSlug,bookingSlug,connect});
+  await t.test('new cash read/cancel cannot consume or replay an existing points result or points cancellation',async()=>{
+   const original=await one(admin,"select * from faolla_checkout_design.bundle_results where receipt->'version'='1'::jsonb order by operation_key limit 1");assert.ok(original);
+   const before=await all();
+   assert.equal((await one(admin,'select public.faolla_member_checkout_on_site_result_v1($1,$2,$3) as result',[original.site_id,original.operation_key,original.principal_key])).result,null);
+   await assert.rejects(admin.query('select public.faolla_member_checkout_on_site_cancel_v1($1,$2,$3,$4)',[original.site_id,original.operation_key,original.principal_key,at]),/checkout_cancellation_review_required/);
+   assert.deepEqual(await all(),before);
+  });
+  assert.equal((await one(admin,'select count(*)::int as n from faolla_checkout_design.on_site_collections')).n,0,'existing points/unpaid workflows must not manufacture cash collection facts');
   console.log(`[member-checkout-pg] PostgreSQL ${(await one(admin,'show server_version')).server_version}; private checks finished (status in TAP); evidence: ${evidence}`);
  }finally{
   await Promise.all(clients.map(client=>client.end().catch(()=>{})));
