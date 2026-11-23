@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { build } from "esbuild";
 import { chromium } from "playwright";
+import checkoutBoundary from "../src/lib/merchantCheckoutLegacyBoundary.server.ts";
 
 // Actual components, synthetic data only. Every network request is intercepted
 // BEFORE navigation; any unexpected origin/path is rejected and fails the case.
@@ -33,6 +34,43 @@ const html = '<!doctype html><html><head><meta charset="utf-8"><style>body{font-
 const fixture = (id, name) => ({ id, siteId: "99999999", siteName: "Synthetic", bookingBlockId: "one", bookingViewport: "desktop", status: "active",
   customerName: name, email: "customer@example.invalid", phone: "000", store: "Store", item: "Consultation", title: "Mx", note: "saved note",
   appointmentAt: "2030-02-01T10:00", appointmentTimeZone: "Europe/Madrid", createdAt: "2026-10-25T00:00:00Z", updatedAt: "2026-10-25T00:00:00Z", merchantTouchedAt: "2026-10-25T00:00:00Z", customerEmailLogs: [], timeline: [] });
+async function disabledCheckoutEntry(route, url) {
+  if (url.pathname !== "/api/member-checkout/entry") return false;
+  assert.equal(route.request().method(), "POST");
+  assert.deepEqual(route.request().postDataJSON(), { siteId: "99999999", kind: "booking", blockId: "one", viewport: "desktop" });
+  await route.fulfill({ json: { ok: true, entry: null } }); return true;
+}
+
+test("actual public booking keeps form fields and shows bounded original/refusal guidance across mobile and desktop", { timeout: 90000 }, async t => {
+  const script = await bundle(), browser = await chromium.launch({ headless: true });
+  try { for (const width of [390, 1280]) for (const code of ["checkout_original_pending", "checkout_intent_review_required", "checkout_create_unconfirmed"]) await t.test(`${width} ${code}`, async () => {
+    const context = await browser.newContext({ viewport: { width, height: 900 } }), page = await context.newPage(), creates = [], unexpected = [], errors = [];
+    const safe = checkoutBoundary.checkoutLegacyErrorDetails(new Error(code)); assert.ok(safe);
+    page.on("pageerror", error => errors.push(error.message));
+    await context.route("**/*", async r => { const request = r.request(), url = new URL(request.url());
+      if (url.origin !== "https://booking-audit.invalid") { unexpected.push(request.url()); return r.abort(); }
+      if (request.isNavigationRequest()) return r.fulfill({ contentType: "text/html", body: html });
+      if (await disabledCheckoutEntry(r, url)) return;
+      if (url.pathname === "/api/bookings/workbench/public") return r.fulfill({ json: { ok: true, settings: { timeZone: "Europe/Madrid" } } });
+      if (url.pathname === "/api/bookings" && request.method() === "POST") { const body = request.postDataJSON();
+        if (body.lookupRequest) return r.fulfill({ json: { ok: true, found: false, supported: true } });
+        creates.push(body); return r.fulfill({ status: safe.status, json: safe }); }
+      unexpected.push(request.url()); return r.abort();
+    });
+    try { await page.goto("https://booking-audit.invalid/site/99999999"); await page.evaluate(() => { window.__view = "public"; }); await page.addScriptTag({ content: script });
+      await page.getByLabel("姓名", { exact: true }).fill("Synthetic Customer"); await page.getByLabel("邮箱", { exact: true }).fill("customer@example.invalid"); await page.getByLabel("电话", { exact: true }).fill("000");
+      await page.getByPlaceholder("YYYY-MM-DD").fill("2030-02-01"); await page.getByPlaceholder("HH:MM").fill("10:00");
+      await page.getByRole("button", { name: "提交预约", exact: true }).click(); await page.getByText(safe.message, { exact: true }).waitFor();
+      assert.equal(await page.getByLabel("姓名", { exact: true }).inputValue(), "Synthetic Customer"); assert.equal(await page.getByPlaceholder("HH:MM").inputValue(), "10:00"); assert.equal(creates.length, 1);
+      const pending = await page.evaluate(() => Object.entries(sessionStorage).filter(([key]) => key.startsWith("faolla-booking-submit-v1:")).map(([, value]) => value));
+      assert.equal(pending.length, code === "checkout_create_unconfirmed" ? 1 : 0);
+      if (pending.length) { assert.equal(JSON.parse(pending[0]).nonce, creates[0].requestNonce); assert.ok(!pending[0].includes("Synthetic Customer")); }
+      await page.getByRole("button", { name: "提交预约", exact: true }).click(); await page.getByText(safe.message, { exact: true }).waitFor(); await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent.includes('提交中')));
+      assert.equal(creates.length, 2); if (code === "checkout_create_unconfirmed") assert.equal(creates[1].requestNonce, creates[0].requestNonce);
+      assert.deepEqual(errors, []); assert.deepEqual(unexpected, []);
+    } finally { await context.close(); }
+  }); } finally { await browser.close(); }
+});
 
 test("public reservation recovers an uncertain submission on retry and reload without creating another booking", { timeout: 90000 }, async () => {
   const script = await bundle(), browser = await chromium.launch({ headless: true });
@@ -45,6 +83,7 @@ test("public reservation recovers an uncertain submission on retry and reload wi
         const request = route.request(), url = new URL(request.url());
         if (url.origin !== "https://booking-audit.invalid") { unexpected.push(request.url()); return route.abort(); }
         if (request.isNavigationRequest()) return route.fulfill({ contentType: "text/html", body: html });
+        if (await disabledCheckoutEntry(route, url)) return;
         if (url.pathname === "/api/bookings/workbench/public") return route.fulfill({ json: { ok: true, settings: { timeZone: "Europe/Madrid" } } });
         if (url.pathname === "/api/bookings" && request.method() === "POST") {
           const body = request.postDataJSON();

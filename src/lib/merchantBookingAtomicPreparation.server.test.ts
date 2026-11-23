@@ -13,7 +13,7 @@ const snapshot = { replayed: false, generation: "test-generation", revision: "0"
 const plan: BookingAtomicPlan = { next: { version: 1, records: [] }, result: { bookingId: "one" }, mailJobs: [] };
 
 test("new checkout final-state refusals remain explicit and never trigger the legacy CAS retry", async () => {
-  for (const code of ["checkout_resource_locked", "checkout_change_requires_review", "checkout_original_cancellation_required"]) {
+  for (const code of ["checkout_resource_locked", "checkout_change_requires_review", "checkout_original_cancellation_required", "checkout_original_pending", "checkout_intent_review_required", "checkout_create_unconfirmed"]) {
     let reads = 0, writes = 0, plans = 0;
     await assert.rejects(executeAtomicBookingCommand({ identity, authorize: async () => {},
       rpc: async name => {

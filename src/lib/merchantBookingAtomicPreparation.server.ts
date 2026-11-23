@@ -87,7 +87,7 @@ async function call(rpc: BookingAtomicRpc, name: string, args: Record<string, un
   if (response.error) {
     // Never leak database/provider bodies (which may include customer data).
     const known = response.error.message?.match(/^booking_atomic_[a-z_]+$/)?.[0]
-      ?? (["checkout_resource_locked", "checkout_change_requires_review", "checkout_original_cancellation_required"].includes(response.error.message ?? "") ? response.error.message : undefined);
+      ?? (["checkout_resource_locked", "checkout_change_requires_review", "checkout_original_cancellation_required", "checkout_original_pending", "checkout_intent_review_required", "checkout_create_unconfirmed"].includes(response.error.message ?? "") ? response.error.message : undefined);
     throw new Error(known ?? "booking_atomic_storage_unconfirmed");
   }
   if (!response.data || typeof response.data !== "object" || Array.isArray(response.data)) {

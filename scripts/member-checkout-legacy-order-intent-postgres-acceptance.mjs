@@ -7,6 +7,7 @@ import path from'node:path';import{pathToFileURL}from'node:url';import{execFile}
 import fixtures from'./fixtures/member-checkout-cart-quote.ts';
 import service from'../src/lib/merchantCheckoutCartSubmission.server.ts';import boundary from'../src/lib/merchantCheckoutLegacyBoundary.server.ts';
 import creator from'../src/lib/merchantOrders.server.ts';import orders from'../src/lib/merchantOrders.ts';import route from'../src/app/api/orders/route-handler.ts';
+import {legacyBookingIntentCases} from './member-checkout-legacy-booking-intent-postgres-cases.mjs';
 
 test('ordinary order creation cannot bypass an enrolled original pending review',{timeout:120000},async t=>{
  const runtime=path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR||'.missing-test-runtime'),relative=path.relative(tmpdir(),runtime);
@@ -34,8 +35,9 @@ test('ordinary order creation cannot bypass an enrolled original pending review'
    'database/proposals/20261123_member_checkout_legacy_boundary.sql','database/proposals/20261123_member_checkout_on_site_pending.sql','database/proposals/20261123_member_checkout_on_site_cancellation.sql','database/proposals/20261122_member_checkout_submission.sql','database/proposals/20261123_member_checkout_on_site_submission.sql',
    'database/proposals/20261123_member_checkout_reporting.sql','database/proposals/20261123_member_checkout_presentation.sql','database/proposals/20261123_member_checkout_on_site_management.sql','database/proposals/20261123_member_checkout_cart_quote.sql','database/proposals/20261123_member_checkout_cart_collection.sql',
    'database/proposals/20261123_member_checkout_cart_submission.sql','database/proposals/20261123_member_checkout_cart_cancellation.sql','database/proposals/20261123_member_checkout_cart_presentation.sql','database/proposals/20261123_member_checkout_pending_intents.sql','database/proposals/20261123_member_checkout_intent_review.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
-  const definitions=async()=>(await admin.query("select p.oid::regprocedure::text name,pg_get_functiondef(p.oid) definition from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','faolla_checkout_design') and p.prokind='f' and p.proname<>'faolla_checkout_legacy_order_commit_v1' order by name")).rows;
+  const definitions=async()=>(await admin.query("select p.oid::regprocedure::text name,pg_get_functiondef(p.oid) definition from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','faolla_checkout_design') and p.prokind='f' and p.proname not in ('faolla_checkout_legacy_order_commit_v1','faolla_checkout_legacy_booking_commit_v1') order by name")).rows;
   const beforeDefinitions=await definitions();await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_legacy_order_intent.sql'),'utf8'));
+  await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_legacy_booking_intent.sql'),'utf8'));
   const site='10909994';let principalIndex=0;for(const table of ['bundle_pilots','cart_quote_pilots','cart_submission_pilots'])await admin.query(`insert into faolla_checkout_design.${table}(site_id,enabled) values($1,true)`,[site]);
   const savePage=async row=>{const found=await one(admin,'select id from pages where merchant_id is not distinct from $1 and slug is not distinct from $2',[row.merchant_id,row.slug]);
    if(found)await admin.query('update pages set blocks=$2 where id=$1',[found.id,JSON.stringify(row.blocks)]);else await admin.query('insert into pages(id,merchant_id,slug,blocks) values($1,$2,$3,$4)',[row.id,row.merchant_id,row.slug,JSON.stringify(row.blocks)]);};
@@ -136,6 +138,7 @@ test('ordinary order creation cannot bypass an enrolled original pending review'
    const original=(await submit(f)).result,rs=await rows(),next=structuredClone(records(rs)),linked=next.find(r=>original.resourceId===r.id);assert.ok(linked);linked.totalAmount+=1;
    const pendingState=await state();await assert.rejects(one(a,'select public.faolla_checkout_legacy_order_commit_v1($1,$2,$3)',[site,{orders:{expectedRows:rs,next}},new Date(Date.now()+11000).toISOString()]),/checkout_change_requires_review/);assert.deepEqual(await state(),pendingState);
   });
+  await legacyBookingIntentCases(t,{admin,a,b,seed,submit,pending,ack,state,site,one,evidence});
   await t.test('all API roles and retained snapshots are denied and every old SQL definition remains byte-identical',async()=>{
    const before=await state();for(const role of ['anon','authenticated','service_role']){await a.query(`set role ${role}`);try{assert.equal((await one(a,"select has_function_privilege(current_user,'public.faolla_checkout_legacy_order_commit_v1(text,jsonb,text)','EXECUTE') allowed")).allowed,false);await assert.rejects(one(a,'select public.faolla_checkout_legacy_order_commit_v1($1,$2,$3)',[site,{},new Date(Date.now()+11000).toISOString()]),/permission denied/);}finally{await a.query('reset role');}}
    await a.query('begin isolation level repeatable read');try{await assert.rejects(one(a,'select public.faolla_checkout_legacy_order_commit_v1($1,$2,$3)',[site,{},new Date(Date.now()+11000).toISOString()]),/checkout_intent_unavailable/);}finally{await a.query('rollback');}

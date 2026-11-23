@@ -286,6 +286,8 @@ export async function POST(request: Request) {
 
     return privateJson({ ok: true, ...created });
   } catch (error) {
+    const checkoutError = checkoutLegacyErrorDetails(error);
+    if (checkoutError) return privateJson({ error: checkoutError.error, message: checkoutError.message }, { status: checkoutError.status });
     return privateJson(
       {
         error: "booking_create_failed",

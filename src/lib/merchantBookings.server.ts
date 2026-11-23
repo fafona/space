@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { isMemberCheckoutIntentPilotEnabled } from "./merchantCheckoutCartPilot.server";
 import { isAtomicBookingStorageEnabled, readAtomicBookingPersistence, stageAtomicBookingPersistence, runAtomicBookingMutation, enqueueAtomicBookingNotification } from "./merchantBookingAtomicRuntime.server";
 import { projectBookingDeliveryStates } from "./merchantBookingNotificationWorker.server";
 import { normalizeMerchantBookingReplyTo } from "./merchantBookingEmailAddress";
@@ -1612,6 +1613,9 @@ export async function createMerchantBooking(input: MerchantBookingCreateInput): 
   editToken: string;
 }> {
   const siteId = trimText(input.siteId);
+  // No legacy read-time merge, local write or direct email may run for a new
+  // intent-enabled create without the atomic transaction/outbox boundary.
+  if (isMemberCheckoutIntentPilotEnabled(siteId) && !isAtomicBookingStorageEnabled()) throw new Error("checkout_unavailable");
   return withBookingStoreLock(async () => {
     const sanitizedEditable = sanitizeMerchantBookingEditableInput(input);
     const ruleContext = await resolveBookingRuleContext(siteId, normalizeBookingRuleBinding(input));

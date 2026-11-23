@@ -4,6 +4,8 @@ import { isDeepStrictEqual } from "node:util";
 import { createServerSupabaseServiceClient } from "./superAdminServer";
 import { executeAtomicBookingCommand, bookingAtomicCommandIdentity, type BookingAtomicJson, type BookingAtomicRpc, type BookingAtomicSnapshot, type BookingMailIntent } from "./merchantBookingAtomicPreparation.server";
 import type { MerchantBookingStoredRecord } from "./merchantBookings";
+import { isMemberCheckoutIntentPilotEnabled } from "./merchantCheckoutCartPilot.server";
+import { bookingRpcWithCheckoutIntent } from "./merchantCheckoutLegacyBookingBoundary.server";
 
 const slugs = { records: "__merchant_booking_records__:v1", rules: "__merchant_booking_rules__:v1", workbench: "__merchant_booking_workbench__:v1" };
 type Key = keyof typeof slugs;
@@ -132,7 +134,8 @@ export async function runAtomicBookingMutation<T>(input: {
     if (parent.siteId !== input.siteId) throw new Error("booking_atomic_cross_site_command");
     return task();
   }
-  const rpc = testRpc ?? bookingAtomicRpc();
+  const originalRpc = testRpc ?? bookingAtomicRpc();
+  const rpc = input.operation === "createMerchantBooking" && isMemberCheckoutIntentPilotEnabled(input.siteId) ? bookingRpcWithCheckoutIntent(originalRpc) : originalRpc;
   return io.run(rpc, async () => {
     await readAtomicBookingSnapshot();
     const request = requestIdentity.getStore();
