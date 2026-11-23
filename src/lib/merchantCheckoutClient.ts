@@ -12,7 +12,8 @@ export type CheckoutClientQuote = {
   bookingForm: { store: string; item: string; titles: string[]; timeZone: string } | null;
 };
 export type CheckoutClientState = { phase: "idle" | "quoting" | "ready" | "submitting" | "recovering" | "unconfirmed" | "confirmed" | "error";
-  quote: CheckoutClientQuote | null; result: MemberCheckoutResult | null; pending: boolean; error: string };
+  quote: CheckoutClientQuote | null; result: MemberCheckoutResult | null; pending: boolean; error: string;
+  originalReview?: import("./merchantCheckoutCartReview").CartClientOriginal; intentReviewRequired?: boolean };
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 export type CheckoutClientRequest = (path: string, body: unknown, signal: AbortSignal) => Promise<unknown>;
 export type CheckoutClientExclusive = (key: string, run: () => Promise<void>) => Promise<boolean>;

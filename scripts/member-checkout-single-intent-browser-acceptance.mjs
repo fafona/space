@@ -1,0 +1,49 @@
+// Actual start client/forms/controllers/transports, actual HTTP/planners, and
+// synthetic private RPC ports. All network intercepted; NOT live Next/PG.
+import assert from 'node:assert/strict';import test from 'node:test';import path from 'node:path';import {mkdir} from 'node:fs/promises';
+import {build} from 'esbuild';import postcss from 'postcss';import tailwind from '@tailwindcss/postcss';import {chromium} from 'playwright';
+import fixture from './fixtures/member-checkout-single-http.ts';import originals from './fixtures/member-checkout-resume.ts';
+const origin='https://single.synthetic.invalid',html='<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="root"></div></body></html>';
+const copy={zh:{name:'姓名',email:'联系邮箱',phone:'联系电话',note:'备注',quote:['核对积分与券','核对金额与优惠券'],confirm:['确认兑换并提交','确认提交 · 到店付款'],another:'已核对，开始另一单',login:'用户登录'},en:{name:'Name',email:'Contact email',phone:'Phone',note:'Note',quote:['Review points & coupons','Review amount & coupons'],confirm:['Confirm redemption & submit','Submit · Pay at venue'],another:'Reviewed — start another',login:'Sign in'},es:{name:'Nombre',email:'Correo de contacto',phone:'Teléfono',note:'Nota',quote:['Revisar puntos y cupones','Revisar importe y cupones'],confirm:['Confirmar canje y enviar','Enviar · Pagar en el local'],another:'Revisado — empezar otro',login:'Iniciar sesión'}};
+let cached;async function assets(){return cached??=Promise.all([build({stdin:{loader:'tsx',resolveDir:process.cwd(),contents:`import React from'react';import{createRoot}from'react-dom/client';import Start from'./src/app/member-checkout/[siteId]/start/CheckoutStartClient';createRoot(document.getElementById('root')).render(<Start siteId={window.__selection.siteId} initialSelection={window.__selection} onSite={window.__method==='on_site'} intentEnabled/>);`},bundle:true,platform:'browser',format:'iife',write:false,logLevel:'silent',define:{'process.env':'{}'},plugins:[{name:'context-only',setup(b){b.onResolve({filter:/^(?:@\/components\/I18nProvider|next\/link)$/},a=>({path:a.path,namespace:'context'}));b.onLoad({filter:/.*/,namespace:'context'},a=>({contents:a.path==='next/link'?"import React from'react';export default({prefetch,...props})=><a {...props}/>;":"export const useI18n=()=>({locale:window.__locale});",loader:'tsx',resolveDir:process.cwd()}));}}]}),postcss([tailwind()]).process('@import "tailwindcss" source(none); @source "./src/components/checkout"; @source "./src/components/booking"; @source "./src/app/member-checkout";',{from:path.resolve('single-intent.css')})]).then(([js,css])=>({js:js.outputFiles[0].text,css:css.css}));}
+async function setup(context,f){const paths=[],errors=[],unexpected=[];let guest=false;context.on('page',p=>p.on('pageerror',e=>errors.push(e.message)));
+ await context.route('**/*',async route=>{const req=route.request(),url=new URL(req.url());if(url.origin!==origin){unexpected.push(url.href);return route.abort();}if(req.isNavigationRequest())return route.fulfill({contentType:'text/html',body:html});
+ paths.push(`${req.method()} ${url.pathname}`);if(url.pathname==='/api/personal-favorites'){assert.equal(req.method(),'GET');return route.fulfill({json:{authenticated:!guest,accountId:guest?'':f.principal.accountId}});}
+ if(!/^\/api\/member-checkout\/(?:single\/(?:points|on-site)\/(?:preview|submit)|intent\/(?:pending|review|acknowledge)|cart\/recover)$/.test(url.pathname)){unexpected.push(url.pathname);return route.abort();}
+ assert.equal(req.method(),'POST');assert.equal(req.headers()['x-checkout-account-scope'],f.principal.accountId);const headers={...req.headers(),origin},response=await f.handle(req.url(),req.postDataJSON(),headers),json=await response.json();
+ return route.fulfill({status:response.status,headers:Object.fromEntries(response.headers),json});});
+ return{paths,errors,unexpected,guest:()=>{guest=true;f.guest();}};
+}
+async function mount(page,a,f,method,locale){await page.evaluate(v=>Object.assign(window,v),{__selection:f.selection,__method:method,__locale:locale});await page.addStyleTag({content:a.css+'body{margin:0;background:#f8fafc;font-family:Arial,sans-serif}'});await page.addScriptTag({content:a.js});}
+test('single checkout across two methods, sizes and three languages uses actual HTTP/planners and only acknowledges after review',{timeout:120000},async t=>{
+ const a=await assets(),browser=await chromium.launch({headless:true}),evidence=path.resolve(`output/single-intent-browser-${Date.now()}`);await mkdir(evidence,{recursive:true});
+ try{for(const method of ['points','on_site'])for(const width of [390,1280])for(const locale of ['zh-CN','en-GB','es-ES'])await t.test(`${method} ${width} ${locale}`,async()=>{
+  const f=fixture.singleHttpFixture(method),context=await browser.newContext({viewport:{width,height:1000}}),state=await setup(context,f),page=await context.newPage(),text=copy[locale.slice(0,2)],index=method==='points'?0:1;page.setDefaultTimeout(10000);
+  try{await page.goto(origin);await page.evaluate(()=>localStorage.setItem('synthetic-native-cart','member/products/note unchanged'));await mount(page,a,f,method,locale);
+   const fill=async()=>{for(const key of ['name','email','phone','note'])await page.getByLabel(text[key],{exact:true}).fill(f.customer[key]);};
+   if(method==='on_site')await fill();await page.getByRole('button',{name:text.quote[index],exact:true}).click();if(method==='points')await fill();await page.getByRole('button',{name:text.confirm[index],exact:true}).click();await page.locator('[data-single-original-review]').waitFor();
+   assert.deepEqual(f.events,['submit']);assert.equal(await page.locator('input,textarea').count(),0);assert.equal(await page.evaluate(()=>localStorage.getItem('synthetic-native-cart')),'member/products/note unchanged');
+   const nonceKeys=await page.evaluate(()=>Object.keys(localStorage).filter(k=>k.startsWith('faolla-member-checkout-v2:')));assert.equal(nonceKeys.length,1);
+   const nonceBefore=await page.evaluate(key=>localStorage.getItem(key),nonceKeys[0]);assert.equal(Object.keys(JSON.parse(nonceBefore)).length,2);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);await page.screenshot({path:path.join(evidence,`${method}-${width}-${locale}.png`),fullPage:true});
+   await page.reload();await mount(page,a,f,method,locale);await page.locator('[data-single-original-review]').waitFor();assert.equal(await page.evaluate(key=>localStorage.getItem(key),nonceKeys[0]),nonceBefore);assert.deepEqual(f.events,['submit']);
+   await page.locator('[data-single-original-review]').getByRole('button',{name:text.another,exact:true}).click();await page.getByRole('button',{name:text.quote[index],exact:true}).waitFor();assert.deepEqual(f.events,['submit','ack']);
+   assert.equal(await page.evaluate(key=>localStorage.getItem(key),nonceKeys[0]),null);assert.equal(await page.evaluate(()=>localStorage.getItem('synthetic-native-cart')),'member/products/note unchanged');
+   if(method==='on_site')assert.equal(await page.getByLabel(text.name,{exact:true}).inputValue(),'');else assert.equal(await page.getByLabel(text.name,{exact:true}).count(),0);assert.deepEqual(state.unexpected,[]);assert.deepEqual(state.errors,[]);
+  }catch(e){await page.screenshot({path:path.join(evidence,`failed-${method}-${width}-${locale}.png`),fullPage:true}).catch(()=>{});throw e;}finally{await context.close();}
+ });console.log(`SINGLE_INTENT_BROWSER_EVIDENCE=${evidence}`);
+ }finally{await browser.close();}
+});
+test('new devices display every original kind in either single method; whole-cart originals cannot be acknowledged here',{timeout:90000},async t=>{
+ const a=await assets(),browser=await chromium.launch({headless:true});try{for(const kind of ['cart_points','cart_on_site','single_points','single_on_site'])for(const method of ['points','on_site'])for(const width of [390,1280])await t.test(`${kind} ${method} ${width}`,async()=>{
+  const f=fixture.singleHttpFixture(method),x=await originals.checkoutResumeFixture(kind);f.setOriginal(x.original);const context=await browser.newContext({viewport:{width,height:1000}}),state=await setup(context,f),page=await context.newPage();
+  try{await page.goto(origin);await mount(page,a,f,method,'es-ES');await page.locator('[data-single-original-review]').waitFor();assert.equal(await page.locator('input,textarea,select').count(),0);assert.equal(await page.evaluate(()=>Object.keys(localStorage).length),0);
+   assert.equal(await page.getByRole('button',{name:copy.es.another,exact:true}).count(),kind.startsWith('cart')?0:1);assert.deepEqual(f.events,[]);assert.ok(!state.paths.some(p=>p.includes('/single/')));assert.deepEqual(state.unexpected,[]);assert.deepEqual(state.errors,[]);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+  }finally{await context.close();}
+ });}finally{await browser.close();}
+});
+test('identity change clears a displayed original before showing guest login',{timeout:30000},async()=>{
+ const a=await assets(),f=fixture.singleHttpFixture(),x=await originals.checkoutResumeFixture('single_points');f.setOriginal(x.original);const browser=await chromium.launch({headless:true}),context=await browser.newContext({viewport:{width:390,height:900}}),state=await setup(context,f),page=await context.newPage();
+ try{await page.goto(origin);await mount(page,a,f,'points','zh-CN');await page.locator('[data-single-original-review]').waitFor();state.guest();await page.evaluate(()=>window.dispatchEvent(new Event('faolla:service-identity-changed')));await page.getByRole('link',{name:copy.zh.login,exact:true}).waitFor();assert.equal(await page.locator('[data-single-original-review]').count(),0);assert.deepEqual(f.events,[]);assert.deepEqual(state.errors,[]);}finally{await context.close();await browser.close();}
+});
