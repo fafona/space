@@ -54,7 +54,7 @@ import {
   quotePublishedProductOrder,
 } from "@/lib/merchantOrderCatalog";
 import { loadMerchantCatalog } from "@/lib/merchantCatalogStore";
-import { bridgeLegacyCheckoutMutation, checkoutLegacyErrorDetails } from "@/lib/merchantCheckoutLegacyBoundary.server";
+import { bridgeLegacyCheckoutMutation, checkoutLegacyErrorDetails, personalCheckoutEntryHint } from "@/lib/merchantCheckoutLegacyBoundary.server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -308,7 +308,8 @@ export async function handleMerchantOrdersGet(
         email: session.email,
       });
       const merchantContacts = await dependencies.buildPersonalContacts(orders.map((order) => order.siteId));
-      return privateOrderJson({ ok: true, orders, merchantContacts });
+      const checkoutEntries = personalCheckoutEntryHint(orders, session);
+      return privateOrderJson({ ok: true, orders, merchantContacts, ...(checkoutEntries ? { checkoutEntries } : {}) });
     }
 
     const siteId = readUniqueMerchantBusinessSiteId(request.url);

@@ -44,7 +44,7 @@ import type {
   MerchantBookingStatus,
 } from "@/lib/merchantBookings";
 import type { MerchantBookingRuleViewport } from "@/lib/merchantBookingRules";
-import { bridgeLegacyCheckoutMutation, checkoutLegacyErrorDetails } from "@/lib/merchantCheckoutLegacyBoundary.server";
+import { bridgeLegacyCheckoutMutation, checkoutLegacyErrorDetails, personalCheckoutEntryHint } from "@/lib/merchantCheckoutLegacyBoundary.server";
 import type { MerchantBookingRecord } from "@/lib/merchantBookings";
 
 export const dynamic = "force-dynamic";
@@ -143,7 +143,8 @@ export async function GET(request: Request) {
         },
       );
       const merchantContacts = await buildPersonalMerchantContactMap(bookings.map((booking) => booking.siteId));
-      return privateJson({ ok: true, bookings, merchantContacts });
+      const checkoutEntries = personalCheckoutEntryHint(bookings, session);
+      return privateJson({ ok: true, bookings, merchantContacts, ...(checkoutEntries ? { checkoutEntries } : {}) });
     }
 
     const siteId = readUniqueMerchantBusinessSiteId(request.url);

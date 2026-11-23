@@ -1,2 +1,2 @@
 export const dynamic = "force-dynamic";
-export { POST } from "./route-handler";
+export { GET, POST } from "./route-handler";

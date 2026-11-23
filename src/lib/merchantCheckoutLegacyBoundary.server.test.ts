@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bridgeLegacyCheckoutMutation, checkoutLegacyErrorDetails, CheckoutLegacyBoundaryError, legacyCheckoutPointTransitions, preserveCheckoutOrderStorage, saveCheckoutAwareMerchantOrders, type CheckoutLegacyBoundaryDependencies } from "./merchantCheckoutLegacyBoundary.server";
+import { bridgeLegacyCheckoutMutation, checkoutLegacyErrorDetails, CheckoutLegacyBoundaryError, legacyCheckoutPointTransitions, preserveCheckoutOrderStorage, saveCheckoutAwareMerchantOrders, personalCheckoutEntryHint, readPersonalCheckoutResource, type CheckoutLegacyBoundaryDependencies } from "./merchantCheckoutLegacyBoundary.server";
 import { createMerchantOrder, normalizeMerchantOrderRecords } from "./merchantOrders";
 import { handleMerchantOrderPatch } from "@/app/api/orders/route-handler";
 import type { MerchantBusinessActor } from "./merchantBusinessActor.server";
@@ -177,4 +177,33 @@ test("server snapshot-aware saver keeps the original CAS command; disabled pilot
   const guarded = sent[1].p_mutation as { orders: { next: Array<Record<string, unknown>>; expectedRows: unknown } };
   assert.deepEqual(guarded.orders.next[0].futureField, raw.futureField); assert.equal(guarded.orders.next[0].status, "completed"); assert.equal(guarded.orders.expectedRows, source);
   assert.equal(writes(f).length, 0); assert.equal(sent.length, 2);
+});
+
+test("personal record entry hints are verified default-off visibility only, not an ownership/payment claim", () => {
+  const f = fixture();
+  assert.equal(personalCheckoutEntryHint([{ siteId }], f.session, () => false), undefined);
+  assert.deepEqual(personalCheckoutEntryHint([{ siteId }, { siteId }, { siteId: "10909096" }], f.session, site => site === siteId), { accountId: "50010105", siteIds: [siteId] });
+  f.user.email_confirmed_at = undefined;
+  assert.equal(personalCheckoutEntryHint([{ siteId }], f.session, () => true), undefined);
+});
+
+test("personal original-resource lookup returns only the verified owner's result, never private record data or writes", async () => {
+  for (const kind of ["booking", "order"] as const) {
+    const f = fixture(kind), result = await readPersonalCheckoutResource({ request: f.input.request, siteId, kind, id: "resource-synthetic", expectedAccountId: "50010105" }, f.deps);
+    assert.deepEqual(result, f.link().result); assert.ok(!/PRIVATE|editToken|customerName|membershipId/.test(JSON.stringify(result))); assert.equal(writes(f).length, 0);
+    f.missing(); assert.equal(await readPersonalCheckoutResource({ request: f.input.request, siteId, kind, id: "legacy" }, f.deps), null);
+  }
+});
+
+test("personal resource discovery denies disabled, unverified, foreign and changed identities without fallback", async () => {
+  for (const mode of ["disabled", "unverified", "wrong-scope", "wrong-owner", "revoked"] as const) {
+    const f = fixture(); let sessions = 0;
+    if (mode === "disabled") f.deps.enabled = () => false;
+    if (mode === "unverified") f.user.email_confirmed_at = undefined;
+    if (mode === "wrong-owner") f.session.accountId = "50010106";
+    if (mode === "revoked") f.deps.session = async () => ++sessions > 1 ? null : f.session;
+    await assert.rejects(readPersonalCheckoutResource({ request: f.input.request, siteId, kind: "booking", id: "resource-synthetic", expectedAccountId: mode === "wrong-scope" ? "50010106" : undefined }, f.deps));
+    assert.equal(writes(f).length, 0);
+    if (["disabled", "unverified", "wrong-scope"].includes(mode)) assert.equal(f.calls.length, 0);
+  }
 });

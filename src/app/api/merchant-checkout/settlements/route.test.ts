@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { handleCheckoutReporting, type CheckoutReportingDependencies } from "./route-handler";
+import { handleCheckoutReporting, handleCheckoutReportingAccess, type CheckoutReportingDependencies } from "./route-handler";
 import { MerchantBusinessAccessError, type MerchantBusinessActor } from "@/lib/merchantBusinessActor.server";
 const origin = "https://launch.faolla.com", siteId = "10909095";
 function fixture() {
@@ -68,5 +68,35 @@ test("mutated shared actor/site objects cannot rewrite the original authorizatio
     };
     const response = await handleCheckoutReporting(f.request(), f.deps);
     assert.equal(response.status, 403); assert.deepEqual(await response.json(), { error: "permission_denied" });
+  }
+});
+
+test("async manager discovery is private, owner-bound and never reads the financial ledger", async () => {
+  const f = fixture(), request = () => f.request(undefined, {}, `?siteId=${siteId}`, "GET");
+  const response = await handleCheckoutReportingAccess(request(), f.deps), payload = await response.json();
+  assert.equal(response.status, 200); assert.equal(payload.access.siteId, siteId); assert.match(payload.access.identityKey, /^[a-f0-9]{64}$/);
+  assert.equal(f.calls.includes("read"), false); assert.ok(!/synthetic-owner|Private|private@example/.test(JSON.stringify(payload)));
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  f.calls.length = 0;
+  assert.equal((await handleCheckoutReporting(f.request(f.scope, { "x-checkout-owner-scope": payload.access.identityKey }), f.deps)).status, 200);
+  f.calls.length = 0; f.actor.authUserId = "different-owner";
+  assert.equal((await handleCheckoutReporting(f.request(f.scope, { "x-checkout-owner-scope": payload.access.identityKey }), f.deps)).status, 403);
+  assert.equal(f.calls.includes("read"), false);
+});
+
+test("disabled discovery has no auth/storage IO; malformed, cross-origin, staff and revoked discovery cannot mount finance", async () => {
+  const off = fixture(); off.deps.enabled = () => false;
+  assert.deepEqual(await (await handleCheckoutReportingAccess(off.request(undefined, {}, `?siteId=${siteId}`, "GET"), off.deps)).json(), { ok: true, access: null });
+  assert.deepEqual(off.calls, []);
+  for (const suffix of ["", `?siteId=${siteId}&siteId=${siteId}`, `?siteId=${siteId}&owner=1`, "?siteId=invalid"]) {
+    const f = fixture(); assert.equal((await handleCheckoutReportingAccess(f.request(undefined, {}, suffix, "GET"), f.deps)).status, 400); assert.deepEqual(f.calls, []);
+  }
+  for (const mode of ["foreign-origin", "employee", "revoked", "mutated-expiry"]) {
+    const f = fixture(); let count = 0;
+    if (mode === "employee") f.deps.actor = async () => ({ ...f.actor, type: "employee" } as unknown as MerchantBusinessActor);
+    if (mode === "revoked") f.deps.actor = async () => ++count > 1 ? { ...f.actor, authUserId: "different" } : f.actor;
+    if (mode === "mutated-expiry") f.deps.site = async () => { if (++count > 1) f.site.serviceExpiresAt = "2098-01-01T00:00:00Z"; return f.site; };
+    const response = await handleCheckoutReportingAccess(f.request(undefined, mode === "foreign-origin" ? { origin: "https://foreign.invalid" } : {}, `?siteId=${siteId}`, "GET"), f.deps);
+    assert.equal(response.status, 403); assert.equal(f.calls.includes("read"), false);
   }
 });

@@ -16,9 +16,9 @@ type Filter = "all" | "linked" | "closed" | "review" | "unlinked";
 /** Standalone read-only integration component. The host must pass its verified
  * owner identity generation and its current page of resource keys. It does not
  * register legacy actions, assume an employee's finance permissions or fetch
- * customer profiles. Not mounted into the old manager before its write guards. */
-export function MerchantCheckoutSettlementPanel({ siteId, resources, identityKey, locale = "zh-CN", apiClient }: {
-  siteId: string; resources: CheckoutResourceReference[]; identityKey: string | null; locale?: string; apiClient?: MerchantBusinessApiClient;
+ * customer profiles. The manager integration binds its verified owner scope. */
+export function MerchantCheckoutSettlementPanel({ siteId, resources, identityKey, ownerScope, locale = "zh-CN", apiClient }: {
+  siteId: string; resources: CheckoutResourceReference[]; identityKey: string | null; ownerScope?: string; locale?: string; apiClient?: MerchantBusinessApiClient;
 }) {
   const text = copy[merchantSettlementLanguage(locale)], api = useMemo(() => apiClient ?? createMerchantBusinessApiClient({ authMode: "owner" }), [apiClient]);
   const scope = JSON.stringify({ siteId, resources }), displayScope = JSON.stringify([scope, identityKey]);
@@ -34,14 +34,14 @@ export function MerchantCheckoutSettlementPanel({ siteId, resources, identityKey
     const abort = new AbortController(); controller.current = abort; setLoading(true);
     try {
       const request = parseCheckoutReportingRequest(JSON.parse(scope));
-      const response = await api("/api/merchant-checkout/settlements", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request), signal: abort.signal, cache: "no-store" });
+      const response = await api("/api/merchant-checkout/settlements", { method: "POST", headers: { "content-type": "application/json", ...(ownerScope ? { "x-checkout-owner-scope": ownerScope } : {}) }, body: JSON.stringify(request), signal: abort.signal, cache: "no-store" });
       const payload = await response.json();
       if (abort.signal.aborted || run !== generation.current) return;
       if (!response.ok || payload.ok !== true) throw new Error("unavailable");
       setLoaded({ scope: displayScope, snapshot: parseCheckoutReportingSnapshot(payload.snapshot, request) });
     } catch { if (!abort.signal.aborted && run === generation.current) setError(true); }
     finally { if (run === generation.current) setLoading(false); }
-  }, [api, scope, displayScope, identityKey, invalidate]);
+  }, [api, scope, displayScope, identityKey, ownerScope, invalidate]);
   useEffect(() => { void load(); return invalidate; }, [load, invalidate]);
   // Hide finance on background/account transitions; late responses can never
   // restore another owner's previous selection. The host updates identityKey.

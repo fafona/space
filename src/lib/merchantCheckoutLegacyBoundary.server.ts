@@ -74,6 +74,29 @@ function personalPrincipal(session: Awaited<ReturnType<typeof defaults.session>>
   const stamp = (session?.user as { email_confirmed_at?: unknown } | undefined)?.email_confirmed_at;
   return session && !session.servicePaused && typeof stamp === "string" && Number.isFinite(Date.parse(stamp)) ? checkoutPrincipalKey(session) : null;
 }
+
+/** A visibility hint only: no ledger read and no payment/ownership assertion.
+ * Old personal lists remain byte-for-byte shaped as before when disabled. */
+export function personalCheckoutEntryHint(records: Array<{ siteId: string }>, session: Awaited<ReturnType<typeof defaults.session>>, enabled = isMemberCheckoutPilotEnabled) {
+  try {
+    if (!personalPrincipal(session)) return undefined;
+    const siteIds = [...new Set(records.map(r => r.siteId).filter(siteId => enabled(siteId)))];
+    return siteIds.length ? { accountId: session!.accountId, siteIds } : undefined;
+  } catch { return undefined; }
+}
+
+/** Read-only lookup for an ORIGINAL customer record. Never trusts the old
+ * email/guest merge's broader ownership match or accepts a client principal. */
+export async function readPersonalCheckoutResource(input: { request: Request; siteId: string; kind: "booking" | "order"; id: string; expectedAccountId?: string },
+  overrides: Partial<CheckoutLegacyBoundaryDependencies> = {}): Promise<MemberCheckoutResult | null> {
+  const deps = { ...defaults, ...overrides };
+  if (!deps.enabled(input.siteId)) throw new CheckoutLegacyBoundaryError("checkout_unavailable", 503);
+  const initial = await deps.session(input.request), principal = personalPrincipal(initial);
+  if (!principal || input.expectedAccountId !== undefined && input.expectedAccountId !== initial?.accountId) throw new CheckoutLegacyBoundaryError("checkout_unauthorized", 401);
+  const link = await readLink(deps.rpc(), { siteId: input.siteId, kind: input.kind, id: input.id, principal });
+  if (personalPrincipal(await deps.session(input.request)) !== principal || !deps.enabled(input.siteId)) throw new CheckoutLegacyBoundaryError("checkout_unauthorized", 401);
+  return link?.result ?? null;
+}
 function publicRecord(link: Link): MerchantBookingRecord | MerchantOrderRecord {
   if (link.kind === "order") {
     const order = normalizeMerchantOrderRecord(link.record as Partial<MerchantOrderRecord>);

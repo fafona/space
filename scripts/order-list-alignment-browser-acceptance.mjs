@@ -53,6 +53,10 @@ async function mount(browser, assets, width, permissions) {
   page.on("pageerror", error => errors.push(error.message));
   await context.route("**/*", async route => {
     const request = route.request(), url = new URL(request.url());
+    if (url.origin === "https://order-layout.invalid" && url.pathname === "/api/merchant-checkout/settlements") {
+      assert.equal(request.method(), "GET", "default-off layout must not query financial facts");
+      return route.fulfill({ json: { ok: true, access: null } });
+    }
     if (url.origin === "https://order-layout.invalid") {
       if (request.isNavigationRequest()) return route.fulfill({ contentType: "text/html", body: '<!doctype html><html><head><meta charset="utf-8"></head><body><div id="root" style="margin-left:var(--sidebar,0px)"></div></body></html>' });
       if (url.pathname === "/api/merchant-admin/manager-preferences") {

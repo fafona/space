@@ -29,6 +29,7 @@ import reportingStore from '../src/lib/merchantCheckoutReporting.server.ts';
 import reporting from '../src/lib/merchantCheckoutReporting.ts';
 import reportingRoute from '../src/app/api/merchant-checkout/settlements/route-handler.ts';
 import legacyBoundary from '../src/lib/merchantCheckoutLegacyBoundary.server.ts';
+import resourceRoute from '../src/app/api/member-checkout/resource/route-handler.ts';
 import legacyOrderRoute from '../src/app/api/orders/route-handler.ts';
 import legacyOrders from '../src/lib/merchantOrders.server.ts';
 import orderRecords from '../src/lib/merchantOrders.ts';
@@ -689,6 +690,19 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
   const owner={type:'owner',siteId:site,authUserId:'synthetic-owner',principalKey:'owner:synthetic-owner',authorizationVersion:'owner',businessPermissions:[],collaborationPermissions:[]};
   const boundaryDeps={enabled:()=>true,anyEnabled:()=>true,actor:async()=>owner,session:async()=>({accountId,userId,servicePaused:false,user:{id:userId,email_confirmed_at:at}}),rpc:()=>boundaryRpc(a)};
   const boundaryInput=(kind,id)=>({request:new Request('https://synthetic.faolla.invalid/api/orders'),mode:'merchant',siteId:site,kind,ids:[id],action:'cancel',actor:owner});
+  await t.test('personal original-record entry HTTP uses actual private SQL, not legacy email ownership, and performs no writes',async()=>{
+   for(const kind of ['booking','order']){
+    const f=await configure({kind,withCoupon:false,withStock:false});await commit(a,f.key,f.plan);
+    const resourceId=f.plan.receipt.resourceId,before=await all(),origin='https://synthetic.faolla.invalid';
+    const request=new Request(`${origin}/api/member-checkout/resource?siteId=${site}&kind=${kind}&id=${resourceId}`,{headers:{origin,'x-checkout-account-scope':accountId}});
+    const response=await resourceRoute.handlePersonalCheckoutResource(request,input=>legacyBoundary.readPersonalCheckoutResource(input,boundaryDeps));
+    assert.equal(response.status,200);const payload=await response.json();assert.equal(payload.result.operationKey,f.key);assert.equal(payload.result.resourceId,resourceId);
+    assert.ok(!/editToken|principalKey|membershipId|customerName|couponUses/.test(JSON.stringify(payload)));assert.deepEqual(await all(),before);
+    const foreignDeps={...boundaryDeps,session:async()=>({accountId:'50010106',userId:'wrong-synthetic',servicePaused:false,user:{email_confirmed_at:at}})};
+    const foreign=await resourceRoute.handlePersonalCheckoutResource(new Request(request,{headers:{origin}}),input=>legacyBoundary.readPersonalCheckoutResource(input,foreignDeps));
+    assert.equal(foreign.status,404);assert.deepEqual(await all(),before);
+   }
+  });
   await t.test('final-state booking boundary rejects old cancellation, reschedule and owner changes with complete rollback, while business confirmation stays operational',async()=>{
    const f=await configure({withCoupon:false,withStock:false});await commit(a,f.key,f.plan);
    for(const mode of ['cancel','time','item','identity','zone']){

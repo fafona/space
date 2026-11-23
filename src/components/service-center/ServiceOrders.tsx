@@ -5,13 +5,18 @@ import { getMerchantOrderStatusLabel, formatMerchantOrderAmount, type MerchantOr
 import { readPersonalGuestBookings, readPersonalGuestOrders, PERSONAL_GUEST_STORAGE_EVENT } from "@/lib/personalGuestSession";
 import { PERSONAL_CONSUMPTION_CHANGED_MESSAGE } from "@/lib/personalConsumptionBridge";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
+import { useI18n } from "@/components/I18nProvider";
+import { MemberCheckoutRecordEntry } from "@/components/checkout/MemberCheckoutRecordEntry";
+import { parsePersonalCheckoutEntryHint } from "@/lib/merchantCheckoutRecordEntry";
 import { serviceButton, serviceCard, serviceInput, serviceRequest, type ServicePanelProps } from "./serviceCenterClient";
 
-type BookingPayload = { bookings?: MerchantBookingRecord[] };
-type OrderPayload = { orders?: MerchantOrderRecord[] };
+type BookingPayload = { bookings?: MerchantBookingRecord[]; checkoutEntries?: unknown };
+type OrderPayload = { orders?: MerchantOrderRecord[]; checkoutEntries?: unknown };
 const merge = <T extends { id: string }>(remote: T[], local: T[]) => [...new Map([...local, ...remote].map(row => [row.id, row])).values()];
 
 export default function ServiceOrders({ active, identity }: ServicePanelProps) {
+  const { locale } = useI18n();
+  const [checkoutEntries, setCheckoutEntries] = useState<{ accountId: string; bookings: string[]; orders: string[] } | null>(null);
   const [bookings, setBookings] = useState<MerchantBookingRecord[]>([]);
   const [orders, setOrders] = useState<MerchantOrderRecord[]>([]);
   const [ownedBookings, setOwnedBookings] = useState(new Set<string>());
@@ -29,6 +34,7 @@ export default function ServiceOrders({ active, identity }: ServicePanelProps) {
     if (!active || authenticated === undefined) return;
     const controller = new AbortController();
     const localBookings = readPersonalGuestBookings(), localOrders = readPersonalGuestOrders();
+    setCheckoutEntries(null);
     setError("");
     if (!authenticated) { setBookings(localBookings); setOrders(localOrders); setLoading(false); return; }
     setLoading(true);
@@ -41,6 +47,9 @@ export default function ServiceOrders({ active, identity }: ServicePanelProps) {
         setBookings(merge(rows, localBookings)); setOwnedBookings(new Set(rows.map(row => row.id))); }
       if (orderResult.status === "fulfilled") { const rows = orderResult.value.orders ?? [];
         setOrders(merge(rows, localOrders)); setOwnedOrders(new Set(rows.map(row => row.id))); }
+      if (accountId) setCheckoutEntries({ accountId,
+        bookings: bookingResult.status === "fulfilled" ? parsePersonalCheckoutEntryHint(bookingResult.value.checkoutEntries, accountId) : [],
+        orders: orderResult.status === "fulfilled" ? parsePersonalCheckoutEntryHint(orderResult.value.checkoutEntries, accountId) : [] });
       if (bookingResult.status === "rejected" || orderResult.status === "rejected") setError("部分记录读取失败，请重新读取。已显示的记录仍然保留。");
       setLoading(false);
     });
@@ -112,6 +121,9 @@ export default function ServiceOrders({ active, identity }: ServicePanelProps) {
         </> : !booking && ownedOrders.has(record.id) && record.status === "pending" && !record.merchantTouchedAt ?
           <button type="button" className={serviceButton} disabled={!!busy} onClick={() => void mutate(record, false, "cancel")}>取消订单</button> : null}
       </div>
+      <MemberCheckoutRecordEntry active={Boolean(active && authenticated && accountId && checkoutEntries?.accountId === accountId
+        && record.customerAccountId === accountId && (booking ? ownedBookings : ownedOrders).has(record.id) && (booking ? checkoutEntries?.bookings : checkoutEntries?.orders)?.includes(record.siteId))}
+        accountId={accountId ?? ""} siteId={record.siteId} kind={booking ? "booking" : "order"} id={record.id} revision={`${record.updatedAt}:${record.status}`} locale={locale}/>
     </article>)}
   </div>;
 }

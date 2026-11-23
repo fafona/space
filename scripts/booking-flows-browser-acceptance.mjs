@@ -94,6 +94,10 @@ test("desktop and mobile pagination retain edited drafts and show persistent sta
         if (url.origin !== "https://booking-audit.invalid") { unexpected.push(request.url()); return route.abort(); }
         if (request.isNavigationRequest()) return route.fulfill({ contentType: "text/html", body: html });
         if (url.pathname === "/api/bookings/workbench") return route.fulfill({ json: { ok: true, settings: {} } });
+        if (url.pathname === "/api/merchant-checkout/settlements") {
+          assert.equal(request.method(), "GET", "default-off manager must not read financial facts");
+          return route.fulfill({ json: { ok: true, access: null } });
+        }
         if (url.pathname === "/api/merchant-admin/manager-preferences") return route.fulfill({ json: { ok: true, preferences: {} } });
         if (url.pathname === "/api/bookings" && request.method() === "GET") {
           if (offline) return route.fulfill({ status: 503, json: { message: "synthetic-offline" } });

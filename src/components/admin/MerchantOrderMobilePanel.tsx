@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { showGlobalToast } from "@/lib/globalToast";
+import { useI18n } from "@/components/I18nProvider";
+import { MerchantCheckoutManagerIntegration } from "@/components/checkout/MerchantCheckoutManagerIntegration";
 import OrderWorkbenchPanel from "@/components/admin/OrderWorkbenchPanel";
 import {
   formatMerchantOrderAmount,
@@ -219,6 +221,7 @@ export default function MerchantOrderMobilePanel({
   onSectionChange,
   registerLeaveGuard,
 }: MerchantOrderMobilePanelProps) {
+  const { locale } = useI18n();
   const overflowMenuRef = useRef<HTMLDivElement>(null);
   const [records, setRecords] = useState<MerchantOrderRecord[]>(() => readCachedOrderRecords(siteId));
   const [loading, setLoading] = useState(false);
@@ -2010,6 +2013,8 @@ export default function MerchantOrderMobilePanel({
           </div>
         </div>
 
+        <MerchantCheckoutManagerIntegration active={!loading} siteId={siteId} locale={locale}
+          resources={renderedRecords.map(r => ({ kind: "order", id: r.id }))} revision={JSON.stringify(renderedRecords.map(r => [r.id, r.updatedAt, r.status]))}/>
         {loading ? (
           <div className={emptyPanelClassName}>正在读取订单...</div>
         ) : filteredRecords.length > 0 ? (

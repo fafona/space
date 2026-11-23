@@ -2,6 +2,7 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { MerchantCheckoutManagerIntegration } from "@/components/checkout/MerchantCheckoutManagerIntegration";
 import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
 import { BookingScheduleOverview } from "./BookingScheduleOverview";
@@ -1974,6 +1975,8 @@ export default function MerchantBookingManagerDialog({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          <MerchantCheckoutManagerIntegration active={open && canViewBookings && !loading} employeeMode={employeeMode} siteId={siteId} locale={locale} apiClient={requestBookingApi}
+            resources={renderedRecords.map(r => ({ kind: "booking", id: r.id }))} revision={JSON.stringify(renderedRecords.map(r => [r.id, r.updatedAt, r.status]))}/>
           <div className="mb-2 flex justify-end"><button type="button" disabled={loading} onClick={() => setReloadKey((value) => value + 1)} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-700 disabled:opacity-50">{locale.startsWith("es") ? "Sincronizar" : "重新同步"}</button></div>
           {syncWarning ? <p role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">{syncWarning}</p> : lastSyncedAt ? <p role="status" className="mb-3 text-xs text-slate-500">{locale.startsWith("es") ? "Sincronizado" : "最近同步"} · {new Date(lastSyncedAt).toLocaleTimeString()}</p> : null}
           <BookingScheduleOverview records={records} rules={bookingRulesSnapshot} locale={locale} partial={hasMoreRemoteRecords || Boolean(syncWarning)} onSelect={(id) => { const record = frontendRecords.find((item) => item.id === id); if (record) openDetailDialog(record); }} />

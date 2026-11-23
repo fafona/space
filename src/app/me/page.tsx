@@ -9,6 +9,8 @@ import Link from "next/link";
 import AccountSwitcherDialog from "@/components/AccountSwitcherDialog";
 import FaollaQrPanel from "@/components/FaollaQrPanel";
 import { useI18n } from "@/components/I18nProvider";
+import { MemberCheckoutRecordEntry } from "@/components/checkout/MemberCheckoutRecordEntry";
+import { parsePersonalCheckoutEntryHint } from "@/lib/merchantCheckoutRecordEntry";
 import LanguageTranslationFeedback from "@/components/LanguageTranslationFeedback";
 import { languageFlagImageUrl } from "@/lib/languageFlags";
 import NoMercyFlagIcon from "@/components/NoMercyFlagIcon";
@@ -318,6 +320,7 @@ type PersonalProfileResponsePayload = {
 };
 
 type PersonalBookingsResponsePayload = {
+  checkoutEntries?: unknown;
   ok?: unknown;
   error?: unknown;
   message?: unknown;
@@ -326,6 +329,7 @@ type PersonalBookingsResponsePayload = {
 };
 
 type PersonalOrdersResponsePayload = {
+  checkoutEntries?: unknown;
   ok?: unknown;
   error?: unknown;
   message?: unknown;
@@ -2587,6 +2591,7 @@ export default function MePage() {
   } | null>(null);
   const [personalBookings, setPersonalBookings] = useState<MerchantBookingRecord[]>([]);
   const [personalOrders, setPersonalOrders] = useState<MerchantOrderRecord[]>([]);
+  const [personalCheckoutEntries, setPersonalCheckoutEntries] = useState<{ accountId: string; bookings: string[]; orders: string[] } | null>(null);
   const [personalMerchantContacts, setPersonalMerchantContacts] = useState<Record<string, PersonalMerchantContact>>({});
   const [personalConsumptionFilter, setPersonalConsumptionFilter] = useState<PersonalConsumptionFilter>("all");
   const [personalConsumptionSearch, setPersonalConsumptionSearch] = useState("");
@@ -3358,6 +3363,7 @@ export default function MePage() {
   useEffect(() => {
     if (isGuestSession) {
       const guestBookings = readPersonalGuestBookings();
+      setPersonalCheckoutEntries(null);
       const guestOrders = readPersonalGuestOrders();
       setPersonalBookings(guestBookings);
       setPersonalOrders(guestOrders);
@@ -3369,6 +3375,7 @@ export default function MePage() {
     }
     if (!accountId) {
       setPersonalBookings([]);
+      setPersonalCheckoutEntries(null);
       setPersonalOrders([]);
       setPersonalMerchantContacts({});
       setPersonalBookingLoadError("");
@@ -3380,6 +3387,7 @@ export default function MePage() {
     let cancelled = false;
     const loadPersonalConsumption = async () => {
       setPersonalConsumptionLoading(true);
+      setPersonalCheckoutEntries(null);
       setPersonalBookingLoadError("");
       setPersonalOrderLoadError("");
       await ensurePersonalSessionReady();
@@ -3394,6 +3402,9 @@ export default function MePage() {
       if (cancelled) return;
 
       const nextContacts: Record<string, PersonalMerchantContact> = {};
+      setPersonalCheckoutEntries({ accountId,
+        bookings: bookingsResult.status === "fulfilled" ? parsePersonalCheckoutEntryHint(bookingsResult.value.checkoutEntries, accountId) : [],
+        orders: ordersResult.status === "fulfilled" ? parsePersonalCheckoutEntryHint(ordersResult.value.checkoutEntries, accountId) : [] });
       if (bookingsResult.status === "fulfilled") {
         const bookingsPayload = bookingsResult.value;
         setPersonalBookings(
@@ -3444,6 +3455,12 @@ export default function MePage() {
       cancelled = true;
     };
   }, [accountId, ensurePersonalSessionReady, isGuestSession, personalConsumptionReloadKey]);
+
+  const renderPersonalCheckoutEntry = (record: MerchantBookingRecord | MerchantOrderRecord, kind: "booking" | "order") => (
+    <MemberCheckoutRecordEntry active={Boolean(!isGuestSession && record.customerAccountId === accountId && personalCheckoutEntries?.accountId === accountId
+      && (kind === "booking" ? personalCheckoutEntries?.bookings : personalCheckoutEntries?.orders)?.includes(record.siteId))}
+      accountId={accountId} siteId={record.siteId} kind={kind} id={record.id} revision={`${record.updatedAt}:${record.status}`} locale={locale}/>
+  );
 
   const personalBookingCounts = useMemo(() => {
     const counts: Record<PersonalBookingFilter, number> = { all: personalBookings.length, active: 0, confirmed: 0, cancelled: 0 };
@@ -6950,6 +6967,7 @@ export default function MePage() {
                   key={booking.id}
                   className="faolla-mobile-record-card relative overflow-visible rounded-[18px] border border-slate-200 bg-white p-3 shadow-none"
                 >
+                  {renderPersonalCheckoutEntry(booking, "booking")}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -7061,6 +7079,7 @@ export default function MePage() {
                 key={booking.id}
                 className="relative overflow-visible rounded-2xl border bg-slate-50 p-3.5 shadow-sm"
               >
+                {renderPersonalCheckoutEntry(booking, "booking")}
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-5 gap-y-2">
                     <div className="min-w-[220px] flex-1">
@@ -7240,6 +7259,7 @@ export default function MePage() {
                   key={order.id}
                   className="faolla-mobile-record-card relative overflow-visible rounded-[18px] border border-slate-200 bg-white p-3 shadow-none"
                 >
+                  {renderPersonalCheckoutEntry(order, "order")}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -7307,6 +7327,7 @@ export default function MePage() {
               key={order.id}
               className="relative overflow-visible rounded-2xl border bg-slate-50 p-3.5 shadow-sm"
             >
+              {renderPersonalCheckoutEntry(order, "order")}
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-5 gap-y-2">
                   <div className="min-w-[220px] flex-1">

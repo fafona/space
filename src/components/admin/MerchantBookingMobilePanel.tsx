@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { MerchantCheckoutManagerIntegration } from "@/components/checkout/MerchantCheckoutManagerIntegration";
 import BookingWorkbenchDialog from "@/components/admin/BookingWorkbenchDialog";
 import BookingStatusFilterDropdown from "@/components/admin/BookingStatusFilterDropdown";
 import { BookingScheduleOverview } from "./BookingScheduleOverview";
@@ -1898,6 +1899,8 @@ export default function MerchantBookingMobilePanel({
 
           <div className="space-y-3">
             {syncWarning ? <p role="status" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">{syncWarning}</p> : lastSyncedAt ? <p role="status" className="mb-3 text-xs text-slate-500">{locale.startsWith("es") ? "Sincronizado" : "最近同步"} · {new Date(lastSyncedAt).toLocaleTimeString()}</p> : null}
+            <MerchantCheckoutManagerIntegration active={!loading} siteId={siteId} locale={locale}
+              resources={renderedRecords.map(r => ({ kind: "booking", id: r.id }))} revision={JSON.stringify(renderedRecords.map(r => [r.id, r.updatedAt, r.status]))}/>
             <BookingScheduleOverview records={records} rules={bookingRulesSnapshot} locale={locale} partial={hasMoreRemoteRecords || Boolean(syncWarning)} onSelect={(id) => { const record = records.find((item) => item.id === id); if (record) openDetailDialog(record); }} />
             {loading ? (
               <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-500 shadow-[0_14px_34px_rgba(15,23,42,0.08)]">

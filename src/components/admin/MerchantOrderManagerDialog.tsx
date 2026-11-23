@@ -2,6 +2,8 @@
 
 import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useI18n } from "@/components/I18nProvider";
+import { MerchantCheckoutManagerIntegration } from "@/components/checkout/MerchantCheckoutManagerIntegration";
 import OrderStatusFilterDropdown from "@/components/admin/OrderStatusFilterDropdown";
 import OrderWorkbenchPanel, { type OrderWorkbenchView } from "@/components/admin/OrderWorkbenchPanel";
 import type { MerchantCatalogTarget } from "@/lib/merchantCatalog";
@@ -272,6 +274,7 @@ export default function MerchantOrderManagerDialog({
   permissions,
   onClose,
 }: MerchantOrderManagerDialogProps) {
+  const { locale } = useI18n();
   const isInline = mode === "inline";
   const employeeMode = isMerchantOrderEmployeeFrontend({
     apiClient,
@@ -2604,6 +2607,8 @@ export default function MerchantOrderManagerDialog({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          <MerchantCheckoutManagerIntegration active={open && canViewOrders && !loading} employeeMode={employeeMode} siteId={siteId} locale={locale} apiClient={requestOrderApi}
+            resources={renderedRecords.map(r => ({ kind: "order", id: r.id }))} revision={JSON.stringify(renderedRecords.map(r => [r.id, r.updatedAt, r.status]))}/>
           <div className="space-y-4">
             {!canViewOrders ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center text-sm text-slate-500">
