@@ -88,6 +88,7 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
   // The owner-audit table it references is installed by the legacy-boundary
   // proposal below, before any owner cash command is exercised.
   await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_on_site_cancellation.sql'),'utf8'));
+  await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_on_site_submission.sql'),'utf8'));
   // Test-only admin activation in this freshly created owned synthetic cluster.
   // No equivalent application endpoint or production activation exists.
   await admin.query('update faolla_booking_atomic_control set active=true where singleton');
