@@ -371,7 +371,7 @@ export async function updateMerchantOrderBySite(input: {
     ) {
       throw new Error("permission_denied");
     }
-    const pointTransitions = await (dependencies.pointTransitions ?? legacyCheckoutPointTransitions)([{ previous: current, next }]);
+    const pointTransitions = await (dependencies.pointTransitions ?? legacyCheckoutPointTransitions)([{ previous: current, next }], undefined, stored?.storageRows);
     const memberships = pointTransitions.length ? await dependencies.prepareMemberships(pointTransitions) : null;
     const updatedOrders = [...orders];
     updatedOrders[orderIndex] = next;
@@ -450,7 +450,7 @@ export async function updateMerchantOrdersBatchBySite(input: {
     ) {
       throw new Error("permission_denied");
     }
-    const pointTransitions = await (dependencies.pointTransitions ?? legacyCheckoutPointTransitions)(transitions);
+    const pointTransitions = await (dependencies.pointTransitions ?? legacyCheckoutPointTransitions)(transitions, undefined, stored?.storageRows);
     const memberships = pointTransitions.length ? await dependencies.prepareMemberships(pointTransitions) : null;
     await input.assertAuthorizationCurrent?.();
     const saved = await dependencies.saveOrders(supabase, {

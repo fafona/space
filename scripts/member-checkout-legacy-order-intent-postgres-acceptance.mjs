@@ -9,6 +9,7 @@ import service from'../src/lib/merchantCheckoutCartSubmission.server.ts';import 
 import creator from'../src/lib/merchantOrders.server.ts';import orders from'../src/lib/merchantOrders.ts';import route from'../src/app/api/orders/route-handler.ts';
 import {legacyBookingIntentCases} from './member-checkout-legacy-booking-intent-postgres-cases.mjs';
 import {closedGateOrderCases} from './member-checkout-closed-gate-creation-postgres-cases.mjs';
+import {retainedOrderCases} from './member-checkout-retained-orders-postgres-cases.mjs';
 
 test('ordinary order creation cannot bypass an enrolled original pending review',{timeout:120000},async t=>{
  const runtime=path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR||'.missing-test-runtime'),relative=path.relative(tmpdir(),runtime);
@@ -144,6 +145,7 @@ test('ordinary order creation cannot bypass an enrolled original pending review'
    const f=await seed();await submit(f);const x=await ordinary(f,{intent:false}),before=await state();
    await assert.rejects(x.create(),/checkout_original_pending/);assert.equal(x.stats().calls,1);assert.equal(x.stats().mirror,0);assert.deepEqual(await state(),before);
   });
+  await retainedOrderCases(t,{admin,a,seed,submit,state,site,one,rows,records,dispatch});
   await closedGateOrderCases(t,{admin,a,b,seed,submit,ack,state,site,one,rows,records,newInput,ordinary,http,mutation});
   await legacyBookingIntentCases(t,{admin,a,b,seed,submit,pending,ack,state,site,one,evidence});
   await t.test('all API roles and retained snapshots are denied and every old SQL definition remains byte-identical',async()=>{

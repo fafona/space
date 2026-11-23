@@ -20,6 +20,7 @@ import { bridgeCartCheckoutPersonalCancellation } from "./merchantCheckoutCartPe
 import { checkoutOwnerDependencies } from "./merchantCheckoutOwnerAccess.server";
 import { MerchantCheckoutError } from "./merchantCheckoutQuote.server";
 import { commitLegacyOrderWithCheckoutIntent } from "./merchantCheckoutLegacyCreateBoundary.server";
+import { retainedCheckoutOrderCues, verifyRetainedCheckoutOrders, type CheckoutOrderSourceRows } from "./merchantCheckoutRetainedOrders.server";
 
 const id = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9:_-]{1,160}$/.test(v);
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
@@ -256,11 +257,20 @@ async function linkedCheckoutOrderOrBookingIds(siteId: string, kind: "booking" |
 /** Points/coupon originals already applied their own plan. Cash originals do
  * not gain a receipt/award from business completion. Neither may normalize or
  * save the legacy membership store as a side effect of an old status action. */
-export async function legacyCheckoutPointTransitions<T extends { previous: MerchantOrderRecord; next: MerchantOrderRecord }>(transitions: T[], overrides: Partial<Pick<CheckoutLegacyBoundaryDependencies, "enabled" | "cashEnabled" | "rpc" | "cartEnabled">> = {}): Promise<T[]> {
+export async function legacyCheckoutPointTransitions<T extends { previous: MerchantOrderRecord; next: MerchantOrderRecord }>(transitions: T[], overrides: Partial<Pick<CheckoutLegacyBoundaryDependencies, "enabled" | "cashEnabled" | "rpc" | "cartEnabled">> = {}, sourceRows: CheckoutOrderSourceRows = []): Promise<T[]> {
   if (!transitions.some(t => (t.previous.status === "completed") !== (t.next.status === "completed"))) return transitions;
   const sites = new Set(transitions.map(t => t.next.siteId));
   const deps = { enabled: isMemberCheckoutPilotEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, rpc, ...overrides };
-  if (sites.size !== 1 || !deps.enabled(transitions[0].next.siteId)) return transitions;
+  if (sites.size !== 1) return transitions;
+  const siteId = transitions[0].next.siteId;
+  if (!deps.enabled(siteId)) {
+    const cues = retainedCheckoutOrderCues(siteId, sourceRows);
+    // The actual writer passes its trusted CAS source; no reliance on a marker
+    // supplied in normalized transition records or a browser payment claim.
+    const relevant = new Map([...cues].filter(([id]) => transitions.some(t => t.next.id === id)));
+    const linked = await verifyRetainedCheckoutOrders(siteId, relevant, deps.rpc);
+    return linked.size ? transitions.filter(t => !linked.has(t.next.id)) : transitions;
+  }
   const linked = await linkedCheckoutOrderOrBookingIds(transitions[0].next.siteId, "order", [...new Set(transitions.map(t => t.next.id))], deps.rpc(), deps.cashEnabled(transitions[0].next.siteId), (deps.cartEnabled ?? (site => isMemberCheckoutCartManagementEnabled(site) || isMemberCheckoutIntentPilotEnabled(site)))(transitions[0].next.siteId));
   return transitions.filter(t => !linked.has(t.next.id));
 }
@@ -273,10 +283,15 @@ export async function legacyCheckoutPointTransitions<T extends { previous: Merch
 export async function preserveCheckoutOrderStorage(siteId: string, next: MerchantOrderRecord[], expectedRows: Array<{ slug: string; blocks: unknown }>,
   overrides: Partial<Pick<CheckoutLegacyBoundaryDependencies, "enabled" | "cashEnabled" | "rpc" | "cartEnabled">> = {}): Promise<MerchantOrderRecord[]> {
   const deps = { enabled: isMemberCheckoutPilotEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, rpc, ...overrides };
-  if (!deps.enabled(siteId)) return next;
+  const enabled = deps.enabled(siteId);
+  const retained = enabled ? null : retainedCheckoutOrderCues(siteId, expectedRows);
+  if (retained && !retained.size) return next;
   const ids = next.map(r => r.id).filter(id);
+  if (retained?.size && !ids.length) throw new CheckoutLegacyBoundaryError("checkout_resource_locked");
   if (!ids.length) return next;
-  const linked = await linkedCheckoutOrderOrBookingIds(siteId, "order", [...new Set(ids)], deps.rpc(), deps.cashEnabled(siteId), (deps.cartEnabled ?? (site => isMemberCheckoutCartManagementEnabled(site) || isMemberCheckoutIntentPilotEnabled(site)))(siteId));
+  const linked = retained ? await verifyRetainedCheckoutOrders(siteId, retained, deps.rpc)
+    : await linkedCheckoutOrderOrBookingIds(siteId, "order", [...new Set(ids)], deps.rpc(), deps.cashEnabled(siteId), (deps.cartEnabled ?? (site => isMemberCheckoutCartManagementEnabled(site) || isMemberCheckoutIntentPilotEnabled(site)))(siteId));
+  if (retained && [...linked].some(id => next.filter(r => r.id === id && r.siteId === siteId).length !== 1)) throw new CheckoutLegacyBoundaryError("checkout_resource_locked");
   if (!linked.size) return next;
   const chunks = expectedRows.filter(row => new RegExp(`^__merchant_orders__:${siteId}:chunk:[0-9]+$`).test(row.slug));
   const rows = chunks.length ? chunks : expectedRows.filter(row => row.slug === `__merchant_orders__:${siteId}`);
@@ -288,23 +303,26 @@ export async function preserveCheckoutOrderStorage(siteId: string, next: Merchan
     const original = matches[0] as Record<string, unknown>, baseline = normalizeMerchantOrderRecord(original as Partial<MerchantOrderRecord>);
     if (!baseline || JSON.stringify(record.items) !== JSON.stringify(baseline.items) || record.totalQuantity !== baseline.totalQuantity
       || record.totalAmount !== baseline.totalAmount || record.pricePrefix !== baseline.pricePrefix) throw new CheckoutLegacyBoundaryError("checkout_change_requires_review");
+    if (retained && (record.status === "cancelled") !== (baseline.status === "cancelled")) throw new CheckoutLegacyBoundaryError("checkout_original_cancellation_required");
     // Existing records not involved in this action must not gain normalized
     // defaults, lose unknown fields or be silently repaired as a side effect.
     if (JSON.stringify(record) === JSON.stringify(baseline)) return structuredClone(original) as MerchantOrderRecord;
-    return { ...original, ...record, items: original.items, totalQuantity: original.totalQuantity, totalAmount: original.totalAmount } as MerchantOrderRecord;
+    return { ...original, ...record, items: original.items, totalQuantity: original.totalQuantity, totalAmount: original.totalAmount,
+      ...(retained ? { checkoutOperationKey: original.checkoutOperationKey } : {}) } as MerchantOrderRecord;
   });
 }
 
 /** Keep the proven legacy storage module intact. Only server-side mutations
- * of an enabled pilot use the snapshot-aware adapter; it commits through the
+ * of an enabled pilot or a verified retained original use the adapter, through the
  * SAME CAS transaction, never direct page writes or a second financial call. */
 export async function saveCheckoutAwareMerchantOrders(client: Parameters<typeof saveStoredMerchantOrders>[0], input: Parameters<typeof saveStoredMerchantOrders>[1],
   overrides: Partial<Pick<CheckoutLegacyBoundaryDependencies, "enabled" | "cashEnabled" | "rpc" | "cartEnabled" | "intentEnabled">> = {}): Promise<{ error: string | null }> {
   const deps = { enabled: isMemberCheckoutPilotEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, intentEnabled: isMemberCheckoutIntentPilotEnabled, rpc, ...overrides }, siteId = input.siteId.trim();
-  if (!deps.enabled(siteId)) return saveStoredMerchantOrders(client, input);
+  const enabled = deps.enabled(siteId);
   if (!Array.isArray(input.expectedRows)) return { error: "order_update_conflict" };
+  if (!enabled && !retainedCheckoutOrderCues(siteId, input.expectedRows).size) return saveStoredMerchantOrders(client, input);
   const next = await preserveCheckoutOrderStorage(siteId, normalizeMerchantOrderRecords(input.orders), input.expectedRows, { ...deps, cartEnabled: deps.cartEnabled ?? (site => isMemberCheckoutCartManagementEnabled(site) || deps.intentEnabled(site)) });
-  return (deps.intentEnabled(siteId) ? commitLegacyOrderWithCheckoutIntent : commitMerchantOrderMembershipTransaction)(client, siteId, {
+  return (enabled && deps.intentEnabled(siteId) ? commitLegacyOrderWithCheckoutIntent : commitMerchantOrderMembershipTransaction)(client, siteId, {
     orders: { expectedRows: input.expectedRows, next },
     ...(input.memberships ? { memberships: input.memberships } : {}),
   });

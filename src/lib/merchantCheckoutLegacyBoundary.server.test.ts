@@ -208,7 +208,7 @@ test("legacy whole-store normalization cannot rewrite a linked original cart or 
   assert.deepEqual(untouched[0], original); assert.notEqual(untouched[0], original);
 });
 
-test("server snapshot-aware saver keeps the original CAS command; disabled pilot never looks up a ledger", async () => {
+test("server snapshot-aware saver keeps the original CAS command; disabled unmarked legacy stores never look up a ledger", async () => {
   const f = fixture("order"), raw = { ...createMerchantOrder({ siteId, items: [{ name: "Original", quantity: 1, unitPrice: 0 }] }, { id: "resource-synthetic", createdAt: stamp, updatedAt: stamp }),
     checkoutOperationKey: operationKey, futureField: { untouched: true } };
   const source = [{ id: "row-synthetic", slug: `__merchant_orders__:${siteId}:chunk:0`, blocks: [raw], updated_at: stamp }];
@@ -216,9 +216,11 @@ test("server snapshot-aware saver keeps the original CAS command; disabled pilot
     assert.equal(name, "faolla_commit_order_membership_v1"); sent.push(args); return { data: { updatedAt: stamp }, error: null };
   } };
   const orders = normalizeMerchantOrderRecords([raw]); orders[0].status = "completed";
-  assert.deepEqual(await saveCheckoutAwareMerchantOrders(client, { siteId, orders, expectedRows: source }, { enabled: () => false, rpc: () => { throw new Error("gate off"); } }), { error: null });
+  const ordinary = Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "checkoutOperationKey"));
+  const ordinarySource = [{ ...source[0], blocks: [ordinary] }];
+  assert.deepEqual(await saveCheckoutAwareMerchantOrders(client, { siteId, orders, expectedRows: ordinarySource }, { enabled: () => false, rpc: () => { throw new Error("gate off"); } }), { error: null });
   const old = sent[0].p_mutation as { orders: { next: unknown[]; expectedRows: unknown } };
-  assert.deepEqual(old.orders.next, orders); assert.equal(old.orders.expectedRows, source);
+  assert.deepEqual(old.orders.next, orders); assert.equal(old.orders.expectedRows, ordinarySource);
   assert.deepEqual(await saveCheckoutAwareMerchantOrders(client, { siteId, orders, expectedRows: source }, { enabled: () => true, rpc: () => f.rpc }), { error: null });
   const guarded = sent[1].p_mutation as { orders: { next: Array<Record<string, unknown>>; expectedRows: unknown } };
   assert.deepEqual(guarded.orders.next[0].futureField, raw.futureField); assert.equal(guarded.orders.next[0].status, "completed"); assert.equal(guarded.orders.expectedRows, source);
