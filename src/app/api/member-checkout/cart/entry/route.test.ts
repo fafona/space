@@ -6,7 +6,7 @@ const origin = "https://launch.faolla.com", query = { siteId: "10909994", kind: 
 const req = (body: unknown = query, headers: HeadersInit = {}) => new Request(origin + "/api/member-checkout/cart/entry", { method: "POST", headers: { origin, "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
 function fixture() {
   const calls: string[] = [], session = { accountId: "50010105", userId: "synthetic-user", servicePaused: false, user: { email_confirmed_at: "2026-11-23T00:00:00Z" } } as unknown as NonNullable<Awaited<ReturnType<CheckoutEntryHttpDependencies["session"]>>>;
-  const deps: CheckoutEntryHttpDependencies = { enabled: () => true, session: async () => { calls.push("session"); return session; }, read: async () => { calls.push("read"); return []; } };
+  const deps: CheckoutEntryHttpDependencies = { enabled: () => true, recoveryEnabled: () => false, session: async () => { calls.push("session"); return session; }, read: async () => { calls.push("read"); return []; } };
   return { calls, session, deps };
 }
 test("empty bindings preserve verified own account discovery so an old original can still be recovered", async () => {
@@ -39,4 +39,17 @@ test("aborted discovery cannot reveal a late private account response", async ()
   const request = new Request(req(), { signal: controller.signal }), run = handleCartCheckoutEntry(request, x.deps);
   while (!release) await new Promise(resolve => setImmediate(resolve)); controller.abort();
   const response = await run; assert.equal(response.status, 503); release(x.session); assert.deepEqual(x.calls, []);
+});
+
+test("public recovery navigation cannot grant cart intent/draft authority or turn failed private discovery into a guest", async () => {
+  const visitor = fixture(); visitor.deps.session = async () => null;
+  const gates = { recoveryEnabled: () => true, intentEnabled: () => true, draftEnabled: () => true };
+  const guest = await handleCartCheckoutEntry(req(), { ...visitor.deps, ...gates });
+  assert.deepEqual(await guest.json(), { ok: true, entry: null, recovery: { siteId: query.siteId } }); assert.deepEqual(visitor.calls, []);
+  const verified = fixture(), own = await handleCartCheckoutEntry(req(), { ...verified.deps, ...gates });
+  assert.deepEqual(await own.json(), { ok: true, entry: { siteId: query.siteId, accountId: verified.session.accountId, offers: [], query, recoveryEnabled: true }, recovery: { siteId: query.siteId }, intent: true, ownedDraft: true });
+  assert.deepEqual(verified.calls, ["session", "read", "session"]);
+  verified.deps.read = async () => { throw new Error("PRIVATE"); };
+  const failed = await handleCartCheckoutEntry(req(), { ...verified.deps, ...gates }); assert.equal(failed.status, 503);
+  assert.deepEqual(await failed.json(), { error: "checkout_entry_unavailable" });
 });

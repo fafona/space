@@ -6,7 +6,7 @@ const request = (body: unknown = query, headers: HeadersInit = {}, suffix = "") 
 function fixture() {
   const calls: string[] = [], session = { accountId: "50010105", userId: "synthetic-user", servicePaused: false, user: { email_confirmed_at: "2026-11-23T00:00:00Z" } } as unknown as Awaited<ReturnType<CheckoutEntryHttpDependencies["session"]>>;
   const offers = [{ offerId: "11111111-1111-4111-8111-111111111111", offerRevision: "22222222-2222-4222-8222-222222222222", title: "Synthetic", maxQuantity: 1, source: { kind: "booking" as const, store: "Store", item: "Play" }, private: "PRIVATE" }];
-  const deps: CheckoutEntryHttpDependencies = { enabled: () => true, session: async () => { calls.push("session"); return session; }, read: async received => { calls.push("read"); assert.deepEqual(received, query); return offers; } };
+  const deps: CheckoutEntryHttpDependencies = { enabled: () => true, recoveryEnabled: () => false, session: async () => { calls.push("session"); return session; }, read: async received => { calls.push("read"); assert.deepEqual(received, query); return offers; } };
   return { session: session!, offers, calls, deps };
 }
 test("entry is private read-only discovery, double-checks the real account and allowlists its reply", async () => {
@@ -42,4 +42,25 @@ test("late identity/verification/gate changes and private exceptions cannot expo
     if (mode === "malformed") f.deps.read = async () => [{ ...f.offers[0], maxQuantity: 0 }];
     const response = await handleCheckoutEntry(request(), f.deps); assert.equal(response.status, mode === "private" || mode === "malformed" ? 503 : 401); assert.ok(!JSON.stringify(await response.json()).includes("PRIVATE"));
   }
+});
+
+test("verified users can discover a gated read-only original entry without current offers, contacts, balances or receipt lookup", async () => {
+  const f = fixture(); f.deps.read = async () => [];
+  const response = await handleCheckoutEntry(request(), { ...f.deps, recoveryEnabled: () => true });
+  assert.equal(response.status, 200); const value = await response.json();
+  assert.deepEqual(value.entry, { siteId: query.siteId, accountId: f.session.accountId, query, offers: [], recoveryEnabled: true });
+  assert.deepEqual(f.calls, ["session", "session"]); assert.ok(!/nonce|operationKey|memberId|userId|email|balance/.test(JSON.stringify(value)));
+  assert.deepEqual(value.recovery, { siteId: query.siteId });
+});
+
+test("a merchant-host visitor without a platform cookie only gets public recovery navigation, never account/offers or financial lookup", async () => {
+  const f = fixture(); f.deps.session = async () => null; const response = await handleCheckoutEntry(request(), { ...f.deps, recoveryEnabled: () => true });
+  assert.deepEqual(await response.json(), { ok: true, entry: null, recovery: { siteId: query.siteId } }); assert.deepEqual(f.calls, []);
+});
+
+test("recovery-only discovery is default closed, rejects a late recovery gate change, and never accepts browser authority", async () => {
+  const off = fixture(); off.deps.read = async () => []; assert.deepEqual(await (await handleCheckoutEntry(request(), off.deps)).json(), { ok: true, entry: null });
+  const changed = fixture(); let enabled = true; changed.deps.recoveryEnabled = () => enabled; changed.deps.read = async () => { enabled = false; return []; };
+  assert.equal((await handleCheckoutEntry(request(), changed.deps)).status, 401);
+  const forged = fixture(); assert.equal((await handleCheckoutEntry(request({ ...query, recoveryEnabled: true }), forged.deps)).status, 400); assert.deepEqual(forged.calls, []);
 });
