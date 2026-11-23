@@ -1,5 +1,5 @@
 import { cartSubmissionIdentity, cartSelectionIdentity, parseCartSubmissionSnapshot, planCartSubmission, cartConfirmationHash } from "./merchantCheckoutCartSubmissionPlan.server";
-import { quoteCheckoutCartSnapshot } from "./merchantCheckoutCartQuote.server";
+import { reviewCheckoutCartPreviewSnapshot } from "./merchantCheckoutCartQuote.server";
 import { parseCartCheckoutResult } from "./merchantCheckoutCartResult";
 import { checkoutPrincipalKey, MerchantCheckoutError, type CheckoutPrincipal } from "./merchantCheckoutQuote.server";
 import { checkoutSubmissionRecoveryIdentity } from "./merchantCheckoutSubmissionPlan.server";
@@ -61,8 +61,8 @@ async function run(input: Input & { request: unknown }, rpc: CartSubmissionRpc, 
     const snapshot = parseCartSubmissionSnapshot(read.snapshot, identity), stamp = Date.parse(snapshot.quoteSnapshot.databaseNow);
     if (!Number.isFinite(stamp) || stamp > p.now() + 2_000 || p.now() - stamp > 12_000) throw new Error("checkout_quote_expired");
     if (preview) {
-      const quote = await p.bounded(() => quoteCheckoutCartSnapshot(snapshot.quoteSnapshot, selection, p.principal)); await p.authorize();
-      return { replayed: false as const, quote, confirmationHash: cartConfirmationHash(quote, p.principal) };
+      const { quote, couponChoices } = await p.bounded(() => reviewCheckoutCartPreviewSnapshot(snapshot.quoteSnapshot, selection, p.principal)); await p.authorize();
+      return { replayed: false as const, quote, couponChoices, confirmationHash: cartConfirmationHash(quote, p.principal) };
     }
     const prepared = await p.bounded(() => planCartSubmission(snapshot, identity, p.principal)); await p.authorize(); p.guard();
     const notAfter = new Date(Math.min(Date.parse(prepared.notAfter), Date.now() + Math.max(0, p.deadline - p.now()))).toISOString();

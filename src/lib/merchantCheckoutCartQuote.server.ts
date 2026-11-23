@@ -6,7 +6,7 @@ import { parseCheckoutPreviewRows } from "./merchantCheckoutPreview.server";
 import { parseCheckoutSubmissionSnapshot, quoteCheckoutSubmissionSnapshot, type CheckoutSelectionQuoteIdentity, type CheckoutSubmissionSnapshot } from "./merchantCheckoutSubmissionPlan.server";
 import { parseOnSiteSubmissionSnapshot, quoteOnSiteSubmissionSnapshot } from "./merchantCheckoutOnSiteSubmissionPlan.server";
 import { checkoutPrincipalKey, MerchantCheckoutError, type CheckoutPrincipal } from "./merchantCheckoutQuote.server";
-import type { CheckoutCouponClaim } from "./merchantCheckoutCoupons";
+import type { CheckoutCouponClaim, CheckoutCouponChoice } from "./merchantCheckoutCoupons";
 
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const fail = (code = "checkout_cart_unavailable"): never => { throw new Error(code); };
@@ -82,7 +82,7 @@ function parseSnapshot(raw: unknown, identity: Identity): Snapshot {
 /** One trusted raw DB statement snapshot in, whitelisted display quote out.
  * No storage, financial planner, provider, resource creation or mutation port.
  * Never combine per-line commits to turn this preview into a checkout. */
-export async function quoteCheckoutCartSnapshot(raw: unknown, suppliedIdentity: Identity, suppliedPrincipal: CheckoutPrincipal): Promise<CheckoutCartQuote> {
+async function reviewCheckoutCartSnapshot(raw: unknown, suppliedIdentity: Identity, suppliedPrincipal: CheckoutPrincipal) {
   const principal = structuredClone(suppliedPrincipal), identity = checkoutCartQuoteIdentity(suppliedIdentity.request, principal);
   if (["siteId", "principalKey", "requestHash"].some(k => identity[k as keyof Identity] !== suppliedIdentity[k as keyof Identity])) return fail("checkout_unauthorized");
   const snapshot = parseSnapshot(raw, identity), config = parseCheckoutConfigurationSnapshot({ version: identity.request.lines[0].offerRevision, offers: snapshot.offers }, identity.siteId);
@@ -113,7 +113,7 @@ export async function quoteCheckoutCartSnapshot(raw: unknown, suppliedIdentity: 
     if (offer.source.kind !== "order") return fail("checkout_cart_products_only");
     if (products.has(offer.source.productId)) return fail("checkout_cart_duplicate_product"); products.add(offer.source.productId);
   }
-  const balances: number[] = [];
+  const balances: number[] = [], couponChoices: Array<{ offerId: string; choices: CheckoutCouponChoice[] }> = [];
   for (const selection of identity.request.lines) {
     const offer = config.offers.find(o => o.id === selection.offerId)!;
     if (offer.source.kind !== "order") return fail("checkout_cart_products_only");
@@ -132,11 +132,13 @@ export async function quoteCheckoutCartSnapshot(raw: unknown, suppliedIdentity: 
       if (!points || !points.available && points.reason !== "insufficient_points" || points.totalPoints === null
         || q.quote.totalPoints === null || q.quote.ownPointBalance === null) return fail("checkout_cart_method_unavailable");
       balances.push(q.quote.ownPointBalance);
+      couponChoices.push({ offerId: offer.id, choices: q.quote.coupons?.points ?? [] });
       lines.push({ ...line, grossMinor: null, discountMinor: null, dueMinor: null,
         grossPoints: q.quote.totalPoints, discountPoints: q.quote.totalPoints - points.totalPoints, duePoints: points.totalPoints });
     } else {
       if (!offer.allowOnSite || offer.cash === null) return fail("checkout_cart_method_unavailable");
       const q = quoteOnSiteSubmissionSnapshot(parseOnSiteSubmissionSnapshot({ ...common, version: 3, method: "on_site" }, quoteIdentity), quoteIdentity, principal);
+      couponChoices.push({ offerId: offer.id, choices: q.coupons });
       lines.push({ ...line, grossMinor: q.grossMinor, discountMinor: q.discountMinor, dueMinor: q.dueMinor, grossPoints: null, discountPoints: null, duePoints: null });
     }
     if (offer.checkoutBinding.stockItemId !== null) stockUse.set(offer.checkoutBinding.stockItemId,
@@ -156,8 +158,16 @@ export async function quoteCheckoutCartSnapshot(raw: unknown, suppliedIdentity: 
     dueMinor: points ? null : sum(lines.map(line => line.dueMinor!)), grossPoints: points ? sum(lines.map(line => line.grossPoints!)) : null,
     discountPoints: points ? sum(lines.map(line => line.discountPoints!)) : null, duePoints, ownPointBalance, methodAvailable,
     ...(!methodAvailable ? { reason: "insufficient_points" as const } : {}), couponCount: selected.length, lines };
-  return { ...quote, quoteHash: digest(["cart-display-not-commit-v1", identity.principalKey, quote]) };
+  return { quote: { ...quote, quoteHash: digest(["cart-display-not-commit-v1", identity.principalKey, quote]) }, couponChoices };
 }
+
+export async function quoteCheckoutCartSnapshot(raw: unknown, identity: Identity, principal: CheckoutPrincipal): Promise<CheckoutCartQuote> {
+  return (await reviewCheckoutCartSnapshot(raw, identity, principal)).quote;
+}
+/** Same statement snapshot and per-line rules as the financial review. Only
+ * own safe display choices, never raw claims/codes or a separate wallet read.
+ * Choices are NOT added to the financial confirmation fingerprint. */
+export const reviewCheckoutCartPreviewSnapshot = reviewCheckoutCartSnapshot;
 
 export type CheckoutCartQuoteRpc = (name: "faolla_member_checkout_cart_quote_snapshot_v1", args: Record<string, unknown>, signal: AbortSignal) => Promise<{ data: unknown; error: unknown }>;
 
