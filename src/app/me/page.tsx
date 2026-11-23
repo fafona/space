@@ -3786,6 +3786,7 @@ export default function MePage() {
       const busyKey = `order:${order.id}:cancel`;
       setPersonalActionBusyKey(busyKey);
       setPersonalOrderLoadError("");
+      let checkoutFailure = "";
       try {
         const response = await fetch("/api/orders", {
           method: "PATCH",
@@ -3798,12 +3799,16 @@ export default function MePage() {
           | null;
         const nextOrder = nextPayload?.order;
         if (!response.ok || nextPayload?.ok !== true || !nextOrder) {
+          // The new ledger supplies bounded, sanitized original/refund/unknown
+          // messages. Do not turn those into an invitation to retry a debit.
+          if (typeof nextPayload?.error === "string" && nextPayload.error.startsWith("checkout_")
+            && typeof nextPayload.message === "string" && nextPayload.message.length <= 600) checkoutFailure = nextPayload.message;
           throw new Error(readPayloadMessage(nextPayload?.message || nextPayload?.error, "cancel_order_failed"));
         }
         setPersonalOrders((current) => current.map((record) => (record.id === nextOrder.id ? nextOrder : record)));
         refreshPersonalConsumption();
       } catch {
-        setPersonalOrderLoadError("取消订单失败，请稍后重试。");
+        setPersonalOrderLoadError(checkoutFailure || "取消订单失败，请稍后重试。");
       } finally {
         setPersonalActionBusyKey((current) => (current === busyKey ? "" : current));
       }

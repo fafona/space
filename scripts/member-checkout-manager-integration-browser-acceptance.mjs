@@ -46,10 +46,17 @@ async function mount(browser,target,{width=1280,locale='zh-CN',enabled=true,cart
  let cartOrder=synthetic?{...synthetic.prepared.plan.record,id:order.id,siteId:site}:null;
  let cartResult=synthetic?{...synthetic.result,siteId:site,resourceId:order.id,resource:{status:'pending',updatedAt:cartOrder.updatedAt}}:null;
  const writes=[],ownerActor={type:'owner',siteId:site,authUserId:'synthetic-owner',principalKey:'owner:synthetic-owner',authorizationVersion:'owner',authorizationSource:'database',businessPermissions:[],collaborationPermissions:[],displayName:'Synthetic',email:'owner@synthetic.invalid'};
- const boundaryDeps={enabled:()=>true,cartEnabled:()=>true,actor:async()=>ownerActor,cartSite:async()=>({...synthetic.f.site,id:site}),rpc:()=>async(name,args)=>{
-  if(name==='faolla_checkout_cart_resource_link_v1')return{data:{siteId:site,kind:'order',id:order.id,operationKey:cartResult.operationKey,record:cartOrder,cart:cartResult,refundRequired:false},error:null};
-  assert.equal(name,'faolla_checkout_cart_merchant_cancel_v1');assert.equal(args.p_actor_key,ownerActor.principalKey);assert.equal(Object.hasOwn(args,'p_principal_key'),false);writes.push(args);
+ const personalSession=synthetic?{...synthetic.f.principal,user:{email_confirmed_at:stamp},servicePaused:false}:null;
+ const boundaryDeps={enabled:()=>true,cartEnabled:()=>true,cartPersonalEnabled:()=>true,session:async()=>personalSession,actor:async()=>ownerActor,cartSite:async()=>({...synthetic.f.site,id:site}),rpc:()=>async(name,args)=>{
+  if(name==='faolla_checkout_cart_resource_link_v1'||name==='faolla_checkout_cart_personal_resource_link_v1'){
+   if(name.includes('personal'))assert.equal(args.p_principal_key,`account:${personalSession.accountId}:${personalSession.userId}`);
+   return{data:{siteId:site,kind:'order',id:order.id,operationKey:cartResult.operationKey,record:cartOrder,cart:cartResult,refundRequired:mode==='paid'},error:null};
+  }
+  assert.equal(name,target==='service'?'faolla_member_checkout_cart_cancel_v1':'faolla_checkout_cart_merchant_cancel_v1');
+  if(target==='service'){assert.equal(args.p_principal_key,`account:${personalSession.accountId}:${personalSession.userId}`);assert.equal(Object.hasOwn(args,'p_actor_key'),false);}
+  else{assert.equal(args.p_actor_key,ownerActor.principalKey);assert.equal(Object.hasOwn(args,'p_principal_key'),false);}writes.push(args);
   cartOrder={...cartOrder,status:'cancelled'};cartResult={...cartResult,closed:true,cancellationAvailable:false,resource:{...cartResult.resource,status:'cancelled'},cancellation:{pointsReturned:cartResult.totalPoints??0,couponsReturned:0,stockReleased:2,cancelledAt:stamp}};
+  if(mode==='lost')throw Error('synthetic lost cancellation response');
   return{data:{replayed:false,result:cartResult},error:null};
  }};
  page.on('pageerror',e=>errors.push(e.message));page.setDefaultTimeout(12000);await page.clock.setFixedTime(new Date(stamp));
@@ -70,8 +77,9 @@ async function mount(browser,target,{width=1280,locale='zh-CN',enabled=true,cart
   }
   if(u.pathname==='/api/orders'||u.pathname==='/api/bookings'){
    if(cart&&q.method()==='PATCH'){
-    const body=q.postDataJSON();assert.equal(body.siteId,site);assert.equal(body.orderId,order.id);assert.equal(body.status,'cancelled');
+    const body=q.postDataJSON();assert.equal(body.siteId,site);assert.equal(body.orderId,order.id);assert.equal(target==='service'?body.action:body.status,target==='service'?'cancel':'cancelled');
     const response=await ordersRoute.handleMerchantOrderPatch(new Request(q.url(),{method:'PATCH',headers:{origin,'content-type':'application/json'},body:q.postData()}),{
+     resolvePersonalSession:async()=>personalSession,cancelPersonalOrder:async()=>{throw Error('personal cart must not reach raw legacy writer');},
      resolveAdminSession:async()=>({merchantId:site,actor:ownerActor,assertAuthorizationCurrent:async()=>{}}),isManagementEnabled:async()=>true,
      checkoutBridge:input=>checkoutBoundary.bridgeLegacyCheckoutMutation(input,boundaryDeps),updateOrder:async()=>{throw Error('cart cancellation must not reach raw legacy writer');}
     });return route.fulfill({status:response.status,json:await response.json()});
@@ -99,6 +107,20 @@ test('actual desktop/mobile order cancel button reaches actual merchant PATCH ca
    await m.page.screenshot({path:path.join(evidence,`cancelled-${width}-${locale}.png`),fullPage:true});
   }catch(error){await m.page.screenshot({path:path.join(evidence,`failure-${width}-${locale}.png`),fullPage:true});throw error;}finally{await m.context.close();}
  });console.log(`CART_OWNER_MANAGEMENT_BROWSER_EVIDENCE=${evidence}`);}finally{await browser.close();}
+});
+test('actual service-center personal cancel reaches the original cart boundary and preserves refund/unknown guidance',{timeout:120000},async t=>{
+ const evidence=path.resolve('output',`cart-personal-boundary-browser-${Date.now()}`);await fs.mkdir(evidence,{recursive:true});const browser=await chromium.launch({headless:true});
+ try{for(const width of [390,1280])for(const mode of ['ok','paid','lost'])await t.test(`${width} ${mode}`,async()=>{
+  const m=await mount(browser,'service',{width,cart:true});try{
+   await m.page.getByRole('button',{name:'取消订单',exact:true}).waitFor();m.setMode(mode);
+   await m.page.getByRole('button',{name:'取消订单',exact:true}).click();
+   if(mode==='ok'){await m.page.locator('[data-service-orders] article').getByText('已取消',{exact:true}).waitFor();assert.equal(m.writes.length,1);}
+   else if(mode==='paid'){await m.page.getByRole('alert').filter({hasText:'退款'}).waitFor();assert.equal(m.writes.length,0);}
+   else{await m.page.getByRole('alert').filter({hasText:'尚未确认'}).waitFor();assert.equal(m.writes.length,1);m.setMode('ok');await m.page.getByRole('button',{name:'刷新记录',exact:true}).click();await m.page.locator('[data-service-orders] article').getByText('已取消',{exact:true}).waitFor();assert.equal(m.writes.length,1);}
+   assert.ok(await m.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));assert.deepEqual(m.errors,[]);assert.deepEqual(m.unexpected,[]);
+   await m.page.screenshot({path:path.join(evidence,`personal-${width}-${mode}.png`),fullPage:true});
+  }catch(error){await m.page.screenshot({path:path.join(evidence,`failure-${width}-${mode}.png`),fullPage:true});throw error;}finally{await m.context.close();}
+ });console.log(`CART_PERSONAL_BOUNDARY_BROWSER_EVIDENCE=${evidence}`);}finally{await browser.close();}
 });
 test('actual four manager views discover the default-off owner gate and read only explicitly expanded current records',{timeout:120000},async()=>{
  const browser=await chromium.launch({headless:true});try{

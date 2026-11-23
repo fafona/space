@@ -14,8 +14,9 @@ import { isMemberCheckoutOnSitePilotEnabled } from "./merchantCheckoutOnSitePilo
 import { parseCheckoutOriginalResult } from "./merchantCheckoutOriginalResult";
 import { parseOnSiteCancellation, type OnSiteCheckoutResult } from "./merchantCheckoutOnSiteResult";
 import { cancelOnSiteCheckout } from "./merchantCheckoutOnSiteResult.server";
-import { isMemberCheckoutCartManagementEnabled } from "./merchantCheckoutCartPilot.server";
+import { isMemberCheckoutCartManagementEnabled, isMemberCheckoutCartPilotEnabled } from "./merchantCheckoutCartPilot.server";
 import { bridgeCartCheckoutManagement } from "./merchantCheckoutCartManagement.server";
+import { bridgeCartCheckoutPersonalCancellation } from "./merchantCheckoutCartPersonalBoundary.server";
 import { checkoutOwnerDependencies } from "./merchantCheckoutOwnerAccess.server";
 import { MerchantCheckoutError } from "./merchantCheckoutQuote.server";
 
@@ -53,7 +54,7 @@ function anyEnabled() {
 function anyCashEnabled() { return (process.env.MERCHANT_MEMBER_CHECKOUT_PILOT_SITES ?? "").split(",").some(siteId => isMemberCheckoutOnSitePilotEnabled(siteId.trim())); }
 const defaults = { enabled: isMemberCheckoutPilotEnabled, anyEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, anyCashEnabled,
   session: resolvePersonalAccountSessionFromRequest, actor: resolveMerchantBusinessActor, rpc };
-export type CheckoutLegacyBoundaryDependencies = typeof defaults & { cartEnabled?: (siteId: string) => boolean; cartSite?: typeof checkoutOwnerDependencies.site };
+export type CheckoutLegacyBoundaryDependencies = typeof defaults & { cartEnabled?: (siteId: string) => boolean; cartPersonalEnabled?: (siteId: string) => boolean; cartSite?: typeof checkoutOwnerDependencies.site };
 type Link = { siteId: string; kind: "booking" | "order"; id: string; operationKey: string; record: Record<string, unknown> }
   & ({ method: "points"; result: MemberCheckoutResult } | { method: "on_site"; result: OnSiteCheckoutResult });
 async function call(callRpc: MemberCheckoutResultRpc, name: string, args: Record<string, unknown>, writing = false) {
@@ -157,6 +158,13 @@ export async function bridgeLegacyCheckoutMutation(input: BoundaryInput, overrid
   // impose the new grammar on an unlinked legacy record or history batch.
   const eligibleIds = scope.ids.filter(id);
   if (!eligibleIds.length) return null;
+  const cartPersonalEnabled = deps.cartPersonalEnabled ?? (siteId => isMemberCheckoutCartPilotEnabled(siteId, "points"));
+  if (scope.mode === "personal" && scope.kind === "order" && scope.siteId && cartPersonalEnabled(scope.siteId)) {
+    try { const cart = await bridgeCartCheckoutPersonalCancellation(scope, { enabled: siteId => deps.enabled(siteId) && cartPersonalEnabled(siteId), session: deps.session,
+      call: (name, args, signal) => deps.rpc(signal)(name, args) });
+      if (cart) return cart;
+    } catch (error) { if (error instanceof MerchantCheckoutError) throw new CheckoutLegacyBoundaryError(error.code, error.status); throw error; }
+  }
   const cartEnabled = deps.cartEnabled ?? isMemberCheckoutCartManagementEnabled;
   if (scope.mode === "merchant" && scope.kind === "order" && scope.siteId && cartEnabled(scope.siteId)) {
     try { const cart = await bridgeCartCheckoutManagement(scope, { enabled: siteId => deps.enabled(siteId) && cartEnabled(siteId), actor: deps.actor,

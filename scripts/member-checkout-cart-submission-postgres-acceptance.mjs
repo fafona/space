@@ -10,6 +10,7 @@ import reporting from '../src/lib/merchantCheckoutReporting.server.ts';import re
 import {pendingIntentAcceptance} from './fixtures/member-checkout-pending-intent-acceptance.mjs';
 import {cartManagementAcceptance} from './fixtures/member-checkout-cart-management-acceptance.mjs';
 import {cartCollectionAcceptance} from './fixtures/member-checkout-cart-collection-acceptance.mjs';
+import {cartPersonalBoundaryAcceptance} from './fixtures/member-checkout-cart-personal-boundary-acceptance.mjs';
 
 test('whole product cart commit/recover/cancel uses original PostgreSQL writers atomically',{timeout:120000},async t=>{
  const runtime=path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR||'.missing-test-runtime'),relative=path.relative(tmpdir(),runtime);
@@ -311,6 +312,8 @@ test('whole product cart commit/recover/cancel uses original PostgreSQL writers 
   await cartManagementAcceptance({t,admin,a,b,site,one,seed,submit,cancel,all,temporary,definitions,beforeDefinitions,
    sql:()=>readFile(path.resolve('database/proposals/20261123_member_checkout_cart_management.sql'),'utf8')});
   await cartCollectionAcceptance({t,admin,a,b,site,one,seed,submit,cancel,all,temporary,definitions,beforeDefinitions});
+  await cartPersonalBoundaryAcceptance({t,admin,a,b,site,one,seed,submit,all,temporary,definitions,beforeDefinitions,
+   sql:()=>readFile(path.resolve('database/proposals/20261123_member_checkout_cart_personal_boundary.sql'),'utf8')});
   await pendingIntentAcceptance({t,admin,a,b,site,one,seed,prepare,commit,cancel,all,temporary,connect,definitions,beforeDefinitions,
    sql:async()=> (await Promise.all(['database/proposals/20261123_member_checkout_pending_intents.sql','database/proposals/20261123_member_checkout_intent_review.sql'].map(file=>readFile(path.resolve(file),'utf8')))).join('\n')});
   console.log(`CART_SUBMISSION_EVIDENCE=${evidence}`);
