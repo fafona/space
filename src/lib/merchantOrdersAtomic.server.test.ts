@@ -50,6 +50,23 @@ test("single completion sends order and prepared points in one commit after reau
   assert.equal(h.saved[0].memberships, h.mutation);
   assert.equal(h.saved[0].orders[0].status, "completed");
 });
+test("new checkout-only completion never prepares/saves or mirrors legacy member points", async () => {
+  const h = harness(); h.dependencies.pointTransitions = async () => [];
+  const result = await updateMerchantOrderBySite({ siteId: "10000000", orderId: "order-1", status: "completed" }, h.dependencies);
+  assert.equal(result.status, "completed"); assert.equal(h.saved.length, 1); assert.equal(h.saved[0].memberships, undefined);
+  assert.deepEqual(h.events, ["read", "commit", "order-shadow"]);
+});
+test("mixed completion prepares only unchanged legacy transitions; a failed classification cannot write", async () => {
+  const h = harness([fixture("pending", "new-order"), fixture("pending", "old-order")]);
+  h.dependencies.pointTransitions = async transitions => transitions.filter(t => t.next.id === "old-order");
+  let prepared: string[] = [];
+  h.dependencies.prepareMemberships = async transitions => { prepared = transitions.map(t => t.next.id); return null; };
+  await updateMerchantOrdersBatchBySite({ siteId: "10000000", orderIds: ["new-order", "old-order"], status: "completed" }, h.dependencies);
+  assert.deepEqual(prepared, ["old-order"]);
+  const failed = harness(); failed.dependencies.pointTransitions = async () => { throw new Error("checkout_unavailable"); };
+  await assert.rejects(updateMerchantOrderBySite({ siteId: "10000000", orderId: "order-1", status: "completed" }, failed.dependencies), /checkout_unavailable/);
+  assert.deepEqual(failed.events, ["read"]);
+});
 
 test("failed or ambiguous order commit does not issue inverse point compensation or shadow writes", async () => {
   for (const error of ["order_update_conflict", "merchant_memberships_conflict", "merchant_transaction_unavailable"]) {

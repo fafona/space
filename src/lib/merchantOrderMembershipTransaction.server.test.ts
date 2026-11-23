@@ -35,6 +35,16 @@ for (const message of ["order_update_conflict", "merchant_memberships_conflict"]
   });
 }
 
+for (const message of ["checkout_resource_locked", "checkout_change_requires_review", "checkout_original_cancellation_required"]) {
+  test(`linked checkout guard ${message} reaches the caller without retry or raw SQL`, async () => {
+    let calls = 0;
+    assert.equal((await commitMerchantOrderMembershipTransaction({ rpc: async () => {
+      calls++; return { error: { message, details: "PRIVATE original receipt and SQL" } };
+    } }, "10000000", mutation)).error, message);
+    assert.equal(calls, 1);
+  });
+}
+
 test("transport and SQL details are sanitized without retry or compensation", async () => {
   for (const throws of [false, true]) {
     let count = 0;

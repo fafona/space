@@ -54,6 +54,7 @@ import {
   quotePublishedProductOrder,
 } from "@/lib/merchantOrderCatalog";
 import { loadMerchantCatalog } from "@/lib/merchantCatalogStore";
+import { bridgeLegacyCheckoutMutation, checkoutLegacyErrorDetails } from "@/lib/merchantCheckoutLegacyBoundary.server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -102,6 +103,7 @@ export type MerchantOrderPatchRouteDependencies = {
   cancelPersonalOrder: typeof cancelPersonalMerchantOrder;
   updateOrder: typeof updateMerchantOrderBySite;
   updateOrdersBatch: typeof updateMerchantOrdersBatchBySite;
+  checkoutBridge?: typeof bridgeLegacyCheckoutMutation;
 };
 
 async function resolveOrderAdminSession(
@@ -184,6 +186,7 @@ const DEFAULT_PATCH_DEPENDENCIES: MerchantOrderPatchRouteDependencies = {
   cancelPersonalOrder: cancelPersonalMerchantOrder,
   updateOrder: updateMerchantOrderBySite,
   updateOrdersBatch: updateMerchantOrdersBatchBySite,
+  checkoutBridge: bridgeLegacyCheckoutMutation,
 };
 
 function trimText(value: unknown) {
@@ -640,6 +643,9 @@ export async function handleMerchantOrderPatch(
       }
       const session = await dependencies.resolvePersonalSession(request);
       if (!session) return privateOrderJson({ error: "unauthorized" }, 401);
+      const checkout = await (dependencies.checkoutBridge ?? bridgeLegacyCheckoutMutation)({ request, mode: "personal", siteId, kind: "order",
+        ids: [String(body?.orderId ?? "").trim()], action: "cancel", ...(hasExpectedUpdatedAt ? { expectedUpdatedAt: body?.expectedUpdatedAt } : {}) });
+      if (checkout) return privateOrderJson({ ok: true, order: checkout.record });
       const order = await dependencies.cancelPersonalOrder({
         siteId,
         orderId: String(body?.orderId ?? "").trim(),
@@ -683,10 +689,15 @@ export async function handleMerchantOrderPatch(
     const action = normalizeOrderAction(body?.action);
     const status = normalizeOrderStatus(body?.status);
     const orderIds = Array.isArray(body?.orderIds) ? body.orderIds.map((item) => String(item ?? "").trim()).filter(Boolean) : [];
+    if (orderIds.length > 0 && (items || hasExpectedUpdatedAt || (!status && !action) || action === "print" || action === "touch")) {
+      return privateOrderJson({ error: "invalid_order_action" }, 400);
+    }
+    const checkout = await (dependencies.checkoutBridge ?? bridgeLegacyCheckoutMutation)({ request, mode: "merchant", siteId, kind: "order",
+      ids: orderIds.length ? orderIds : [String(body?.orderId ?? "").trim()], batch: orderIds.length > 0, action: action ?? undefined, status: status ?? undefined,
+      items: items ?? undefined, ...(hasExpectedUpdatedAt ? { expectedUpdatedAt: body?.expectedUpdatedAt } : {}),
+      actor: session.actor, assertAuthorizationCurrent: session.assertAuthorizationCurrent });
+    if (checkout) return privateOrderJson({ ok: true, order: session.actor ? redactMerchantOrderForBusinessActor(checkout.record as MerchantOrderRecord, session.actor) : checkout.record });
     if (orderIds.length > 0) {
-      if (items || hasExpectedUpdatedAt || (!status && !action) || action === "print" || action === "touch") {
-        return privateOrderJson({ error: "invalid_order_action" }, 400);
-      }
       const orders = await dependencies.updateOrdersBatch({
         siteId,
         orderIds,
@@ -722,6 +733,8 @@ export async function handleMerchantOrderPatch(
         : order,
     });
   } catch (error) {
+    const checkoutError = checkoutLegacyErrorDetails(error);
+    if (checkoutError) return privateOrderJson({ error: checkoutError.error, message: checkoutError.message }, checkoutError.status);
     if (error instanceof MerchantBusinessAccessError) {
       return privateOrderJson({ error: error.code }, error.status);
     }

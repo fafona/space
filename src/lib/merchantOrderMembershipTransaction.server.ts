@@ -30,6 +30,9 @@ const SAFE_ERROR_CODES = new Set([
   "order_update_conflict",
   "merchant_memberships_conflict",
   "invalid_site_id",
+  "checkout_resource_locked",
+  "checkout_change_requires_review",
+  "checkout_original_cancellation_required",
 ]);
 
 function transactionError(error: unknown) {

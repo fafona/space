@@ -44,6 +44,8 @@ import type {
   MerchantBookingStatus,
 } from "@/lib/merchantBookings";
 import type { MerchantBookingRuleViewport } from "@/lib/merchantBookingRules";
+import { bridgeLegacyCheckoutMutation, checkoutLegacyErrorDetails } from "@/lib/merchantCheckoutLegacyBoundary.server";
+import type { MerchantBookingRecord } from "@/lib/merchantBookings";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -322,6 +324,8 @@ export async function PATCH(request: Request) {
       }
       const session = await resolvePersonalAccountSessionFromRequest(request);
       if (!session) return privateJson({ error: "unauthorized" }, { status: 401 });
+      const checkout = await bridgeLegacyCheckoutMutation({ request, mode: "personal", kind: "booking", ids: [String(body?.bookingId ?? "").trim()], action: body.action, updates: body.updates });
+      if (checkout) return privateJson({ ok: true, booking: checkout.record });
       const booking = await updatePersonalMerchantBooking({
         bookingId: String(body?.bookingId ?? "").trim(),
         action: body.action,
@@ -398,6 +402,12 @@ export async function PATCH(request: Request) {
           ),
         });
       }
+      const checkout = await bridgeLegacyCheckoutMutation({ request, mode: "merchant", siteId: maybeSiteId, kind: "booking",
+        ids: Array.isArray(body?.bookingIds) && maybeStatus ? body.bookingIds.map(item => String(item ?? "").trim()) : [String(body?.bookingId ?? "").trim()],
+        batch: Array.isArray(body?.bookingIds) && Boolean(maybeStatus),
+        status: maybeStatus ?? undefined, updates: body?.updates, bookingBlockId: body?.bookingBlockId, bookingViewport: body?.bookingViewport,
+        actor: session.actor, assertAuthorizationCurrent: session.assertAuthorizationCurrent });
+      if (checkout) return privateJson({ ok: true, booking: redactMerchantBookingForBusinessActor(checkout.record as MerchantBookingRecord, session.actor) });
       if (Array.isArray(body?.bookingIds) && maybeStatus) {
         const bookings = await updateMerchantBookingsBatchBySite({
           siteId: maybeSiteId,
@@ -472,6 +482,8 @@ export async function PATCH(request: Request) {
     });
     return privateJson({ ok: true, booking });
   } catch (error) {
+    const checkoutError = checkoutLegacyErrorDetails(error);
+    if (checkoutError) return privateJson({ error: checkoutError.error, message: checkoutError.message }, { status: checkoutError.status });
     if (error instanceof MerchantBusinessAccessError) {
       return privateJson({ error: error.code }, { status: error.status });
     }

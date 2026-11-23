@@ -12,6 +12,19 @@ const identity = {
 const snapshot = { replayed: false, generation: "test-generation", revision: "0", rows: [] };
 const plan: BookingAtomicPlan = { next: { version: 1, records: [] }, result: { bookingId: "one" }, mailJobs: [] };
 
+test("new checkout final-state refusals remain explicit and never trigger the legacy CAS retry", async () => {
+  for (const code of ["checkout_resource_locked", "checkout_change_requires_review", "checkout_original_cancellation_required"]) {
+    let reads = 0, writes = 0, plans = 0;
+    await assert.rejects(executeAtomicBookingCommand({ identity, authorize: async () => {},
+      rpc: async name => {
+        if (name.includes("snapshot")) { reads++; return { data: snapshot, error: null }; }
+        writes++; return { data: null, error: { message: code } };
+      }, plan: async () => { plans++; return plan; },
+    }), error => error instanceof Error && error.message === code);
+    assert.equal(reads, 1); assert.equal(writes, 1); assert.equal(plans, 1);
+  }
+});
+
 test("command identity is stable across JSON key order but bound to site, principal, nonce and input", () => {
   const first = bookingAtomicCommandIdentity(identity);
   const reordered = bookingAtomicCommandIdentity({ ...identity, semanticInput: { time: "2030-01-01T12:00", operation: "create" } });

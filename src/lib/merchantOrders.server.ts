@@ -15,13 +15,13 @@ import {
   type MerchantOrderStatus,
 } from "@/lib/merchantOrders";
 import { prepareMerchantMembershipPointsForOrderTransitions } from "@/lib/merchantMemberships.server";
+import { legacyCheckoutPointTransitions, saveCheckoutAwareMerchantOrders as saveStoredMerchantOrders } from "@/lib/merchantCheckoutLegacyBoundary.server";
 import { mirrorSavedMemberships } from "@/lib/merchantMembershipsStore";
 import {
   listStoredMerchantOrdersByCustomer,
   loadStoredMerchantOrder,
   loadStoredMerchantOrders,
   loadStoredMerchantOrdersWindow,
-  saveStoredMerchantOrders,
 } from "@/lib/merchantOrdersStore";
 import { mirrorMerchantOrderTransitions } from "@/lib/merchantOrderDualWrite.server";
 import {
@@ -319,6 +319,7 @@ export type MerchantOrderUpdateDependencies = {
   saveOrders: typeof saveStoredMerchantOrders;
   mirrorOrders: typeof mirrorMerchantOrderTransitions;
   mirrorMemberships: typeof mirrorSavedMemberships;
+  pointTransitions?: typeof legacyCheckoutPointTransitions;
 };
 
 const ORDER_UPDATE_DEPENDENCIES: MerchantOrderUpdateDependencies = {
@@ -328,6 +329,7 @@ const ORDER_UPDATE_DEPENDENCIES: MerchantOrderUpdateDependencies = {
   saveOrders: saveStoredMerchantOrders,
   mirrorOrders: mirrorMerchantOrderTransitions,
   mirrorMemberships: mirrorSavedMemberships,
+  pointTransitions: legacyCheckoutPointTransitions,
 };
 
 export async function updateMerchantOrderBySite(input: {
@@ -365,7 +367,8 @@ export async function updateMerchantOrderBySite(input: {
     ) {
       throw new Error("permission_denied");
     }
-    const memberships = await dependencies.prepareMemberships([{ previous: current, next }]);
+    const pointTransitions = await (dependencies.pointTransitions ?? legacyCheckoutPointTransitions)([{ previous: current, next }]);
+    const memberships = pointTransitions.length ? await dependencies.prepareMemberships(pointTransitions) : null;
     const updatedOrders = [...orders];
     updatedOrders[orderIndex] = next;
     await input.assertAuthorizationCurrent?.();
@@ -443,7 +446,8 @@ export async function updateMerchantOrdersBatchBySite(input: {
     ) {
       throw new Error("permission_denied");
     }
-    const memberships = await dependencies.prepareMemberships(transitions);
+    const pointTransitions = await (dependencies.pointTransitions ?? legacyCheckoutPointTransitions)(transitions);
+    const memberships = pointTransitions.length ? await dependencies.prepareMemberships(pointTransitions) : null;
     await input.assertAuthorizationCurrent?.();
     const saved = await dependencies.saveOrders(supabase, {
       siteId,

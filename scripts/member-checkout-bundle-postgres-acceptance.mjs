@@ -28,6 +28,10 @@ import checkoutClient from '../src/lib/merchantCheckoutClient.ts';
 import reportingStore from '../src/lib/merchantCheckoutReporting.server.ts';
 import reporting from '../src/lib/merchantCheckoutReporting.ts';
 import reportingRoute from '../src/app/api/merchant-checkout/settlements/route-handler.ts';
+import legacyBoundary from '../src/lib/merchantCheckoutLegacyBoundary.server.ts';
+import legacyOrderRoute from '../src/app/api/orders/route-handler.ts';
+import legacyOrders from '../src/lib/merchantOrders.server.ts';
+import orderRecords from '../src/lib/merchantOrders.ts';
 import checkoutSources from '../src/lib/merchantCheckoutSources.server.ts';
 import bookingRules from '../src/lib/merchantBookingRules.ts';
 import workbench from '../src/lib/merchantBookingWorkbench.ts';
@@ -664,6 +668,113 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
     await assert.rejects(admin.query('select public.faolla_member_checkout_reporting_v1($1,$2)',[site,JSON.stringify(resources)]),/checkout_reporting_invalid/);
    }assert.deepEqual(await all(),before);
   });
+  // Install the NEW proposal only in this owned test cluster, after the old
+  // diagnostic cases have established why the additional boundary is needed.
+  await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_legacy_boundary.sql'),'utf8'));
+  const oldBookingWrite=async next=>{const state=await one(admin,'select generation,revision::text from faolla_booking_atomic_control where singleton');
+   const rows=(await one(admin,'select public.faolla_booking_atomic_rows_v1() as rows')).rows;
+   return admin.query('select public.faolla_booking_atomic_commit_v1($1,$2,$3,$4)',[site,op(),op(),{...state,rows,next,result:{syntheticGuard:true},mailJobs:[]}]);};
+  const oldOrderWrite=async edit=>{const rows=(await one(admin,`select coalesce(jsonb_agg(jsonb_build_object('id',id,'slug',slug,'blocks',blocks,'updated_at',updated_at) order by slug,id),'[]'::jsonb) as rows
+    from pages where merchant_id=$1 and (slug=$2 or slug~$3)`,[site,`__merchant_orders__:${site}`,`^__merchant_orders__:${site}:chunk:[0-9]+$`])).rows;
+   const records=structuredClone(rows.filter(r=>r.slug.includes(':chunk:')||!rows.some(c=>c.slug.includes(':chunk:'))).flatMap(r=>r.blocks));edit(records);
+   return admin.query('select public.faolla_commit_order_membership_v1($1,$2)',[site,{orders:{expectedRows:rows,next:records}}]);};
+  const boundaryRpc=client=>async(name,args)=>{try{
+   const params=name==='faolla_checkout_resource_link_v1'?[args.p_site_id,args.p_kind,args.p_id,args.p_principal_key]:
+    name==='faolla_checkout_merchant_cancel_v1'?[args.p_site_id,args.p_operation_key,args.p_actor_key,args.p_expected_updated_at]:
+     name==='faolla_member_checkout_cancel_v2'?[args.p_site_id,args.p_operation_key,args.p_principal_key,args.p_expected_updated_at]:null;
+   assert.ok(params);const sql={faolla_checkout_resource_link_v1:'select public.faolla_checkout_resource_link_v1($1,$2,$3,$4) as result',
+    faolla_checkout_merchant_cancel_v1:'select public.faolla_checkout_merchant_cancel_v1($1,$2,$3,$4) as result',faolla_member_checkout_cancel_v2:'select public.faolla_member_checkout_cancel_v2($1,$2,$3,$4) as result'}[name];
+   return{data:(await one(client,sql,params)).result,error:null};
+  }catch(error){return{data:null,error:{message:error.message}};}};
+  const owner={type:'owner',siteId:site,authUserId:'synthetic-owner',principalKey:'owner:synthetic-owner',authorizationVersion:'owner',businessPermissions:[],collaborationPermissions:[]};
+  const boundaryDeps={enabled:()=>true,anyEnabled:()=>true,actor:async()=>owner,session:async()=>({accountId,userId,servicePaused:false,user:{id:userId,email_confirmed_at:at}}),rpc:()=>boundaryRpc(a)};
+  const boundaryInput=(kind,id)=>({request:new Request('https://synthetic.faolla.invalid/api/orders'),mode:'merchant',siteId:site,kind,ids:[id],action:'cancel',actor:owner});
+  await t.test('final-state booking boundary rejects old cancellation, reschedule and owner changes with complete rollback, while business confirmation stays operational',async()=>{
+   const f=await configure({withCoupon:false,withStock:false});await commit(a,f.key,f.plan);
+   for(const mode of ['cancel','time','item','identity','zone']){
+    const before=await all(),next=structuredClone(before.pages.find(r=>r.slug===bookingSlug).blocks),r=next.records.find(r=>r.id===f.plan.booking.record.id);
+    if(mode==='cancel')r.status='cancelled';if(mode==='time')r.appointmentAt='2031-01-01T12:00';if(mode==='item')r.item='Other';if(mode==='identity')r.customerAccountId='50010106';if(mode==='zone')r.appointmentTimeZone='UTC';
+    await assert.rejects(oldBookingWrite(next),/checkout_original_cancellation_required|checkout_change_requires_review|checkout_resource_locked/);assert.deepEqual(await all(),before);
+   }
+   const next=structuredClone((await one(admin,'select blocks from pages where slug=$1',[bookingSlug])).blocks);next.records.find(r=>r.id===f.plan.booking.record.id).status='confirmed';
+   const members=(await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks;await oldBookingWrite(next);
+   assert.deepEqual((await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks,members);
+   await admin.query('select public.faolla_checkout_merchant_cancel_v1($1,$2,$3,$4)',[site,f.key,owner.principalKey,f.plan.booking.record.updatedAt]);
+   const cancelled=await all(),restored=structuredClone(cancelled.pages.find(r=>r.slug===bookingSlug).blocks);restored.records.find(r=>r.id===f.plan.booking.record.id).status='active';
+   await assert.rejects(oldBookingWrite(restored),/checkout_original_cancellation_required/);assert.deepEqual(await all(),cancelled);
+  });
+  await t.test('new order final-state constraint protects prices, cancellation and identity through the ACTUAL old writer and direct API-role page writes',async()=>{
+   const f=await configure({kind:'order',withCoupon:false,withStock:false});await commit(a,f.key,f.plan);
+   for(const mode of ['cancel','price','identity']){
+    const before=await all();await assert.rejects(oldOrderWrite(rows=>{const r=rows.find(r=>r.id===f.plan.order.record.id);if(mode==='cancel')r.status='cancelled';if(mode==='price')r.totalAmount=100;if(mode==='identity')r.customerUserId='other-user';}),/checkout_original_cancellation_required|checkout_change_requires_review|checkout_resource_locked/);assert.deepEqual(await all(),before);
+   }
+   const direct=await connect('service_role'),row=(await admin.query('select * from pages where merchant_id=$1 and slug~$2',[site,`^__merchant_orders__:${site}:chunk:[0-9]+$`])).rows.find(row=>row.blocks.some(r=>r.id===f.plan.order.record.id));
+   const before=await all(),blocks=structuredClone(row.blocks);blocks.find(r=>r.id===f.plan.order.record.id).status='cancelled';
+   await assert.rejects(direct.query('update public.pages set blocks=$2 where id=$1',[row.id,JSON.stringify(blocks)]),/checkout_original_cancellation_required/);assert.deepEqual(await all(),before);
+   // An unrelated legacy record in the same page remains editable.
+   const legacy=structuredClone(row.blocks);legacy.push({id:`legacy-guard-${randomUUID()}`,siteId:site,status:'pending',items:[],totalQuantity:0,totalAmount:0});
+   await direct.query('update public.pages set blocks=$2 where id=$1',[row.id,JSON.stringify(legacy)]);
+   assert.equal((await one(admin,'select blocks from pages where id=$1',[row.id])).blocks.length,row.blocks.length+1);
+  });
+  await t.test('owner/customer cancellation race has one original refund and an honest immutable owner audit',async()=>{
+   const f=await configure({withCoupon:false,withStock:false});await commit(a,f.key,f.plan);
+   const results=await Promise.all([cancel(a,f),one(b,'select public.faolla_checkout_merchant_cancel_v1($1,$2,$3,$4) as result',[site,f.key,owner.principalKey,f.plan.booking.record.updatedAt]).then(r=>r.result)]);
+   assert.deepEqual(results.map(r=>r.replayed).sort(),[false,true]);assert.deepEqual(results[0].receipt,results[1].receipt);
+   assert.equal(results[0].receipt.pointsReturned,10);
+   const audits=(await admin.query('select actor_key from faolla_checkout_design.merchant_cancellation_actors where operation_key=$1',[f.key])).rows;
+   assert.equal(audits.length,results[1].replayed?0:1);if(audits.length)assert.equal(audits[0].actor_key,owner.principalKey);
+  });
+  await t.test('a deferred late resource failure rolls back the already prepared owner refund, coupon/stock facts, cancellation receipt AND audit',async()=>{
+   const f=await configure({withCoupon:false,withStock:false});await commit(a,f.key,f.plan);const before=await all();
+   await admin.query(`create function public.synthetic_late_checkout_change() returns trigger language plpgsql as $$begin
+    if new.slug='${bookingSlug}' and exists(select 1 from jsonb_array_elements(new.blocks->'records') r where r->>'id'='${f.plan.booking.record.id}' and r->>'status'='cancelled') then
+      new.blocks:=jsonb_set(new.blocks,'{records}',(select jsonb_agg(case when r->>'id'='${f.plan.booking.record.id}' then r||'{"item":"late tamper"}'::jsonb else r end order by n) from jsonb_array_elements(new.blocks->'records') with ordinality t(r,n)));
+    end if;return new;end;$$;create trigger synthetic_late_checkout_change before update on pages for each row execute function public.synthetic_late_checkout_change();`);
+   try{await assert.rejects(admin.query('select public.faolla_checkout_merchant_cancel_v1($1,$2,$3,$4)',[site,f.key,owner.principalKey,f.plan.booking.record.updatedAt]),/checkout_change_requires_review/);
+    assert.deepEqual(await all(),before);assert.equal((await one(admin,'select count(*)::int as n from faolla_checkout_design.merchant_cancellation_actors where operation_key=$1',[f.key])).n,0);
+   }finally{await admin.query('drop trigger synthetic_late_checkout_change on pages;drop function public.synthetic_late_checkout_change()');}
+  });
+  await t.test('trusted new submissions still commit with the guard, and actual old order HTTP cancellation reaches the original ledger once without legacy writes',async()=>{
+   for(const kind of ['booking','order']){
+    const f=await submissionFixture({kind}),submitted=await submit(f);assert.equal(submitted.result.totalPoints,80);
+    const input=boundaryInput(kind,submitted.result.resourceId);
+    let result;
+    if(kind==='booking')result=await legacyBoundary.bridgeLegacyCheckoutMutation(input,boundaryDeps);
+    else{
+     const beforeBusiness=await all(),memberBefore=beforeBusiness.pages.find(r=>r.slug===memberSlug).blocks;
+     let preparedMembers=0;
+     const orderRpc=async(name,args)=>{try{
+      if(name==='faolla_member_checkout_reporting_v1')return{data:(await one(a,'select public.faolla_member_checkout_reporting_v1($1,$2) as result',[args.p_site_id,JSON.stringify(args.p_resources)])).result,error:null};
+      assert.equal(name,'faolla_commit_order_membership_v1');return{data:(await one(a,'select public.faolla_commit_order_membership_v1($1,$2) as result',[args.p_site_id,args.p_mutation])).result,error:null};
+     }catch(error){return{data:null,error:{message:error.message}};}};
+     const completionDeps={createClient:()=>({rpc:orderRpc}),loadOrders:async()=>{
+      const rows=(await admin.query('select * from pages where merchant_id=$1 and (slug=$2 or slug~$3) order by slug,id',[site,`__merchant_orders__:${site}`,`^__merchant_orders__:${site}:chunk:[0-9]+$`])).rows;
+      const records=rows.filter(r=>r.slug.includes(':chunk:')||!rows.some(c=>c.slug.includes(':chunk:'))).flatMap(r=>r.blocks);
+      return{siteId:site,orders:orderRecords.normalizeMerchantOrderRecords(records),storageRows:rows.map(r=>({...r,updated_at:r.updated_at.toISOString()})),updatedAt:null};},
+      pointTransitions:ts=>legacyBoundary.legacyCheckoutPointTransitions(ts,{enabled:()=>true,rpc:()=>orderRpc}),
+      prepareMemberships:async()=>{preparedMembers++;throw new Error('new paid order must not use old points preparation');},
+      saveOrders:(client,input)=>legacyBoundary.saveCheckoutAwareMerchantOrders(client,input,{enabled:()=>true,rpc:()=>orderRpc}),
+      mirrorOrders:async()=>({status:'written',count:1}),mirrorMemberships:async()=>{throw new Error('no new legacy member write');}};
+     const completed=await legacyOrders.updateMerchantOrderBySite({siteId:site,orderId:submitted.result.resourceId,status:'completed',assertAuthorizationCurrent:async()=>{}},completionDeps);
+     assert.equal(completed.status,'completed');assert.equal(preparedMembers,0);assert.deepEqual((await one(admin,'select blocks from pages where slug=$1',[memberSlug])).blocks,memberBefore);
+     await legacyOrders.updateMerchantOrderBySite({siteId:site,orderId:submitted.result.resourceId,status:'confirmed',assertAuthorizationCurrent:async()=>{}},completionDeps);
+     let legacyWrites=0;const response=await legacyOrderRoute.handleMerchantOrderPatch(new Request('https://synthetic.faolla.invalid/api/orders',{method:'PATCH',headers:{origin:'https://synthetic.faolla.invalid','content-type':'application/json'},body:JSON.stringify({siteId:site,orderId:submitted.result.resourceId,action:'cancel'})}),
+      {resolveAdminSession:async()=>({merchantId:site,actor:owner,assertAuthorizationCurrent:async()=>{}}),isManagementEnabled:async()=>true,checkoutBridge:input=>legacyBoundary.bridgeLegacyCheckoutMutation(input,boundaryDeps),updateOrder:async()=>{legacyWrites++;throw new Error('old writer forbidden');}});
+     assert.equal(response.status,200);const payload=await response.json();assert.equal(payload.order.status,'cancelled');assert.equal(legacyWrites,0);result={record:payload.order};
+    }
+    assert.equal(result.record.status,'cancelled');assert.ok(!/editToken|PRIVATE|principalKey|membershipId/.test(JSON.stringify(result)));
+    const receipt=(await one(admin,'select receipt from faolla_checkout_design.bundle_cancellations where site_id=$1 and operation_key=$2',[site,submitted.result.operationKey])).receipt;
+    assert.equal(receipt.pointsReturned,80);assert.equal(receipt.couponsReturned,1);
+    assert.equal((await one(admin,'select actor_key from faolla_checkout_design.merchant_cancellation_actors where site_id=$1 and operation_key=$2',[site,submitted.result.operationKey])).actor_key,owner.principalKey);
+    const final=await all();await legacyBoundary.bridgeLegacyCheckoutMutation(input,boundaryDeps);assert.deepEqual(await all(),final);
+   }
+  });
+  await t.test('private legacy lookup rejects cross-customer and cannot be called as a generic unscoped booking index',async()=>{
+   const f=await configure({withCoupon:false,withStock:false});await commit(a,f.key,f.plan);const before=await all();
+   await assert.rejects(admin.query('select public.faolla_checkout_resource_link_v1($1,$2,$3,$4)',[site,'booking',f.plan.booking.record.id,'account:50010106:wrong-synthetic']),/checkout_not_found/);
+   await assert.rejects(admin.query('select public.faolla_checkout_resource_link_v1($1,$2,$3,$4)',[null,'booking',f.plan.booking.record.id,null]),/checkout_unauthorized/);
+   assert.deepEqual(await all(),before);
+  });
   await t.test('all browser/API roles are denied the private composition function and tables',async()=>{
    for(const role of ['anon','authenticated','service_role']){
     const client=await connect(role);
@@ -675,6 +786,9 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
     await assert.rejects(client.query('select public.faolla_member_checkout_result_v2($1,$2,$3)',[site,op(),principal]),/permission denied/);
     await assert.rejects(client.query('select public.faolla_member_checkout_cancel_v2($1,$2,$3,$4)',[site,op(),principal,at]),/permission denied/);
     await assert.rejects(client.query('select public.faolla_member_checkout_reporting_v1($1,$2)',[site,JSON.stringify([{kind:'booking',id:'test'}])]),/permission denied/);
+    await assert.rejects(client.query('select public.faolla_checkout_resource_link_v1($1,$2,$3,$4)',[site,'booking','test',principal]),/permission denied/);
+    await assert.rejects(client.query('select public.faolla_checkout_merchant_cancel_v1($1,$2,$3,$4)',[site,op(),owner.principalKey,at]),/permission denied/);
+    await assert.rejects(client.query('select * from faolla_checkout_design.merchant_cancellation_actors'),/permission denied/);
     await assert.rejects(client.query('select public.faolla_member_checkout_submission_snapshot_v2($1,$2,$3,$4,$5)',[site,op(),principal,op(),randomUUID()]),/permission denied/);
     await assert.rejects(client.query('select public.faolla_member_checkout_submission_commit_v2($1,$2,$3,$4,$5,$6,$7)',[site,op(),principal,op(),{},{},at]),/permission denied/);
    }
