@@ -21,7 +21,7 @@ const componentCode = compile("../app/site/[siteId]/SitePageClient.tsx");
 const pullCode = compile("../lib/usePullToRefresh.ts");
 type Element = { type: string; props: Record<string, unknown> };
 type Effect = { deps: unknown[]; cleanup?: () => void };
-type ComponentProps = { forcedSiteId: string; initialPublishedBlocks?: Block[]; initialIsMobileViewport?: boolean };
+type ComponentProps = { forcedSiteId: string; initialPublishedBlocks?: Block[]; initialIsMobileViewport?: boolean; memberCartCheckoutSiteId?: string };
 
 function fixture(label = "original", mobile = true): Block[] {
   const makeBlocks = (name: string) => [{
@@ -49,8 +49,8 @@ function freezeTree<T>(value: T): T {
   return value;
 }
 
-function harness(options: { initial?: Block[]; local?: Block[]; hydrated?: boolean; width?: number; search?: string } = {}) {
-  let props: ComponentProps = { forcedSiteId: "99990001", initialPublishedBlocks: options.initial, initialIsMobileViewport: (options.width ?? 400) <= 768 };
+function harness(options: { initial?: Block[]; local?: Block[]; hydrated?: boolean; width?: number; search?: string; memberCartCheckoutSiteId?: string } = {}) {
+  let props: ComponentProps = { forcedSiteId: "99990001", initialPublishedBlocks: options.initial, initialIsMobileViewport: (options.width ?? 400) <= 768, memberCartCheckoutSiteId: options.memberCartCheckoutSiteId };
   const slots: unknown[] = [];
   const effects = new Map<number, Effect>();
   const pendingEffects: Array<() => void> = [];
@@ -196,6 +196,13 @@ function harness(options: { initial?: Block[]; local?: Block[]; hydrated?: boole
 
 function blocksOf(h: ReturnType<typeof harness>) { return h.find("BlockRenderer").props.blocks as Block[]; }
 function titleOf(h: ReturnType<typeof harness>) { return (blocksOf(h)[0].props as { title: string }).title; }
+
+test("member cart UI hint is absent by default and bound only to the exact server-provided site", () => {
+  for (const siteId of [undefined, "99990002", "99990001"]) {
+    const h = harness({ initial: fixture(), memberCartCheckoutSiteId: siteId }); h.render();
+    assert.equal(h.find("BlockRenderer").props.memberCartCheckoutEnabled, siteId === "99990001"); h.unmount();
+  }
+});
 
 test("a top-level public merchant renders published content without the guest-shell auth wait", () => {
   const h = harness({ initial: fixture(), search: "?uiLocale=es-ES", width: 1280 });

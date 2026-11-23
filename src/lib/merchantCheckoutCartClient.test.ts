@@ -38,6 +38,20 @@ test("preview is read-only; whole cart dispatches once and persists only the com
     await c.startAnother(); assert.equal(c.getSnapshot().phase, "idle"); assert.equal(x.stored.size, 0);
   }
 });
+test("embedding cart acknowledgement runs under the common lock after reread, before nonce removal", async () => {
+  const x = await fixture(), c = x.create(); await c.activate(); await c.preview(x.f.request, x.customer); await c.submit();
+  let acks = 0; await c.startAnother(async original => { acks++; assert.equal(original.kind, "cart"); assert.ok(x.stored.has(x.key));
+    assert.ok(x.calls.at(-1)?.endsWith("recover")); assert.equal(await x.options.exclusive(x.key, async () => { throw new Error("must not run"); }), false); });
+  assert.equal(acks, 1); assert.equal(c.getSnapshot().pending, false); assert.equal(x.stored.size, 0);
+});
+test("failed/late draft acknowledgement cannot release original or permit a new financial submit", async () => {
+  for (const mode of ["failed", "late"] as const) {
+    const x = await fixture(), c = x.create(); await c.activate(); await c.preview(x.f.request, x.customer); await c.submit();
+    await c.startAnother(() => { if (mode === "late") c.deactivate(); else throw new Error("draft save denied"); });
+    assert.ok(x.stored.has(x.key)); if (mode === "failed") assert.equal(c.getSnapshot().pending, true);
+    await c.preview(x.f.request, x.customer); await c.submit(); assert.equal(x.calls.filter(p => p.endsWith("submit")).length, 1);
+  }
+});
 test("unknown submit stays blocked after reload and method switch; null does not release nonce", async () => {
   const x = await fixture(), c = x.create({ request: async (path, body, signal) => path.endsWith("submit") ? Promise.reject(new Error("lost")) : x.options.request(path, body, signal) });
   await c.activate(); await c.preview(x.f.request, x.customer); await c.submit(); assert.equal(c.getSnapshot().phase, "unconfirmed"); c.deactivate();

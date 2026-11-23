@@ -132,13 +132,17 @@ export function createCartCheckoutController(options: { siteId: string; accountI
       }); if (valid(run) && !locked) throw new CheckoutClientError("checkout_other_tab");
       } catch (error) { if (valid(run)) failed(error); } finally { if (valid(run)) busy = false; }
     },
-    async startAnother() {
+    async startAnother(beforeRelease?: (original: CartClientOriginal) => void | Promise<void>) {
       if (!active || busy || !nonce || state.phase !== "confirmed" || !state.original || state.original.kind === "cart" && state.original.result.reviewRequired) return;
       const ref = nonce, op = cartClientOriginalKey(state.original), run = epoch; busy = true;
       try { const locked = await exclusive(key, async () => {
         if (!valid(run)) return; await recover(run);
         if (!valid(run) || state.phase !== "confirmed" || !state.original || nonce !== ref || cartClientOriginalKey(state.original) !== op
           || state.original.kind === "cart" && state.original.result.reviewRequired) return;
+        // An embedding cart must durably preserve/consume its own draft BEFORE
+        // the shared nonce is released. A failed callback retains the original.
+        if (beforeRelease) await beforeRelease(structuredClone(state.original));
+        if (!valid(run) || read() !== ref) throw new CheckoutClientError("checkout_other_tab");
         write(null, ref); nonce = null; selection = null; person = null; publish(empty());
       }); if (valid(run) && !locked) throw new CheckoutClientError("checkout_other_tab");
       } catch (error) { if (valid(run)) failed(error); } finally { if (valid(run)) busy = false; }

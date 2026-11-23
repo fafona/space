@@ -61,8 +61,10 @@ import type { MerchantCatalogBrowsingRules } from "@/lib/merchantCatalog";
 import type { PublicCatalogState } from "@/lib/merchantPublicCatalog";
 import type { PersonalCustomerProfile } from "@/lib/personalCustomerProfile";
 import { MOBILE_SWIPE_BACK_EVENT } from "@/lib/mobileSwipeBack";
+import type { ProductCartCheckoutAdapter } from "../checkout/ProductCartCheckoutAdapter";
+import { persistProductCheckoutDraft, productCartAfterAcknowledgement } from "@/lib/merchantCheckoutProductCart";
 
-type ProductBlockProps = BackgroundEditableProps &
+export type ProductBlockProps = BackgroundEditableProps &
   TypographyEditableProps & {
     heading?: string;
     text?: string;
@@ -117,6 +119,7 @@ type ProductBlockProps = BackgroundEditableProps &
     runtimeCatalogOverride?: PublicCatalogState;
     runtimeUseOperatingCatalog?: boolean;
     runtimeOrderManagementEnabled?: boolean;
+    runtimeCheckoutAdapter?: ProductCartCheckoutAdapter;
     runtimeInteractiveOverlayWithinBlock?: boolean;
     runtimeDisableCartPortal?: boolean;
     runtimeOpenedView?: boolean;
@@ -1097,6 +1100,7 @@ export default function ProductBlock(props: ProductBlockProps) {
 
   useEffect(() => {
     if (!cartEnabled) {
+      if (props.runtimeCheckoutAdapter) return;
       setCartItems([]);
       setCartCustomer({});
       setCartCustomerDefaults({});
@@ -1111,7 +1115,7 @@ export default function ProductBlock(props: ProductBlockProps) {
     setCartCustomer(stored.customer ?? {});
     setCartClientRequestId(stored.clientRequestId ?? "");
     setLoadedCartStorageIdentity(cartStorageIdentity);
-  }, [cartEnabled, cartStorageIdentity, cartStorageKey, pricePrefix]);
+  }, [cartEnabled, cartStorageIdentity, cartStorageKey, pricePrefix, props.runtimeCheckoutAdapter]);
 
   useEffect(() => {
     if (overlayWithinBlock || disableCartPortal || typeof document === "undefined") {
@@ -1286,8 +1290,9 @@ export default function ProductBlock(props: ProductBlockProps) {
 
   useEffect(() => {
     if (!cartEnabled) return;
+    if (props.runtimeCheckoutAdapter?.isLocked()) return;
     setCartCustomer((current) => mergeCartCustomerDefaults(current, cartCustomerDefaults));
-  }, [cartCustomerDefaults, cartEnabled]);
+  }, [cartCustomerDefaults, cartEnabled, props.runtimeCheckoutAdapter]);
 
   useEffect(() => {
     if (!cartEnabled || !cartStorageKey || loadedCartStorageIdentity !== cartStorageIdentity) return;
@@ -1520,11 +1525,13 @@ export default function ProductBlock(props: ProductBlockProps) {
   };
 
   const updateCartItems = (updater: (items: ProductCartItemState[]) => ProductCartItemState[]) => {
+    if (props.runtimeCheckoutAdapter?.isLocked()) return;
     setCartClientRequestId("");
     setCartItems((current) => normalizeCartItems(updater(current), pricePrefix));
   };
 
   const handleIncreaseQuantity = (item: ReturnType<typeof normalizeProductItems>[number], sourceElement?: HTMLElement) => {
+    if (props.runtimeCheckoutAdapter?.isLocked()) return;
     if (!cartEnabled) return;
     setCartError("");
     setCartNotice("");
@@ -1604,6 +1611,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   };
 
   const handleCartCustomerChange = (field: keyof MerchantOrderCustomerInput, value: string) => {
+    if (props.runtimeCheckoutAdapter?.isLocked()) return;
     setCartClientRequestId("");
     setCartCustomer((current) => ({
       ...current,
@@ -1619,6 +1627,7 @@ export default function ProductBlock(props: ProductBlockProps) {
   }, []);
 
   const handleSubmitOrder = async () => {
+    if (props.runtimeCheckoutAdapter) return;
     if (!cartEnabled || !runtimeBlockId) return;
     if (!effectiveRuntimeSiteId) {
       setCartError("订单服务正在准备中，请稍后再提交。");
@@ -1717,6 +1726,7 @@ export default function ProductBlock(props: ProductBlockProps) {
 
   useEffect(() => {
     if (!cartEnabled) return;
+    if (props.runtimeCheckoutAdapter) return;
     setCartItems((current) => {
       const productMap = new Map(products.map((item) => [item.id, item] as const));
       let changed = false;
@@ -1750,7 +1760,7 @@ export default function ProductBlock(props: ProductBlockProps) {
       if (!changed) return current;
       return normalizeCartItems(next, pricePrefix);
     });
-  }, [cartEnabled, pricePrefix, productAvailabilityById, products]);
+  }, [cartEnabled, pricePrefix, productAvailabilityById, products, props.runtimeCheckoutAdapter]);
 
   const renderCard = (
     item: ReturnType<typeof normalizeProductItems>[number],
@@ -2317,6 +2327,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                           <div className="flex items-center gap-2.5 sm:gap-3">
                             <input
                               type="checkbox"
+                              disabled={props.runtimeCheckoutAdapter?.isLocked() || undefined}
                               checked={item.checked}
                               onChange={(event) => handleToggleCartItemChecked(item.productId, event.target.checked)}
                               className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
@@ -2345,6 +2356,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                                   type="button"
                                   className="rounded-full border border-slate-200 px-2.5 py-0.5 text-xs font-medium text-slate-500 transition hover:bg-white"
                                   onClick={() => handleRemoveCartItem(item.productId)}
+                                  disabled={props.runtimeCheckoutAdapter?.isLocked() || undefined}
                                 >
                                   删除
                                 </button>
@@ -2355,12 +2367,14 @@ export default function ProductBlock(props: ProductBlockProps) {
                                     type="button"
                                     className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100"
                                     onClick={() => handleDecreaseQuantity(item.product)}
+                                    disabled={props.runtimeCheckoutAdapter?.isLocked() || undefined}
                                   >
                                     -
                                   </button>
                                   <input
                                     type="text"
                                     value={String(item.quantity)}
+                                    disabled={props.runtimeCheckoutAdapter?.isLocked() || undefined}
                                     onChange={(event) => handleSetCartItemQuantity(item.productId, event.target.value)}
                                     className="w-9 border-0 bg-transparent p-0 text-center text-sm font-semibold text-slate-800 outline-none"
                                     inputMode="numeric"
@@ -2369,6 +2383,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                                     type="button"
                                     className="flex h-7 w-7 items-center justify-center rounded-full text-base font-semibold text-slate-700 transition hover:bg-slate-100"
                                     onClick={() => handleIncreaseQuantity(item.product)}
+                                    disabled={props.runtimeCheckoutAdapter?.isLocked() || undefined}
                                   >
                                     +
                                   </button>
@@ -2389,7 +2404,18 @@ export default function ProductBlock(props: ProductBlockProps) {
                   </div>
                 )}
               </div>
-              <div className="shrink-0 border-t border-slate-200 bg-white px-3 pt-2.5 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-6 sm:py-4">
+              {props.runtimeCheckoutAdapter ? props.runtimeCheckoutAdapter.render({
+                items: cartItems, customer: { ...normalizeCartCustomer(cartCustomer), title: "" } as { name: string; title: string; email: string; phone: string; note: string },
+                clientRequestId: cartClientRequestId, storageKey: cartStorageKey,
+                serializedDraft: JSON.stringify({ customer: normalizeCartCustomer(cartCustomer), items: normalizeCartItems(cartItems, pricePrefix), clientRequestId: cartClientRequestId }),
+                persist: (expected, customer, ack) => {
+                  const nextItems = ack ? productCartAfterAcknowledgement(cartItems, cartItems, ack.selection, ack.original, ack.fresh) : cartItems;
+                  const nextCustomer = normalizeCartCustomer(customer), requestId = nextItems === cartItems ? cartClientRequestId : "";
+                  const serialized = JSON.stringify({ customer: nextCustomer, items: normalizeCartItems(nextItems, pricePrefix), clientRequestId: requestId });
+                  persistProductCheckoutDraft(window.localStorage, cartStorageKey, expected, serialized);
+                  setCartItems(nextItems); setCartCustomer(nextCustomer); setCartClientRequestId(requestId); return serialized;
+                },
+              }) : <div className="shrink-0 border-t border-slate-200 bg-white px-3 pt-2.5 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-6 sm:py-4">
                 {cartUsesOpenedShellHeader ? (
                   <div className="mb-2 flex items-center justify-between gap-3 text-xs text-slate-500 sm:text-sm">
                     <span>已选 {checkedCartTotalQuantity} 件</span>
@@ -2429,7 +2455,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                     {cartSubmitting ? "提交中..." : "提交订单"}
                   </button>
                 </div>
-              </div>
+              </div>}
             </div>
           </div>
         </div>

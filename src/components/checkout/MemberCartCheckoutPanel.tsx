@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { createCartCheckoutController } from "@/lib/merchantCheckoutCartClient";
-import type { CartClientSelection } from "@/lib/merchantCheckoutCartReview";
+import type { CartClientOriginal, CartClientSelection } from "@/lib/merchantCheckoutCartReview";
 import type { CheckoutCustomerDraft } from "@/lib/merchantCheckoutClient";
 import { checkoutCouponClaimKey } from "@/lib/merchantCheckoutCoupons";
 import { merchantSettlementLanguage, formatSettlementMoney } from "@/lib/merchantSettlement";
@@ -19,19 +19,24 @@ const input = "min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-whi
 const button = "min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold disabled:opacity-50";
 const primaryButton = "min-h-11 w-full rounded-xl bg-teal-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50";
 type Props = { siteId: string; accountId: string | null; initialSelection: CartClientSelection; initialCustomer?: CheckoutCustomerDraft;
-  locale?: string; controllerFactory?: typeof createCartCheckoutController };
-/** Isolated integration component. Not yet mounted in the original cart and
- * never submits/clears that cart, changes its member, or records cash. */
+  locale?: string; controllerFactory?: typeof createCartCheckoutController; allowNewCheckout?: boolean;
+  beforeSubmit?: (customer: CheckoutCustomerDraft) => void | Promise<void>;
+  beforeRelease?: (original: CartClientOriginal) => void | Promise<void>; onReleased?: () => void; onReturnToCart?: () => void };
+/** Shared review for standalone tests and the independently gated real cart.
+ * Host callbacks own durable draft preservation; no implicit cart cleanup,
+ * member change, cash collection or online payment happens here. */
 export function MemberCartCheckoutPanel(props: Props) {
   const t = copy[merchantSettlementLanguage(props.locale ?? "zh-CN")];
   if (!props.accountId) return <section className="space-y-4 p-5"><p>{t.login}</p><Link href="/login" className={button + " inline-block"}>{t.loginButton}</Link></section>;
   return <Active key={JSON.stringify([props.siteId, props.accountId, props.initialSelection])} {...props} accountId={props.accountId}/>;
 }
-function Active({ siteId, accountId, initialSelection, initialCustomer, locale = "zh-CN", controllerFactory = createCartCheckoutController }: Props & { accountId: string }) {
+function Active({ siteId, accountId, initialSelection, initialCustomer, locale = "zh-CN", controllerFactory = createCartCheckoutController,
+  allowNewCheckout = true, beforeSubmit, beforeRelease, onReleased, onReturnToCart }: Props & { accountId: string }) {
   const t = copy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId }), [siteId, accountId, controllerFactory]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [selection, setSelection] = useState(() => structuredClone(initialSelection)), [customer, setCustomer] = useState(() => initialCustomer ? structuredClone(initialCustomer) : blank());
   const [agreed, setAgreed] = useState(false), [cancelConfirm, setCancelConfirm] = useState(false), [blocked, setBlocked] = useState(false);
+  const [draftFailed, setDraftFailed] = useState(false), [draftBusy, setDraftBusy] = useState(false);
   const busy = ["quoting", "submitting", "recovering", "cancelling"].includes(state.phase), frozen = busy || state.pending;
   useEffect(() => {
     void controller.activate();
@@ -45,7 +50,16 @@ function Active({ siteId, accountId, initialSelection, initialCustomer, locale =
   const pointUnit = merchantSettlementLanguage(locale) === "zh" ? "积分" : merchantSettlementLanguage(locale) === "es" ? "puntos" : "points";
   const amount = (value: number | null, method = selection.method) => method === "points" ? `${value ?? "—"} ${pointUnit}` : value === null ? "—" : formatSettlementMoney(value, locale);
   const preview = (next = selection) => { setAgreed(false); setCancelConfirm(false); void controller.preview(next, customer); };
-  const editField = (key: "name" | "email" | "phone" | "note", value: string) => { controller.edit(); setAgreed(false); setCustomer(v => ({ ...v, [key]: value })); };
+  const editField = (key: "name" | "email" | "phone" | "note", value: string) => { controller.edit(); setAgreed(false); setDraftFailed(false);
+    const next = { ...customer, [key]: value }; setCustomer(next); };
+  const submit = async () => { if (draftBusy) return; setDraftBusy(true); setDraftFailed(false);
+    try { await beforeSubmit?.(structuredClone(customer)); await controller.submit(); } catch { setDraftFailed(true); } finally { setDraftBusy(false); } };
+  const acknowledge = async () => { if (draftBusy) return; setDraftBusy(true); setDraftFailed(false);
+    try { await controller.startAnother(beforeRelease); const next = controller.getSnapshot(); if (!next.pending && next.phase === "idle") onReleased?.(); }
+    catch { setDraftFailed(true); } finally { setDraftBusy(false); } };
+  const returnToCart = async () => { if (draftBusy || busy || state.pending || !onReturnToCart) return; setDraftBusy(true); setDraftFailed(false);
+    try { await beforeSubmit?.(structuredClone(customer)); if (!controller.getSnapshot().pending) onReturnToCart(); }
+    catch { setDraftFailed(true); } finally { setDraftBusy(false); } };
   const field = (key: "name" | "email" | "phone" | "note", type = "text") => <label className="min-w-0 space-y-1 text-sm"><span>{t[key]}</span>{key === "note"
     ? <textarea className={input} rows={2} aria-label={t[key]} value={customer[key]} onChange={e => editField(key, e.target.value)}/>
     : <input className={input} aria-label={t[key]} type={type} value={customer[key]} onChange={e => editField(key, e.target.value)}/>}</label>;
@@ -53,7 +67,9 @@ function Active({ siteId, accountId, initialSelection, initialCustomer, locale =
   return <section data-member-cart-checkout className="mx-auto max-w-4xl space-y-5 p-4 text-slate-900 sm:p-7">
     <header><p className="text-xs font-semibold tracking-widest text-teal-700">FAOLLA · MEMBER CHECKOUT</p><h1 className="mt-2 text-2xl font-bold">{t.title}</h1><p className="mt-2 text-sm leading-6 text-slate-600">{t.intro}</p></header>
     {error && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">{error}</p>}
+    {draftFailed && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">{t.storage}</p>}
     {busy && <p role="status">{t.working}</p>}
+    {onReturnToCart && !state.pending && <button type="button" className={button} disabled={busy || draftBusy} onClick={() => void returnToCart()}>{merchantSettlementLanguage(locale) === "zh" ? "返回购物车修改" : merchantSettlementLanguage(locale) === "es" ? "Volver al carrito" : "Back to cart"}</button>}
     {state.pending && !original && !busy && <button className={button} onClick={() => void controller.recover()}>{t.recover}</button>}
     {original ? <article className="space-y-4 rounded-2xl border border-teal-200 bg-white p-5">
       {cart ? <><h2 className="text-xl font-semibold">{t.done}</h2><p className="break-all text-xs text-slate-500">{cart.resourceId}</p>
@@ -65,8 +81,8 @@ function Active({ siteId, accountId, initialSelection, initialCustomer, locale =
         {cancelConfirm && cart.cancellationAvailable && <button className={button + " border-rose-300 text-rose-800"} disabled={busy} onClick={() => { setCancelConfirm(false); void controller.cancel(); }}>{t.cancelConfirm}</button>}
       </> : original.kind === "single" ? <><p>{t.single}</p><a className={button + " inline-block"} href={`/member-checkout/${siteId}/${original.original.method === "on_site" ? "on-site/" : ""}${original.original.result.operationKey}?uiLocale=${encodeURIComponent(locale)}`}>{t.detail}</a></> : null}
       <button className={button} disabled={busy} onClick={() => { setCancelConfirm(false); void controller.recover(); }}>{t.recover}</button>
-      {!cart?.reviewRequired && <button className={button} disabled={busy} onClick={() => { setCancelConfirm(false); setAgreed(false); void controller.startAnother(); }}>{t.acknowledged}</button>}
-    </article> : !state.pending && <>
+      {!cart?.reviewRequired && <button className={button} disabled={busy || draftBusy} onClick={() => { setCancelConfirm(false); setAgreed(false); void acknowledge(); }}>{t.acknowledged}</button>}
+    </article> : !state.pending && allowNewCheckout && <>
       <fieldset disabled={frozen} className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-5 sm:grid-cols-2">
         {field("name")}{field("email", "email")}{field("phone", "tel")}{field("note")}
         <label className="space-y-1 text-sm sm:col-span-2"><span>{t.method}</span><select aria-label={t.method} className={input} value={selection.method} onChange={e => {
@@ -94,7 +110,7 @@ function Active({ siteId, accountId, initialSelection, initialCustomer, locale =
         {quote.ownPointBalance !== null && <p className="text-sm">{t.balance}: {quote.ownPointBalance}</p>}
         {!quote.methodAvailable && <p role="alert" className="text-sm text-rose-800">{t.insufficient}</p>}
         <label className="flex items-start gap-3 text-sm leading-6"><input className="mt-1 h-4 w-4 shrink-0 accent-teal-700" type="checkbox" checked={agreed} disabled={frozen || !quote.methodAvailable} onChange={e => setAgreed(e.target.checked)}/><span>{t.agreed}</span></label>
-        <button className={primaryButton} disabled={frozen || !agreed || !quote.methodAvailable} onClick={() => void controller.submit()}>{t.confirm}</button>
+        <button className={primaryButton} disabled={frozen || draftBusy || !agreed || !quote.methodAvailable} onClick={() => void submit()}>{t.confirm}</button>
         <p className="text-xs leading-5 text-slate-500">{t.noReceipt}</p>
       </article>}
     </>}

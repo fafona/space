@@ -6,6 +6,7 @@ import { Script } from "node:vm";
 import ts from "typescript";
 import * as products from "@/lib/productBlock";
 import * as orders from "@/lib/merchantOrders";
+import * as cartCheckout from "@/lib/merchantCheckoutProductCart";
 
 // The actual component and product derivation functions run here. Effects are
 // registered but not executed: this suite covers render/interaction derivation,
@@ -28,7 +29,30 @@ function replaceRanges(input: string, replacements: Replacement[]) {
     value.slice(0, replacement.start) + replacement.text + value.slice(replacement.end), input);
 }
 function legacySource() {
-  const parsed = ts.createSourceFile("ProductBlock.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  // Remove only the independently gated adapter branch, then retain the exact
+  // old complete-file hash below. The disabled path is still executed and
+  // compared with that frozen original; its assertions are not weakened.
+  const integration = ts.createSourceFile("ProductBlock.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const adapters: Replacement[] = [];
+  function unwrap(node: ts.Node) {
+    if (ts.isJsxExpression(node) && node.expression && ts.isConditionalExpression(node.expression)
+      && node.expression.condition.getText(integration) === "props.runtimeCheckoutAdapter") adapters.push({ start: node.getStart(integration), end: node.end, text: node.expression.whenFalse.getText(integration) });
+    ts.forEachChild(node, unwrap);
+  }
+  unwrap(integration); assert.equal(adapters.length, 1);
+  let unwrapped = replaceRanges(source, adapters);
+  for (const line of ['import type { ProductCartCheckoutAdapter } from "../checkout/ProductCartCheckoutAdapter";\n',
+    'import { persistProductCheckoutDraft, productCartAfterAcknowledgement } from "@/lib/merchantCheckoutProductCart";\n',
+    '    runtimeCheckoutAdapter?: ProductCartCheckoutAdapter;\n']) { assert.ok(unwrapped.includes(line)); unwrapped = unwrapped.replace(line, ""); }
+  assert.equal((unwrapped.match(/^ +if \(props\.runtimeCheckoutAdapter(?:\?\.isLocked\(\))?\) return;\n/gm) ?? []).length, 7);
+  assert.equal((unwrapped.match(/^ +disabled=\{props\.runtimeCheckoutAdapter\?\.isLocked\(\) \|\| undefined\}\n/gm) ?? []).length, 5);
+  unwrapped = unwrapped.replace(/^ +if \(props\.runtimeCheckoutAdapter(?:\?\.isLocked\(\))?\) return;\n/gm, "")
+    .replace(/^ +disabled=\{props\.runtimeCheckoutAdapter\?\.isLocked\(\) \|\| undefined\}\n/gm, "")
+    .replace("export type ProductBlockProps =", "type ProductBlockProps =")
+    .replace("[cartEnabled, cartStorageIdentity, cartStorageKey, pricePrefix, props.runtimeCheckoutAdapter]", "[cartEnabled, cartStorageIdentity, cartStorageKey, pricePrefix]")
+    .replace("[cartCustomerDefaults, cartEnabled, props.runtimeCheckoutAdapter]", "[cartCustomerDefaults, cartEnabled]")
+    .replace("[cartEnabled, pricePrefix, productAvailabilityById, products, props.runtimeCheckoutAdapter]", "[cartEnabled, pricePrefix, productAvailabilityById, products]");
+  const parsed = ts.createSourceFile("ProductBlock.tsx", unwrapped, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const replacements: Replacement[] = [];
   function visit(node: ts.Node) {
     if (ts.isVariableStatement(node) && node.declarationList.declarations.length === 1) {
@@ -39,7 +63,7 @@ function legacySource() {
     ts.forEachChild(node, visit);
   }
   visit(parsed); assert.equal(replacements.length, 4);
-  const reconstructed = replaceRanges(source, replacements)
+  const reconstructed = replaceRanges(unwrapped, replacements)
     .replace('if (groupedByTag) {\n      return (', 'if (groupedByTag) {\n      const groups = groupArrangedProductItemsByTag(pagedProducts);\n      return (')
     .replace('{productGroups.map((group, index) => (', '{groups.map((group, index) => (');
   assert.equal(createHash("sha256").update(reconstructed).digest("hex"), BASELINE_SHA256,
@@ -143,6 +167,7 @@ function harness(initial: Record<string, unknown> = {}, legacy = false) {
         groupArrangedProductItemsByTag: (items: products.ProductItem[]) => { groupCalls++; groupInputs.push(items); return products.groupArrangedProductItemsByTag(items); },
       };
       if (name === "@/lib/merchantOrders") return orders;
+      if (name === "@/lib/merchantCheckoutProductCart") return cartCheckout;
       if (name === "@/lib/publicAssetUrl") return { normalizePublicAssetUrl: (value: string) => value };
       if (name === "./backgroundStyle") return { getBackgroundStyle: () => ({}) };
       if (name === "./borderStyle") return { getBlockBorderClass: () => "", getBlockBorderInlineStyle: () => ({}) };

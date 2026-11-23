@@ -17,7 +17,7 @@ async function readBody(request: Request) {
     return JSON.parse(value + decoder.decode());
   } catch { throw new Error("checkout_entry_invalid"); } finally { reader.releaseLock(); }
 }
-export async function handleCheckoutEntry(request: Request, overrides: Partial<CheckoutEntryHttpDependencies> = {}) {
+export async function handleCheckoutEntry(request: Request, overrides: Partial<CheckoutEntryHttpDependencies> = {}, preserveEmptyAccount = false) {
   const deps = { ...defaults, ...overrides };
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
   if (!isTrustedSameOriginMutationRequest(request)) return json({ error: "forbidden_origin" }, 403);
@@ -36,7 +36,7 @@ export async function handleCheckoutEntry(request: Request, overrides: Partial<C
     const principal = checkoutPrincipalKey(initial), offers = await deps.read(query), after = await authorize();
     if (!after || checkoutPrincipalKey(after) !== principal || !deps.enabled(query.siteId)) return json({ error: "checkout_unauthorized" }, 401);
     const entry = parseCheckoutEntryAccess({ ok: true, entry: { siteId: query.siteId, accountId: initial.accountId, query, offers } }, query);
-    return json({ ok: true, entry: entry?.offers.length ? { ...entry, query } : null });
+    return json({ ok: true, entry: entry && (entry.offers.length || preserveEmptyAccount) ? { ...entry, query } : null });
   } catch { return json({ error: "checkout_entry_unavailable" }, 503); }
 }
 export function POST(request: Request) { return handleCheckoutEntry(request); }

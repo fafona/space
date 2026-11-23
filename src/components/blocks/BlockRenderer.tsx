@@ -26,6 +26,7 @@ const ChartBlock = dynamic(() => import("./ChartBlock"), { ssr: false, loading: 
 const MusicBlock = dynamic(() => import("./MusicBlock"), { ssr: false, loading: () => null });
 const ContactBlock = dynamic(() => import("./ContactBlock"), { ssr: false, loading: () => null });
 const ProductBlock = dynamic(() => import("./ProductBlock"), { loading: () => null });
+const MemberProductCartBlock = dynamic(() => import("../checkout/MemberProductCartBlock"), { ssr: false, loading: () => null });
 const CouponBlock = dynamic(() => import("./CouponBlock"), { ssr: false, loading: () => null });
 const GoogleReviewsBlock = dynamic(() => import("./GoogleReviewsBlock"), { ssr: false, loading: () => null });
 const BookingBlock = dynamic(() => import("./BookingBlock"), { ssr: false, loading: () => null });
@@ -86,6 +87,7 @@ export default function BlockRenderer({
   bookingSiteId,
   bookingSiteName,
   productCartEnabled = false,
+  memberCartCheckoutEnabled = false,
   productCatalogBatchEnabled = false,
   productCatalogPlanId = "",
   bookingInteractive = true,
@@ -100,6 +102,7 @@ export default function BlockRenderer({
   bookingSiteId?: string;
   bookingSiteName?: string;
   productCartEnabled?: boolean;
+  memberCartCheckoutEnabled?: boolean;
   productCatalogBatchEnabled?: boolean;
   productCatalogPlanId?: string;
   bookingInteractive?: boolean;
@@ -311,9 +314,10 @@ export default function BlockRenderer({
       case "music":
         content = <MusicBlock {...b.props} />;
         break;
-      case "product":
+      case "product": {
+        const Products = memberCartCheckoutEnabled && bookingInteractive && productCartEnabled ? MemberProductCartBlock : ProductBlock;
         content = (
-          <><ProductBlock
+          <><Products
             {...b.props}
             runtimeSiteId={bookingSiteId}
             runtimeSiteName={bookingSiteName}
@@ -322,6 +326,7 @@ export default function BlockRenderer({
             runtimeCatalogOverride={getPublicCatalogState(b.id)}
             runtimeUseOperatingCatalog={bookingInteractive}
             runtimeOrderManagementEnabled={productCartEnabled}
+            runtimeCheckoutAdapter={undefined}
             runtimeInteractiveOverlayWithinBlock={forceMobileViewport || options.openedView === true}
             runtimeDisableCartPortal={options.openedView === true}
             runtimeOpenedView={options.openedView === true}
@@ -331,11 +336,12 @@ export default function BlockRenderer({
             runtimeOpenedCartCloseSignal={options.openedCartCloseSignal}
             runtimeOnOpenedCartStateChange={options.onOpenedCartStateChange}
           />
-          {bookingInteractive && productCartEnabled && bookingSiteId && <MemberCheckoutSourceEntry active={options.openedView !== true || !openedProductCartOpen}
+          {!memberCartCheckoutEnabled && bookingInteractive && productCartEnabled && bookingSiteId && <MemberCheckoutSourceEntry active={options.openedView !== true || !openedProductCartOpen}
             siteId={bookingSiteId} kind="order" blockId={b.id} viewport={catalogViewport}/>}
           </>
         );
         break;
+      }
       case "coupon":
         content = <CouponBlock {...b.props} runtimeSiteId={bookingSiteId} runtimeBlockId={b.id} />;
         break;

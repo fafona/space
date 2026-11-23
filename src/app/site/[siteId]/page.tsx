@@ -14,6 +14,7 @@ import {
 import { fetchPublishedSitePayloadFromSupabase } from "@/lib/publishedSiteData";
 import SitePageClient from "./SitePageClient";
 import { resolveCanonicalPortalOrigin } from "@/lib/canonicalPortalRequest";
+import { isMemberCheckoutCartUiPilotEnabled } from "@/lib/merchantCheckoutCartPilot.server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -169,6 +170,7 @@ export default async function SitePage({ params, searchParams }: SitePageProps) 
         initialPublishedBlocks={publishedSite?.blocks}
         initialMerchantName={publishedSite?.merchantName}
         initialOrderManagementEnabled={publishedSite?.orderManagementEnabled}
+        memberCartCheckoutSiteId={isMemberCheckoutCartUiPilotEnabled(siteId) ? siteId : undefined}
       />
     </>
   );

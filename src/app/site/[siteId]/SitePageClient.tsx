@@ -396,6 +396,7 @@ type SitePageClientProps = {
   initialPublishedBlocks?: Block[];
   initialMerchantName?: string;
   initialOrderManagementEnabled?: boolean;
+  memberCartCheckoutSiteId?: string;
 };
 
 export function SitePageClient({
@@ -405,6 +406,7 @@ export function SitePageClient({
   initialPublishedBlocks = EMPTY_BLOCKS,
   initialMerchantName = "",
   initialOrderManagementEnabled,
+  memberCartCheckoutSiteId,
 }: SitePageClientProps = {}) {
   const params = useParams<{ siteId?: string }>();
   const routeSiteId = typeof params?.siteId === "string" ? params.siteId : "";
@@ -790,6 +792,7 @@ export function SitePageClient({
           bookingSiteId={site?.id ?? siteId}
           bookingSiteName={effectiveMerchantName}
           productCartEnabled={orderManagementEnabled}
+          memberCartCheckoutEnabled={memberCartCheckoutSiteId === (site?.id ?? siteId)}
           productCatalogBatchEnabled
           productCatalogPlanId={activePlan?.id}
           bookingInteractive
