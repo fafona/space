@@ -6,6 +6,7 @@ import path from 'node:path';import {pathToFileURL} from 'node:url';import {exec
 import fixtures from './fixtures/member-checkout-cart-quote.ts';import quote from '../src/lib/merchantCheckoutCartQuote.server.ts';
 import planner from '../src/lib/merchantCheckoutCartSubmissionPlan.server.ts';import service from '../src/lib/merchantCheckoutCartSubmission.server.ts';
 import orders from '../src/lib/merchantOrders.ts';import oldPlanner from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
+import reporting from '../src/lib/merchantCheckoutReporting.server.ts';import reportDto from '../src/lib/merchantCheckoutReporting.ts';import cashPlanner from '../src/lib/merchantCheckoutOnSiteSubmissionPlan.server.ts';
 
 test('whole product cart commit/recover/cancel uses original PostgreSQL writers atomically',{timeout:120000},async t=>{
  const runtime=path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR||'.missing-test-runtime'),relative=path.relative(tmpdir(),runtime);
@@ -30,7 +31,8 @@ test('whole product cart commit/recover/cancel uses original PostgreSQL writers 
   const definitions=async()=> (await admin.query(`select oid::regprocedure::text name,pg_get_functiondef(oid) definition from pg_proc where oid in
    ('public.faolla_commit_redemption_v1(text,jsonb)'::regprocedure,'public.faolla_commit_order_membership_v1(text,jsonb)'::regprocedure,
     'faolla_checkout_design.commit_bundle(text,text,text,text,jsonb)'::regprocedure,'faolla_checkout_design.cancel_bundle(text,text,text,text)'::regprocedure,
-    'faolla_checkout_design.guard_legacy_resource_final_state()'::regprocedure) order by name`)).rows;
+    'faolla_checkout_design.guard_legacy_resource_final_state()'::regprocedure,'public.faolla_member_checkout_reporting_v1(text,jsonb)'::regprocedure,
+    'public.faolla_member_checkout_reporting_v2(text,jsonb)'::regprocedure,'public.faolla_member_checkout_original_resource_v1(text,text,text,text)'::regprocedure) order by name`)).rows;
   for(const file of ['scripts/supabase-migrations/202609080045_order_membership_atomic_mutation.sql','scripts/supabase-migrations/202609080046_redemption_atomic_mutation.sql',
    'scripts/supabase-migrations/202610250211_booking_atomic_preparation.sql','scripts/supabase-migrations/202610250212_booking_atomic_runtime.sql','scripts/supabase-migrations/202611050213_booking_atomic_safeupdate_singleton.sql',
    'database/proposals/20261122_member_checkout_design.sql','database/proposals/20261122_member_checkout_catalog.sql','database/proposals/20261122_member_checkout_bundle.sql',
@@ -39,7 +41,7 @@ test('whole product cart commit/recover/cancel uses original PostgreSQL writers 
    'database/proposals/20261123_member_checkout_on_site_submission.sql','database/proposals/20261123_member_checkout_reporting.sql','database/proposals/20261123_member_checkout_presentation.sql',
    'database/proposals/20261123_member_checkout_on_site_management.sql','database/proposals/20261123_member_checkout_cart_quote.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
   const beforeDefinitions=await definitions();
-  for(const file of ['database/proposals/20261123_member_checkout_cart_submission.sql','database/proposals/20261123_member_checkout_cart_cancellation.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
+  for(const file of ['database/proposals/20261123_member_checkout_cart_submission.sql','database/proposals/20261123_member_checkout_cart_cancellation.sql','database/proposals/20261123_member_checkout_cart_presentation.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
   assert.deepEqual(await definitions(),beforeDefinitions,'all original financial and guard functions remain byte-identical');
   const site='10909994',memberSlug=`__merchant_memberships__:${site}`,settingsSlug=`__merchant_membership_settings__:${site}`,couponSlug=`__merchant_coupons__:${site}`;
   for(const table of ['bundle_pilots','cart_quote_pilots'])await admin.query(`insert into faolla_checkout_design.${table}(site_id,enabled) values($1,true)`,[site]);
@@ -241,6 +243,66 @@ test('whole product cart commit/recover/cancel uses original PostgreSQL writers 
    assert.equal((await one(admin,'select public.faolla_member_checkout_cart_result_v1($1,$2,$3) result',[site,id.operationKey,wrong])).result,null);
    await assert.rejects(one(a,'select public.faolla_member_checkout_cart_cancel_v1($1,$2,$3,$4,$5)',[site,id.operationKey,wrong,r.resource.updatedAt,new Date(Date.now()+12000).toISOString()]),/checkout_not_found/);
    assert.deepEqual(await all(),before);
+  });
+  await t.test('version-three report reads actual points/cash carts and old points originals in exact order without writing or private fields',async()=>{
+   const f=await seed(),p=(await submit(f)).result,g=await seed('on_site');g.request.lines[0].couponClaims=[{couponId:g.coupons[0].id,claimEventId:g.coupons[0].claimEvents[0].id}];const c=(await submit(g)).result;
+   const old=await one(admin,"select resource_kind kind,resource_id id from faolla_checkout_design.bundle_results where receipt->'version'='1'::jsonb limit 1");assert.ok(old);
+   const scope={siteId:site,resources:[{kind:'order',id:c.resourceId},{kind:'order',id:'unlinked-read-only'},old,{kind:'order',id:p.resourceId}]},before=await all();
+   const s=await reporting.readCartCheckoutReporting(scope,async(name,args)=>{assert.equal(name,'faolla_member_checkout_reporting_v3');return{data:(await one(admin,'select public.faolla_member_checkout_reporting_v3($1,$2) result',[args.p_site_id,JSON.stringify(args.p_resources)])).result,error:null};});
+   assert.equal(s.version,3);assert.equal(s.rows[0].cart.method,'on_site');assert.equal(s.rows[0].cart.grossMinor,2500);assert.equal(s.rows[0].cart.dueMinor,2300);assert.equal(s.rows[0].onSite,undefined);
+   assert.equal(s.rows[1].result,null);assert.equal(s.rows[1].cart,undefined);assert.equal(s.rows[2].result.version,1);assert.equal(s.rows[3].cart.method,'points');assert.equal(s.rows[3].cart.totalPoints,200);
+   assert.ok(!/memberId|customerAccountId|principalKey|claimEvents|redeemEvents|pointTransactionId|stockItemId|PRIVATE-CLAIM|example.invalid/.test(JSON.stringify(s)));assert.deepEqual(await all(),before);
+  });
+  await t.test('actual old cash single remains a version-two projection inside new mixed report and personal resource lookup',async()=>{
+   const f=await seed('on_site'),first=f.request.lines[0],request={siteId:site,...first,nonce:randomUUID(),confirmationHash:'0'.repeat(64),method:'on_site',customer:f.request.customer};
+   let id=cashPlanner.onSiteSubmissionIdentity(request,f.principal);
+   const readOld=async()=>(await one(admin,'select public.faolla_member_checkout_on_site_snapshot_v1($1,$2,$3,$4,$5) result',[site,id.operationKey,id.principalKey,id.requestHash,first.offerId])).result;
+   const raw=(await readOld()).snapshot;request.confirmationHash=cashPlanner.quoteOnSiteSubmissionSnapshot(raw,id,f.principal).confirmationHash;id=cashPlanner.onSiteSubmissionIdentity(request,f.principal);
+   const snapshot=(await readOld()).snapshot,p=cashPlanner.planOnSiteSubmission(snapshot,id,f.principal),r=(await one(a,'select public.faolla_member_checkout_on_site_commit_v1($1,$2,$3,$4,$5,$6,$7) result',[site,id.operationKey,id.principalKey,id.requestHash,snapshot,p.plan,p.notAfter])).result.result;
+   const before=await all(),scope={siteId:site,resources:[{kind:'order',id:r.terms.resourceId}]};
+   const report=reportDto.parseCheckoutReportingSnapshot((await one(admin,'select public.faolla_member_checkout_reporting_v3($1,$2) result',[site,JSON.stringify(scope.resources)])).result,scope);
+   assert.equal(report.rows[0].cart,undefined);assert.equal(report.rows[0].onSite.version,2);assert.equal(report.rows[0].onSite.terms.dueMinor,r.terms.dueMinor);
+   const personal=(await one(admin,'select public.faolla_member_checkout_original_resource_v2($1,$2,$3,$4) result',[site,'order',r.terms.resourceId,id.principalKey])).result;
+   assert.equal(personal.kind,'single');assert.equal(personal.original.method,'on_site');assert.equal(personal.original.result.version,2);assert.deepEqual(await all(),before);
+  });
+  await t.test('personal cart resource projection is strictly own-principal scoped even when the resource key is known',async()=>{
+   const f=await seed(),r=(await submit(f)).result,id=planner.cartSubmissionIdentity(f.request,f.principal),before=await all();
+   const read=async(s,k,principal)=>(await one(admin,'select public.faolla_member_checkout_original_resource_v2($1,$2,$3,$4) result',[s,k,r.resourceId,principal])).result;
+   const own=await read(site,'order',id.principalKey);assert.equal(own.kind,'cart');assert.equal(own.result.resourceId,r.resourceId);assert.equal(own.result.lines.length,2);
+   assert.equal(await read(site,'order','account:50010106:foreign-synthetic-user'),null);assert.equal(await read('10909993','order',id.principalKey),null);assert.equal(await read(site,'booking',id.principalKey),null);
+   assert.ok(!/memberId|customerAccountId|principalKey|claimEvents|redeemEvents|PRIVATE-CLAIM|example.invalid/.test(JSON.stringify(own)));assert.deepEqual(await all(),before);
+  });
+  await t.test('completed cart stays unpaid; cancelled cart reports only actual frozen point/coupon returns',async()=>{
+   const f=await seed('on_site'),r=(await submit(f)).result;
+   await a.query(`update pages p set blocks=(select jsonb_agg(case when o->>'id'=$2 then jsonb_set(o,'{status}','"completed"') else o end) from jsonb_array_elements(p.blocks) o) where p.merchant_id=$1 and p.slug~'^__merchant_orders__:'`,[site,r.resourceId]);
+   const scope={siteId:site,resources:[{kind:'order',id:r.resourceId}]},raw=(await one(admin,'select public.faolla_member_checkout_reporting_v3($1,$2) result',[site,JSON.stringify(scope.resources)])).result;
+   const current=reportDto.parseCheckoutReportingSnapshot(raw,scope).rows[0];assert.equal(current.cart.resource.status,'completed');assert.equal(current.cart.capturedMinor,0);assert.equal(current.cart.cancellationAvailable,false);
+   const g=await seed('points',f=>{f.offers[1].checkoutBinding.pointsReturnOnCancel=false;});await submit(g);await cancel(g);
+   const closed=(await readResult(g)).result,cancelled=(await one(admin,'select public.faolla_member_checkout_original_resource_v2($1,$2,$3,$4) result',[site,'order',closed.resourceId,planner.cartSubmissionIdentity(g.request,g.principal).principalKey])).result;
+   assert.equal(cancelled.result.closed,true);assert.equal(cancelled.result.cancellation.pointsReturned,100);assert.equal(cancelled.result.totalPoints,200);
+  });
+  await t.test('a changed source visible inside a rolled-back test transaction is review-required, never ordinary unpaid',async()=>{
+   const f=await seed('on_site'),r=(await submit(f)).result,before=await all(),scope={siteId:site,resources:[{kind:'order',id:r.resourceId}]};
+   // Deferred original final-state guard remains installed. Never commit this
+   // deliberately inconsistent synthetic record; no guard is disabled.
+   await a.query('begin');try{
+    await a.query(`update pages p set blocks=(select jsonb_agg(case when o->>'id'=$2 then jsonb_set(o,'{totalAmount}','999') else o end) from jsonb_array_elements(p.blocks) o) where p.merchant_id=$1 and p.slug~'^__merchant_orders__:'`,[site,r.resourceId]);
+    const raw=(await one(a,'select public.faolla_member_checkout_reporting_v3($1,$2) result',[site,JSON.stringify(scope.resources)])).result,s=reportDto.parseCheckoutReportingSnapshot(raw,scope);
+    assert.equal(s.rows[0].cart.reviewRequired,true);assert.equal(s.rows[0].termsMatch,false);assert.equal(s.rows[0].cart.cancellationAvailable,false);assert.equal(reportDto.checkoutReportingNeedsReview(s.rows[0]),true);
+   }finally{await a.query('rollback');}assert.deepEqual(await all(),before);
+  });
+  await t.test('fifty bounded report references include a real twenty-line cart with no partial totals or data writes',async()=>{
+   const f=await seed('points',f=>{f.member.pointBalance=10000;},20),r=(await submit(f)).result,resources=[{kind:'order',id:r.resourceId},...Array.from({length:49},(_,i)=>({kind:'order',id:`unlinked-${i}`}))],before=await all();
+   const raw=(await one(admin,'select public.faolla_member_checkout_reporting_v3($1,$2) result',[site,JSON.stringify(resources)])).result,s=reportDto.parseCheckoutReportingSnapshot(raw,{siteId:site,resources});
+   assert.equal(s.rows.length,50);assert.equal(s.rows[0].cart.lines.length,20);assert.equal(s.rows[0].cart.totalPoints,2000);assert.ok(s.rows.slice(1).every(r=>r.result===null&&!r.cart&&!r.onSite));assert.deepEqual(await all(),before);
+   await assert.rejects(one(admin,'select public.faolla_member_checkout_reporting_v3($1,$2)',[site,JSON.stringify([...resources,{kind:'order',id:'overflow'}])]),/checkout_reporting_invalid/);
+  });
+  await t.test('new read projections are STABLE invokers, denied to every API role, with all prior writers/readers unchanged',async()=>{
+   for(const role of ['anon','authenticated','service_role']){const c=await connect(role);for(const signature of ['faolla_member_checkout_reporting_v3(text,jsonb)','faolla_member_checkout_original_resource_v2(text,text,text,text)'])
+    assert.equal((await one(c,'select has_function_privilege(current_user,$1,\'EXECUTE\') allowed',[`public.${signature}`])).allowed,false);
+    await assert.rejects(c.query('select public.faolla_member_checkout_reporting_v3($1,$2)',[site,JSON.stringify([{kind:'order',id:'any'}])]),/permission denied/);}
+   const definitionsNew=(await admin.query("select provolatile,prosecdef from pg_proc where oid in ('public.faolla_member_checkout_reporting_v3(text,jsonb)'::regprocedure,'public.faolla_member_checkout_original_resource_v2(text,text,text,text)'::regprocedure)")).rows;
+   assert.equal(definitionsNew.length,2);assert.ok(definitionsNew.every(r=>r.provolatile==='s'&&r.prosecdef===false));assert.deepEqual(await definitions(),beforeDefinitions);
   });
   console.log(`CART_SUBMISSION_EVIDENCE=${evidence}`);
  }finally{

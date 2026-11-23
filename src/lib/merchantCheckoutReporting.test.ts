@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { checkoutReportingNeedsReview, checkoutReportingSettlement, checkoutReportingTsv, parseCheckoutReportingRequest, parseCheckoutReportingSnapshot } from "./merchantCheckoutReporting";
 import { summarizeMerchantSettlement } from "./merchantSettlement";
-import { readCheckoutReporting, readMixedCheckoutReporting } from "./merchantCheckoutReporting.server";
+import { readCheckoutReporting, readMixedCheckoutReporting, readCartCheckoutReporting } from "./merchantCheckoutReporting.server";
+import { cartReviewFixture } from "../../scripts/fixtures/member-checkout-cart-review";
 import { normalizeMerchantOrderRecord } from "./merchantOrders";
+import { legacyCheckoutPointTransitions } from "./merchantCheckoutLegacyBoundary.server";
 
 const siteId = "10909095", scope = { siteId, resources: [{ kind: "order" as const, id: "O123" }] };
 function fixture() {
@@ -12,6 +14,51 @@ function fixture() {
       closed: false, resource: { status: "pending", updatedAt: "2026-11-23T12:00:00Z" }, cancellationAvailable: false,
       cancellationPolicy: { returnPoints: true, returnCoupons: false, advanceMinutes: 0, cancellableUntil: null }, cancellation: null as null | { pointsReturned: number; couponsReturned: number; stockReleased: number; cancelledAt: string } } }] };
 }
+
+test("version-three report preserves each cart tender, line policies and sums without exposing raw records", async () => {
+  for (const method of ["points", "on_site"] as const) {
+    const x = await cartReviewFixture(method), scope = { siteId: x.f.siteId, resources: [{ kind: "order" as const, id: x.result.resourceId }] };
+    const raw = { version: 3, siteId: scope.siteId, rows: [{ ...scope.resources[0], result: null, termsMatch: true, cart: { ...x.result, memberId: "PRIVATE", customer: "PRIVATE", transactions: "PRIVATE" } }] };
+    const snapshot = parseCheckoutReportingSnapshot(raw, scope), row = snapshot.rows[0];
+    assert.equal(row.cart!.method, method); assert.equal(row.cart!.lines.length, 2); assert.equal(checkoutReportingNeedsReview(row), false);
+    assert.ok(!JSON.stringify(snapshot).includes("PRIVATE"));
+    assert.equal(checkoutReportingSettlement(row)?.method ?? null, method === "points" ? "points" : null);
+    const calls: string[] = [];
+    assert.deepEqual(await readCartCheckoutReporting(scope, async name => { calls.push(name); return { data: raw, error: null }; }), snapshot);
+    assert.deepEqual(calls, ["faolla_member_checkout_reporting_v3"]);
+  }
+});
+test("cart report refuses old version, wrong resource, mixed representations, missing rows and contradictory terms", async () => {
+  const x = await cartReviewFixture(), scope = { siteId: x.f.siteId, resources: [{ kind: "order" as const, id: x.result.resourceId }] };
+  const row = { ...scope.resources[0], result: null, termsMatch: true, cart: x.result }, raw = { version: 3, siteId: scope.siteId, rows: [row] };
+  for (const value of [{ ...raw, version: 2 }, { ...raw, rows: [{ ...row, termsMatch: false }] }, { ...raw, rows: [{ ...row, onSite: {} }] },
+    { ...raw, rows: [{ ...row, result: {} }] }, { ...raw, rows: [{ ...row, cart: { ...x.result, resourceId: "other" } }] }, { ...raw, rows: [] }]) assert.throws(() => parseCheckoutReportingSnapshot(value, scope));
+  await assert.rejects(readCartCheckoutReporting(scope, async () => ({ data: { ...raw, version: 2, rows: [{ ...row, cart: undefined }] }, error: null })), /checkout_reporting_unavailable/);
+});
+test("cart report errors never retry a single-item projection or fabricate an unpaid/unlinked row", async () => {
+  const x = await cartReviewFixture(), scope = { siteId: x.f.siteId, resources: [{ kind: "order" as const, id: x.result.resourceId }] }; let calls = 0;
+  await assert.rejects(readCartCheckoutReporting(scope, async () => { calls++; return { data: null, error: { message: "PRIVATE SQL" } }; }), /checkout_reporting_unavailable/); assert.equal(calls, 1);
+});
+test("old readers and old point-transition bridge must refuse an unexpected cart projection while cart routing is off", async () => {
+  const x = await cartReviewFixture(), scope = { siteId: x.f.siteId, resources: [{ kind: "order" as const, id: x.result.resourceId }] };
+  const raw = { version: 3, siteId: scope.siteId, rows: [{ ...scope.resources[0], result: null, termsMatch: true, cart: x.result }] };
+  const call = async () => ({ data: raw, error: null });
+  await assert.rejects(readCheckoutReporting(scope, call), /checkout_reporting_unavailable/);
+  await assert.rejects(readMixedCheckoutReporting(scope, call), /checkout_reporting_unavailable/);
+  await assert.rejects(legacyCheckoutPointTransitions([{ previous: x.prepared.plan.record, next: { ...x.prepared.plan.record, status: "completed" } }],
+    { enabled: () => true, cashEnabled: () => false, rpc: () => call }), /checkout_unavailable/);
+});
+test("cart TSV keeps separate points, integer EUR and actual returns; review-required cash is not recorded as zero collected", async () => {
+  const x = await cartReviewFixture("on_site"), y = await cartReviewFixture("points");
+  const cart = { ...x.result, resourceId: "C-cash", reviewRequired: true, cancellationAvailable: false }, p = { ...y.result, resourceId: "C-points" };
+  const scope = { siteId: x.f.siteId, resources: [{ kind: "order" as const, id: cart.resourceId }, { kind: "order" as const, id: p.resourceId }, { kind: "order" as const, id: "legacy" }] };
+  const s = parseCheckoutReportingSnapshot({ version: 3, siteId: scope.siteId, rows: [{ ...scope.resources[0], result: null, termsMatch: false, cart },
+    { ...scope.resources[1], result: null, termsMatch: true, cart: p }, { ...scope.resources[2], result: null, termsMatch: false }] }, scope);
+  assert.equal(checkoutReportingNeedsReview(s.rows[0]), true); const lines = checkoutReportingTsv(s).split("\r\n").map(l => l.split("\t")), headers = lines[0];
+  assert.equal(lines[1][headers.indexOf("gross_minor")], "2500"); assert.equal(lines[1][headers.indexOf("merchant_recorded_cash_minor")], "");
+  assert.equal(lines[2][headers.indexOf("points_debited")], "200"); assert.equal(lines[2][headers.indexOf("gross_minor")], "");
+  assert.equal(lines[3][headers.indexOf("checkout_kind")], "unlinked"); assert.equal(lines[3][headers.indexOf("merchant_recorded_cash_minor")], "");
+});
 test("bounded lookup keys accept the same ID in different kinds, not duplicate/foreign/authority inputs", () => {
   assert.deepEqual(parseCheckoutReportingRequest(scope), scope);
   assert.equal(parseCheckoutReportingRequest({ siteId, resources: [{ kind: "booking", id: "O123" }, ...scope.resources] }).resources.length, 2);

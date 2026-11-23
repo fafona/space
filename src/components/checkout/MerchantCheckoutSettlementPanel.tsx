@@ -6,6 +6,7 @@ import { checkoutReportingNeedsReview, checkoutReportingSettlement, checkoutRepo
 import { merchantSettlementLanguage } from "@/lib/merchantSettlement";
 import { MerchantSettlementBadge } from "./MerchantSettlementBadge";
 import { OnSiteCheckoutSummary } from "./OnSiteCheckoutSummary";
+import { CartCheckoutSummary } from "./CartCheckoutSummary";
 import { parseOnSiteCollectionReceipt } from "@/lib/merchantCheckoutOnSiteCollection";
 import { formatSettlementMoney } from "@/lib/merchantSettlement";
 
@@ -62,8 +63,8 @@ export function MerchantCheckoutSettlementPanel({ siteId, resources, identityKey
     window.addEventListener("focus", focus); document.addEventListener("visibilitychange", visibility);
     return () => { window.removeEventListener("focus", focus); document.removeEventListener("visibilitychange", visibility); };
   }, [load, invalidate]);
-  const rows = snapshot?.rows.filter(r => filter === "all" || filter === "linked" && Boolean(r.result || r.onSite) || filter === "closed" && (r.onSite ?? r.result)?.closed
-    || filter === "review" && checkoutReportingNeedsReview(r) || filter === "unlinked" && !r.result && !r.onSite) ?? [];
+  const rows = snapshot?.rows.filter(r => filter === "all" || filter === "linked" && Boolean(r.cart || r.result || r.onSite) || filter === "closed" && (r.cart ?? r.onSite ?? r.result)?.closed
+    || filter === "review" && checkoutReportingNeedsReview(r) || filter === "unlinked" && !r.cart && !r.result && !r.onSite) ?? [];
   const collect = async (operationKey: string) => {
     const original = snapshot?.rows.find(row => row.onSite?.operationKey === operationKey)?.onSite;
     if (!original || !loaded?.canRecord || reviewCollection !== operationKey || writing.current || !original.resource || !original.termsMatch
@@ -95,12 +96,12 @@ export function MerchantCheckoutSettlementPanel({ siteId, resources, identityKey
       : snapshot ? <><label className="flex flex-wrap items-center gap-3 text-sm">{text.filter}<select aria-label={text.filter} value={filter} onChange={event => setFilter(event.target.value as Filter)} className={button}>
         {(["all", "linked", "closed", "review", "unlinked"] as Filter[]).map(value => <option key={value} value={value}>{text[value]}</option>)}</select><span>{rows.length} / {snapshot.rows.length}</span></label>
         <div className="grid gap-3 lg:grid-cols-2">{rows.map(row => {
-          const r = row.onSite ?? row.result, policy = r?.cancellationPolicy, review = checkoutReportingNeedsReview(row);
+          const r = row.cart ?? row.onSite ?? row.result, policy = (row.onSite ?? row.result)?.cancellationPolicy, review = checkoutReportingNeedsReview(row);
           const status = r?.resource?.status as "active" | "pending" | "confirmed" | "completed" | "no_show" | "cancelled" | undefined;
           return <article data-resource-id={row.id} key={`${row.kind}:${row.id}`} className="min-w-0 space-y-3 rounded-xl border border-slate-200 bg-white p-4">
             <h3 className="break-all text-sm font-semibold">{text[row.kind]} · {row.id}</h3>
             {!r ? <><span className="text-sm text-slate-500">{text.unlinked}</span><p className="text-xs text-slate-500">{text.legacy}</p></> : <>
-              <p className="text-sm">{text.business} · {status ? text[status] : text.missing}</p>{row.onSite ? <OnSiteCheckoutSummary result={row.onSite} locale={locale}/> : <MerchantSettlementBadge snapshot={checkoutReportingSettlement(row)} locale={locale} showDetails/>}
+              <p className="text-sm">{text.business} · {status ? text[status] : text.missing}</p>{row.cart ? <CartCheckoutSummary result={row.cart} locale={locale}/> : row.onSite ? <OnSiteCheckoutSummary result={row.onSite} locale={locale}/> : <MerchantSettlementBadge snapshot={checkoutReportingSettlement(row)} locale={locale} showDetails/>}
               {r.closed && <p className="text-xs text-slate-600">{text.closedNote}</p>}
               {policy && <details className="text-sm text-slate-600"><summary className="cursor-pointer">{text.policy}</summary><ul className="mt-2 list-inside list-disc space-y-1">{"returnPoints" in policy && <li>{policy.returnPoints ? text.returnPoints : text.keepPoints}</li>}<li>{policy.returnCoupons ? text.returnCoupons : text.keepCoupons}</li></ul></details>}
               {review && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{text.reviewNote}</p>}</>}

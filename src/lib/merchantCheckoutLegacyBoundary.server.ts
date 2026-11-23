@@ -223,7 +223,8 @@ async function linkedCheckoutOrderOrBookingIds(siteId: string, kind: "booking" |
     const scope = { siteId, resources: ids.slice(offset, offset + 50).map(id => ({ kind, id })) };
     const raw = await call(callRpc, mixed ? "faolla_member_checkout_reporting_v2" : "faolla_member_checkout_reporting_v1", { p_site_id: siteId, p_resources: scope.resources });
     let snapshot;
-    try { snapshot = parseCheckoutReportingSnapshot(raw, scope); } catch { throw new CheckoutLegacyBoundaryError("checkout_unavailable", 503); }
+    try { snapshot = parseCheckoutReportingSnapshot(raw, scope); if (snapshot.version !== (mixed ? 2 : 1)) throw new Error("invalid"); }
+    catch { throw new CheckoutLegacyBoundaryError("checkout_unavailable", 503); }
     for (const row of snapshot.rows) if (row.result || row.onSite) linked.add(row.id);
   }
   return linked;
