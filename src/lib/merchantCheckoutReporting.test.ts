@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { checkoutReportingNeedsReview, checkoutReportingSettlement, checkoutReportingTsv, parseCheckoutReportingRequest, parseCheckoutReportingSnapshot } from "./merchantCheckoutReporting";
 import { summarizeMerchantSettlement } from "./merchantSettlement";
-import { readCheckoutReporting } from "./merchantCheckoutReporting.server";
+import { readCheckoutReporting, readMixedCheckoutReporting } from "./merchantCheckoutReporting.server";
 import { normalizeMerchantOrderRecord } from "./merchantOrders";
 
 const siteId = "10909095", scope = { siteId, resources: [{ kind: "order" as const, id: "O123" }] };
@@ -40,6 +40,18 @@ test("a confirmed unlinked resource has no inferred free/unpaid/cash-paid settle
   const row = parseCheckoutReportingSnapshot(raw, scope).rows[0];
   assert.equal(checkoutReportingSettlement(row), null); assert.equal(checkoutReportingNeedsReview(row), false);
   assert.ok(!/unpaid|cash|free/.test(checkoutReportingTsv(raw)));
+});
+test("mixed report projects cash independently from business status, preserves points and exports integer amounts without secrets", async () => {
+  const raw = fixture(), cashId = "O-CASH", q = { siteId, resources: [...scope.resources, { kind: "order" as const, id: cashId }] };
+  const cash = { version: 2, siteId, operationKey: "c".repeat(64), terms: { version: 2, method: "on_site", resourceKind: "order", resourceId: cashId, currency: "eur", grossMinor: 1000, discountMinor: 200, dueMinor: 800, capturedMinor: 0, totalPoints: null, couponCount: 1, paymentState: "unpaid" },
+    closed: false, termsMatch: true, resource: { status: "completed", updatedAt: "2026-11-23T12:00:00Z" }, cancellationAvailable: false, cancellationPolicy: { returnCoupons: true, advanceMinutes: 0, cancellableUntil: null }, collection: null, cancellation: null, privateCode: "SECRET" };
+  const mixed = { version: 2, siteId, rows: [...raw.rows, { kind: "order", id: cashId, result: null, termsMatch: true, onSite: cash }] };
+  const parsed = await readMixedCheckoutReporting(q, async name => { assert.equal(name, "faolla_member_checkout_reporting_v2"); return { data: mixed, error: null }; });
+  assert.equal(parsed.rows[1].onSite?.collection, null); assert.equal(parsed.rows[0].result?.totalPoints, 100); assert.equal(checkoutReportingNeedsReview(parsed.rows[1]), false);
+  assert.ok(!JSON.stringify(parsed).includes("SECRET")); const exported = checkoutReportingTsv(parsed); assert.ok(exported.includes("merchant_recorded_cash_minor")); assert.ok(exported.includes("\t1000\t200\t800\t0\t"));
+  assert.throws(() => parseCheckoutReportingSnapshot({ ...mixed, version: 1 }, q));
+  assert.throws(() => parseCheckoutReportingSnapshot({ ...mixed, rows: [...raw.rows, { ...mixed.rows[1], termsMatch: false }] }, q));
+  await assert.rejects(readMixedCheckoutReporting(q, async () => ({ data: { ...mixed, version: 1 }, error: null })), /checkout_reporting_unavailable/);
 });
 test("original points, coupon-only and policy retention display actual ledger facts independently of business state", () => {
   const raw = fixture(), row = raw.rows[0];

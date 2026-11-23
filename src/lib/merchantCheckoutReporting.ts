@@ -1,13 +1,15 @@
 import { parseMemberCheckoutResult, type MemberCheckoutResult } from "./merchantMemberCheckoutResult";
 import type { MerchantSettlementSnapshot } from "./merchantSettlement";
+import { parseOnSiteCheckoutResult, type OnSiteCheckoutResult } from "./merchantCheckoutOnSiteResult";
 
 export type CheckoutResourceReference = { kind: "booking" | "order"; id: string };
 export type CheckoutReportingRequest = { siteId: string; resources: CheckoutResourceReference[] };
 export type CheckoutReportingRow = CheckoutResourceReference & {
   result: MemberCheckoutResult | null;
   termsMatch: boolean;
+  onSite?: OnSiteCheckoutResult;
 };
-export type CheckoutReportingSnapshot = { version: 1; siteId: string; rows: CheckoutReportingRow[] };
+export type CheckoutReportingSnapshot = { version: 1 | 2; siteId: string; rows: CheckoutReportingRow[] };
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 const validId = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9:_-]{1,160}$/.test(v);
 const key = (r: CheckoutResourceReference) => `${r.kind}:${r.id}`;
@@ -30,10 +32,16 @@ export function parseCheckoutReportingRequest(raw: unknown): CheckoutReportingRe
  * response cannot introduce member identifiers, claim codes or contact data. */
 export function parseCheckoutReportingSnapshot(raw: unknown, scope: CheckoutReportingRequest): CheckoutReportingSnapshot {
   parseCheckoutReportingRequest(scope);
-  need(object(raw) && raw.version === 1 && raw.siteId === scope.siteId && Array.isArray(raw.rows) && raw.rows.length === scope.resources.length);
+  need(object(raw) && (raw.version === 1 || raw.version === 2) && raw.siteId === scope.siteId && Array.isArray(raw.rows) && raw.rows.length === scope.resources.length);
   const rows = raw.rows.map((row, index) => {
     const expected = scope.resources[index];
     need(object(row) && row.kind === expected.kind && row.id === expected.id && typeof row.termsMatch === "boolean");
+    if (Object.hasOwn(row, "onSite")) {
+      need(raw.version === 2 && row.result === null && object(row.onSite) && typeof row.onSite.operationKey === "string");
+      const onSite = parseOnSiteCheckoutResult(row.onSite, { siteId: scope.siteId, operationKey: row.onSite.operationKey });
+      need(onSite.terms.resourceKind === expected.kind && onSite.terms.resourceId === expected.id && row.termsMatch === onSite.termsMatch);
+      return { ...expected, result: null, onSite, termsMatch: row.termsMatch };
+    }
     let result: MemberCheckoutResult | null = null;
     if (row.result !== null) {
       need(object(row.result) && typeof row.result.operationKey === "string" && /^[a-f0-9]{64}$/.test(row.result.operationKey));
@@ -42,11 +50,11 @@ export function parseCheckoutReportingSnapshot(raw: unknown, scope: CheckoutRepo
     } else need(row.termsMatch === false);
     return { ...expected, result, termsMatch: row.termsMatch };
   });
-  return { version: 1, siteId: scope.siteId, rows };
+  return { version: raw.version, siteId: scope.siteId, rows };
 }
 
 export function checkoutReportingNeedsReview(row: CheckoutReportingRow): boolean {
-  const r = row.result;
+  const r = row.onSite ?? row.result;
   return Boolean(r && (!row.termsMatch || !r.resource || (r.closed !== (r.resource.status === "cancelled"))));
 }
 
@@ -67,6 +75,10 @@ export function checkoutReportingTsv(snapshot: CheckoutReportingSnapshot): strin
     const text = String(v ?? "").replace(/[\t\r\n\u0000-\u001f\u007f]/g, " ");
     return /^[\s]*[=+\-@]/.test(text) ? `'${text}` : text;
   };
+  if (snapshot.version === 2) return [["kind", "resource_id", "method", "business_status", "points_debited", "points_returned", "gross_minor", "coupon_discount_minor", "due_minor", "merchant_recorded_cash_minor", "coupons_used", "coupons_returned", "closed", "review_required"],
+    ...snapshot.rows.map(row => { const p = row.result, c = row.onSite, r = c ?? p; return [row.kind, row.id, c ? "on_site" : p ? "points" : "unlinked", r?.resource?.status ?? "",
+      p?.totalPoints ?? "", p?.cancellation?.pointsReturned ?? (p ? 0 : ""), c?.terms.grossMinor ?? "", c?.terms.discountMinor ?? "", c?.terms.dueMinor ?? "", c ? c.collection?.amountMinor ?? 0 : "",
+      c?.terms.couponCount ?? p?.couponCount ?? "", r?.cancellation?.couponsReturned ?? (r ? 0 : ""), r?.closed ?? "", r ? checkoutReportingNeedsReview(row) : ""]; })].map(row => row.map(cell).join("\t")).join("\r\n");
   return [["kind", "resource_id", "ledger", "business_status", "points_debited", "points_returned", "coupons_used", "coupons_returned", "closed", "review_required"],
     ...snapshot.rows.map(row => [row.kind, row.id, row.result ? "linked" : "unlinked", row.result?.resource?.status ?? "",
       row.result?.totalPoints ?? "", row.result?.cancellation?.pointsReturned ?? (row.result ? 0 : ""), row.result?.couponCount ?? "",

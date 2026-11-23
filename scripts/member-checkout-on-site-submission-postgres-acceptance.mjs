@@ -1,5 +1,6 @@
 // NEW owned loopback TEMP cluster only. No .env, real DB, mail or Stripe.
-// Exercises trusted on-site snapshot -> planner -> composite commit, not UI.
+// Actual controller/HTTP with injected synthetic identity and trusted SQL.
+// Not live Next.js/PostgREST, production authorization or physical-phone QA.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile,mkdtemp} from 'node:fs/promises';
@@ -23,6 +24,13 @@ import sources from '../src/lib/merchantCheckoutSources.server.ts';
 import planner from '../src/lib/merchantCheckoutOnSiteSubmissionPlan.server.ts';
 import submission from '../src/lib/merchantCheckoutOnSiteSubmission.server.ts';
 import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
+import http from '../src/lib/merchantCheckoutOnSiteHttp.server.ts';
+import client from '../src/lib/merchantCheckoutOnSiteClient.ts';
+import clientProtocol from '../src/lib/merchantCheckoutClient.ts';
+import reporting from '../src/lib/merchantCheckoutReporting.server.ts';
+import reportHttp from '../src/app/api/merchant-checkout/settlements/route-handler.ts';
+import originalResource from '../src/lib/merchantCheckoutOriginalResource.server.ts';
+import resourceHttp from '../src/app/api/member-checkout/resource/route-handler.ts';
 
 test('trusted cash submission verifies real published sources and original atomic writers in isolated PostgreSQL',{timeout:120000},async t=>{
  const runtime=path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR||'.missing-test-runtime'),relative=path.relative(tmpdir(),runtime);
@@ -61,7 +69,8 @@ test('trusted cash submission verifies real published sources and original atomi
    'database/proposals/20261122_member_checkout_design.sql','database/proposals/20261122_member_checkout_catalog.sql','database/proposals/20261122_member_checkout_bundle.sql',
    'database/proposals/20261122_member_checkout_cancellation.sql','database/proposals/20261122_member_checkout_queries.sql','database/proposals/20261123_member_checkout_legacy_boundary.sql',
    'database/proposals/20261123_member_checkout_on_site_pending.sql','database/proposals/20261123_member_checkout_on_site_cancellation.sql',
-   'database/proposals/20261122_member_checkout_submission.sql','database/proposals/20261123_member_checkout_on_site_submission.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
+   'database/proposals/20261122_member_checkout_submission.sql','database/proposals/20261123_member_checkout_on_site_submission.sql',
+   'database/proposals/20261123_member_checkout_reporting.sql','database/proposals/20261123_member_checkout_presentation.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
   await admin.query('update faolla_booking_atomic_control set active=true where singleton');
   await admin.query('insert into faolla_checkout_design.bundle_pilots(site_id,enabled) values($1,true)',[site]);
   const page=slug=>one(admin,'select *,to_jsonb(updated_at) as stamp from pages where slug=$1',[slug]);
@@ -77,9 +86,13 @@ test('trusted cash submission verifies real published sources and original atomi
    if(found)await admin.query('update pages set blocks=$2 where id=$1',[found.id,JSON.stringify(value)]);
    else await admin.query('insert into pages(merchant_id,slug,blocks) values($1,$2,$3)',[merchant,slug,JSON.stringify(value)]);};
   const rpc=client=>async(name,args,signal)=>{assert.ok(signal instanceof AbortSignal);try{
-   const sql=name==='faolla_member_checkout_on_site_snapshot_v1'?'select public.faolla_member_checkout_on_site_snapshot_v1($1,$2,$3,$4,$5) as result':
-    name==='faolla_member_checkout_on_site_commit_v1'?'select public.faolla_member_checkout_on_site_commit_v1($1,$2,$3,$4,$5,$6,$7) as result':null;assert.ok(sql);
-   return{data:(await one(client,sql,[args.p_site_id,args.p_operation_key,args.p_principal_key,args.p_request_hash,...(name.includes('snapshot')?[args.p_offer_id]:[args.p_snapshot,args.p_plan,args.p_not_after])])).result,error:null};
+   let sql,values;
+   if(name==='faolla_member_checkout_on_site_snapshot_v1'){sql='select public.faolla_member_checkout_on_site_snapshot_v1($1,$2,$3,$4,$5) as result';values=[args.p_site_id,args.p_operation_key,args.p_principal_key,args.p_request_hash,args.p_offer_id];}
+   else if(name==='faolla_member_checkout_on_site_commit_v1'){sql='select public.faolla_member_checkout_on_site_commit_v1($1,$2,$3,$4,$5,$6,$7) as result';values=[args.p_site_id,args.p_operation_key,args.p_principal_key,args.p_request_hash,args.p_snapshot,args.p_plan,args.p_not_after];}
+   else if(['faolla_member_checkout_on_site_result_v1','faolla_member_checkout_original_result_v1'].includes(name)){sql=`select public.${name}($1,$2,$3) as result`;values=[args.p_site_id,args.p_operation_key,args.p_principal_key];}
+   else if(name==='faolla_member_checkout_on_site_cancel_v1'){sql='select public.faolla_member_checkout_on_site_cancel_v1($1,$2,$3,$4) as result';values=[args.p_site_id,args.p_operation_key,args.p_principal_key,args.p_expected_updated_at];}
+   else if(name==='faolla_member_checkout_original_resource_v1'){sql='select public.faolla_member_checkout_original_resource_v1($1,$2,$3,$4) as result';values=[args.p_site_id,args.p_kind,args.p_id,args.p_principal_key];}
+   assert.ok(sql);return{data:(await one(client,sql,values)).result,error:null};
   }catch(error){return{data:null,error:{message:error.message}};}};
   const fixture=async({kind='booking',withCoupon=true,covered=false,cashOnly=false}={})=>{
    const stamp=new Date().toISOString(),blockId=`cash-${kind}-${randomUUID()}`,appointmentAt=`${bookingTime.bookingWallTimeAt(new Date(Date.now()+3*86400000),'Europe/Madrid').slice(0,10)}T12:00`;
@@ -157,6 +170,36 @@ test('trusted cash submission verifies real published sources and original atomi
    await assert.rejects(submit({...f,request:{...f.request,customer:{...f.request.customer,note:'changed'}}}),/checkout_operation_conflict/);
    assert.equal((await one(admin,'select public.faolla_member_checkout_on_site_result_v1($1,$2,$3) as result',[site,pointIdentity.operationKey,'account:50010106:foreign-synthetic'])).result,null);assert.deepEqual(await all(),before);
   });
+  await t.test('actual cash controller reaches HTTP, trusted SQL, original recovery, owner mixed report and original cancellation for booking and product',async()=>{
+   for(const kind of ['booking','order']){
+    const f=await fixture({kind,cashOnly:true}),before=await page(memberSlug),stored=new Map(),writes=[];
+    const deps={enabled:()=>true,session:async()=>({...who,servicePaused:false,user:{id:userId,email_confirmed_at:at}}),call:rpc(a)};
+    const request=async(pathname,body,signal)=>{
+     const action=pathname.split('/').pop();assert.ok(['preview','submit','recover','result','cancel'].includes(action));if(action==='submit'||action==='cancel')writes.push(action);
+     const response=await http.handleOnSiteCheckout(action,new Request(`https://cash-checkout.invalid${pathname}`,{method:'POST',headers:{origin:'https://cash-checkout.invalid','content-type':'application/json'},body:JSON.stringify(body),signal}),deps),data=await response.json();
+     if(!response.ok)throw new clientProtocol.CheckoutClientError(data.error,response.status);return data;
+    };
+    const controller=client.createOnSiteCheckoutController({siteId:site,accountId,request,exclusive:async(_key,run)=>{await run();return true;},randomNonce:randomUUID,
+     storage:{getItem:k=>stored.get(k)??null,setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)}});
+    await controller.activate();const selection={siteId:site,offerId:f.request.offerId,offerRevision:f.request.offerRevision,quantity:1,...(kind==='booking'?{appointmentAt:f.request.appointmentAt}:{}),couponClaims:f.request.couponClaims};
+    await controller.preview(selection,f.request.customer);assert.equal(controller.getSnapshot().phase,'ready');assert.equal(controller.getSnapshot().quote.dueMinor,800);
+    await controller.submit(f.request.customer);assert.equal(controller.getSnapshot().phase,'confirmed');const result=controller.getSnapshot().original.result;assert.equal(result.terms.dueMinor,800);assert.deepEqual(await page(memberSlug),before);
+    assert.deepEqual(Object.keys(JSON.parse([...stored.values()][0])).sort(),['nonce','version']);assert.deepEqual(writes,['submit']);
+    const resources=[{kind,id:result.terms.resourceId}],owner={type:'owner',siteId:site,authUserId:'cash-synthetic-owner',principalKey:actor,authorizationVersion:'owner',displayName:'Synthetic',email:'synthetic@example.invalid',authorizationSource:'database',collaborationPermissions:[],businessPermissions:[]};
+    const reportCall=async(name,args)=>{assert.equal(name,'faolla_member_checkout_reporting_v2');return{data:(await one(admin,'select public.faolla_member_checkout_reporting_v2($1,$2) as result',[args.p_site_id,JSON.stringify(args.p_resources)])).result,error:null};};
+    const report=await reportHttp.handleCheckoutReporting(new Request('https://cash-checkout.invalid/api/merchant-checkout/settlements',{method:'POST',headers:{origin:'https://cash-checkout.invalid','content-type':'application/json'},body:JSON.stringify({siteId:site,resources})}),{
+     enabled:()=>true,mixedEnabled:()=>true,actor:async()=>owner,site:async()=>f.siteView,readMixed:input=>reporting.readMixedCheckoutReporting(input,reportCall),read:async()=>{throw new Error('unexpected points fallback');}});
+    assert.equal(report.status,200);const shown=(await report.json()).snapshot.rows[0];assert.equal(shown.result,null);assert.equal(shown.onSite.terms.dueMinor,800);assert.equal(shown.onSite.collection,null);assert.equal(shown.termsMatch,true);
+    assert.ok(!/PRIVATE|memberId|cash-submit-synthetic|editToken|principalKey/.test(JSON.stringify(shown)));
+    const historyRequest=new Request(`https://cash-checkout.invalid/api/member-checkout/resource?siteId=${site}&kind=${kind}&id=${result.terms.resourceId}`,{headers:{origin:'https://cash-checkout.invalid','x-checkout-account-scope':accountId}}),saved=await all();
+    const history=await resourceHttp.handlePersonalCheckoutResource(historyRequest,async()=>{throw new Error('no points fallback');},{enabled:()=>true,read:input=>originalResource.readPersonalCheckoutOriginalResource(input,{enabled:()=>true,session:deps.session,call:(args,signal)=>rpc(admin)('faolla_member_checkout_original_resource_v1',args,signal)})});
+    assert.equal(history.status,200);assert.equal((await history.json()).onSite.terms.resourceId,result.terms.resourceId);assert.deepEqual(await all(),saved);
+    await controller.recover();assert.equal(controller.getSnapshot().original.result.operationKey,result.operationKey);await controller.startAnother();assert.equal(stored.size,0);assert.deepEqual(writes,['submit']);
+    const read=await request('/api/member-checkout/on-site/result',{siteId:site,operationKey:result.operationKey},new AbortController().signal);
+    const cancel=await request('/api/member-checkout/on-site/cancel',{siteId:site,operationKey:result.operationKey,expectedUpdatedAt:read.result.resource.updatedAt},new AbortController().signal);assert.equal(cancel.cancellation.pointsReturned,0);assert.equal(cancel.cancellation.cashReturnedMinor,0);
+    assert.deepEqual(await page(memberSlug),before);controller.deactivate();
+   }
+  });
   await t.test('source permissions, price, coupon, member/settings and booking-vector changes after preparation reject the entire transaction',async()=>{
    for(const scenario of ['permission','published','catalog','coupon','member','stock','booking']){
     const f=await fixture({kind:scenario==='catalog'?'order':'booking'}),p=await prepare(f);
@@ -211,7 +254,7 @@ test('trusted cash submission verifies real published sources and original atomi
   });
   await t.test('API roles have no execute grants or private schema privileges',async()=>{
    for(const role of ['anon','authenticated','service_role']){
-    const c=await connect(role);for(const name of ['faolla_member_checkout_on_site_snapshot_v1(text,text,text,text,text)','faolla_member_checkout_on_site_commit_v1(text,text,text,text,jsonb,jsonb,text)'])
+    const c=await connect(role);for(const name of ['faolla_member_checkout_on_site_snapshot_v1(text,text,text,text,text)','faolla_member_checkout_on_site_commit_v1(text,text,text,text,jsonb,jsonb,text)','faolla_member_checkout_original_result_v1(text,text,text)','faolla_member_checkout_reporting_v2(text,jsonb)','faolla_member_checkout_original_resource_v1(text,text,text,text)'])
      assert.equal((await one(c,'select has_function_privilege(current_user,$1,\'EXECUTE\') as allowed',[`public.${name}`])).allowed,false);
     await assert.rejects(c.query('select * from faolla_checkout_design.bundle_results'),/permission denied/);
    }

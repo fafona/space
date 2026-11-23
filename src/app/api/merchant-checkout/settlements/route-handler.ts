@@ -6,11 +6,13 @@ import { getMerchantServiceState } from "@/lib/merchantServiceStatus";
 import { isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { isMemberCheckoutPilotEnabled } from "@/lib/merchantMemberCheckoutPilot.server";
 import { parseCheckoutReportingRequest, parseCheckoutReportingSnapshot } from "@/lib/merchantCheckoutReporting";
-import { readCheckoutReporting } from "@/lib/merchantCheckoutReporting.server";
+import { readCheckoutReporting, readMixedCheckoutReporting } from "@/lib/merchantCheckoutReporting.server";
+import { isMemberCheckoutOnSitePilotEnabled } from "@/lib/merchantCheckoutOnSitePilot.server";
 import { isTrustedCheckoutReadRequest } from "@/lib/merchantCheckoutReadRequest";
 
 const defaults = { enabled: isMemberCheckoutPilotEnabled, actor: resolveMerchantBusinessActor,
-  site: async (id: string) => (await loadAuthoritativeCurrentMerchantSnapshotSites()).find(s => s.id === id) ?? null, read: readCheckoutReporting };
+  site: async (id: string) => (await loadAuthoritativeCurrentMerchantSnapshotSites()).find(s => s.id === id) ?? null, read: readCheckoutReporting,
+  mixedEnabled: isMemberCheckoutOnSitePilotEnabled, readMixed: readMixedCheckoutReporting };
 export type CheckoutReportingDependencies = typeof defaults;
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: {
   "cache-control": "private, no-store", pragma: "no-cache", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "cross-origin-resource-policy": "same-origin", vary: "Cookie, Authorization",
@@ -84,8 +86,9 @@ export async function handleCheckoutReporting(request: Request, overrides: Parti
     const expectedIdentity = request.headers.get("x-checkout-owner-scope");
     if (expectedIdentity !== null && expectedIdentity !== identityKey) return json({ error: "permission_denied" }, 403);
     await reauthorize();
-    const report = await deps.read(scope);
+    const mixed = deps.mixedEnabled(scope.siteId), report = await (mixed ? deps.readMixed : deps.read)(scope);
     await reauthorize();
+    if (deps.mixedEnabled(scope.siteId) !== mixed) throw new Error("checkout_reporting_unavailable");
     let snapshot;
     try { snapshot = parseCheckoutReportingSnapshot(report, scope); } catch { throw new Error("checkout_reporting_unavailable"); }
     return json({ ok: true, snapshot });

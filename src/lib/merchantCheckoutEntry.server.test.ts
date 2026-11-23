@@ -26,7 +26,7 @@ function fixture(kind: "booking" | "order" = "booking", viewport: "desktop" | "m
   const site = { id: query.siteId, name: "Synthetic", status: "online", serviceExpiresAt: "2099-01-01T00:00:00Z", permissionConfig: {
     allowBookingBlock: true, allowProductBlock: true, allowOrderManagement: true, allowMembershipManagement: true, allowPointsRedemption: true } } as unknown as MerchantListPublishedSite;
   const calls: string[] = [];
-  const deps: CheckoutEntryDependencies = { enabled: () => true, sites: async () => { calls.push("site"); return [site]; },
+  const deps: CheckoutEntryDependencies = { enabled: () => true, cashEnabled: () => false, sites: async () => { calls.push("site"); return [site]; },
     published: async () => { calls.push("published"); return { siteId: query.siteId, blocks } as Awaited<ReturnType<CheckoutEntryDependencies["published"]>>; },
     configuration: async () => { calls.push("config"); return config; }, catalog: async () => { calls.push("catalog"); return catalog; }, now: () => Date.parse("2026-11-23T12:00:00Z") };
   return { query, blocks, catalog, site, config, offer, calls, deps };
@@ -78,4 +78,11 @@ test("duplicate source bindings, foreign publication, late permission revocation
     if (mode === "error") f.deps.configuration = async () => { throw new Error("PRIVATE SQL"); };
     await assert.rejects(readCheckoutEntryOffers(f.query, f.deps));
   }
+});
+test("cash-only source discovery requires the separate cash gate, not points entitlement, and preserves exact price/source checks", async () => {
+  const f = fixture("order"); f.offer.allowOnSite = true; f.offer.unitPoints = null; f.site.permissionConfig!.allowPointsRedemption = false;
+  assert.deepEqual(await readCheckoutEntryOffers(f.query, f.deps), []); f.deps.cashEnabled = () => true;
+  const offers = await readCheckoutEntryOffers(f.query, f.deps); assert.equal(offers.length, 1); assert.equal(offers[0].onSiteOnly, true);
+  assert.ok(!/cashMinor|unitPoints|stock|voucher/.test(JSON.stringify(offers)));
+  f.catalog.products[0].price = "15.00"; assert.deepEqual(await readCheckoutEntryOffers(f.query, f.deps), []);
 });

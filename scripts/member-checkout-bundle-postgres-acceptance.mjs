@@ -89,6 +89,7 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
   // proposal below, before any owner cash command is exercised.
   await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_on_site_cancellation.sql'),'utf8'));
   await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_on_site_submission.sql'),'utf8'));
+  await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_presentation.sql'),'utf8'));
   // Test-only admin activation in this freshly created owned synthetic cluster.
   // No equivalent application endpoint or production activation exists.
   await admin.query('update faolla_booking_atomic_control set active=true where singleton');
@@ -837,6 +838,22 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
    const before=await all();
    assert.equal((await one(admin,'select public.faolla_member_checkout_on_site_result_v1($1,$2,$3) as result',[original.site_id,original.operation_key,original.principal_key])).result,null);
    await assert.rejects(admin.query('select public.faolla_member_checkout_on_site_cancel_v1($1,$2,$3,$4)',[original.site_id,original.operation_key,original.principal_key,at]),/checkout_cancellation_review_required/);
+   assert.deepEqual(await all(),before);
+  });
+  await t.test('mixed presentation reads original points and cash from one SQL snapshot without changing their methods or private data',async()=>{
+   const originals=(await admin.query("select distinct on (receipt->>'version') * from faolla_checkout_design.bundle_results where site_id='10909998' order by receipt->>'version',operation_key")).rows;
+   assert.equal(originals.length,2);assert.deepEqual(originals.map(row=>row.receipt.version),[1,2]);
+   const scope={siteId:'10909998',resources:originals.map(row=>({kind:row.resource_kind,id:row.resource_id}))},before=await all();let reads=0;
+   const mixed=await reportingStore.readMixedCheckoutReporting(scope,async(name,args)=>{reads++;assert.equal(name,'faolla_member_checkout_reporting_v2');
+    return{data:(await one(admin,'select public.faolla_member_checkout_reporting_v2($1,$2) as result',[args.p_site_id,JSON.stringify(args.p_resources)])).result,error:null};});
+   assert.equal(reads,1);assert.equal(mixed.version,2);assert.equal(mixed.rows[0].result.totalPoints,originals[0].receipt.totalPoints);assert.equal(mixed.rows[0].onSite,undefined);
+   assert.equal(mixed.rows[1].result,null);assert.equal(mixed.rows[1].onSite.terms.method,'on_site');assert.equal(mixed.rows[1].onSite.terms.capturedMinor,0);
+   assert.ok(!/principalKey|membershipId|couponUses|editToken|customerName/.test(JSON.stringify(mixed)));
+   for(const [index,original]of originals.entries()){
+    const neutral=(await one(admin,'select public.faolla_member_checkout_original_result_v1($1,$2,$3) as result',[original.site_id,original.operation_key,original.principal_key])).result;
+    assert.equal(neutral.method,index===0?'points':'on_site');assert.equal(neutral.result.operationKey,original.operation_key);
+    assert.equal((await one(admin,'select public.faolla_member_checkout_original_result_v1($1,$2,$3) as result',[original.site_id,original.operation_key,'account:50010106:wrong-synthetic'])).result,null);
+   }
    assert.deepEqual(await all(),before);
   });
   assert.equal((await one(admin,'select count(*)::int as n from faolla_checkout_design.on_site_collections')).n,0,'existing points/unpaid workflows must not manufacture cash collection facts');

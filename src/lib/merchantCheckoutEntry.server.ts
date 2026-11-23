@@ -6,6 +6,7 @@ import { parseStrictMerchantCatalog, type MerchantCatalog } from "./merchantCata
 import { loadCheckoutConfiguration, parseCheckoutConfigurationSnapshot } from "./merchantCheckoutConfigurationStore.server";
 import { buildCheckoutSourceChoices } from "./merchantCheckoutSources.server";
 import { isMemberCheckoutPilotEnabled } from "./merchantMemberCheckoutPilot.server";
+import { isMemberCheckoutOnSitePilotEnabled } from "./merchantCheckoutOnSitePilot.server";
 import { parseCheckoutEntryQuery, type CheckoutEntryOffer } from "./merchantCheckoutEntry";
 
 /** Read the operating catalog only. Never use its legacy repair/bootstrap
@@ -23,7 +24,7 @@ async function readEntryCatalog(siteId: string): Promise<MerchantCatalog | null>
   if (!catalog) throw new Error("checkout_entry_unavailable");
   return catalog;
 }
-const defaults = { enabled: isMemberCheckoutPilotEnabled, sites: loadAuthoritativeCurrentMerchantSnapshotSites,
+const defaults = { enabled: isMemberCheckoutPilotEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, sites: loadAuthoritativeCurrentMerchantSnapshotSites,
   published: (siteId: string) => fetchPublishedSiteBlocksFromSupabase(siteId, { fresh: true }),
   configuration: loadCheckoutConfiguration, catalog: readEntryCatalog, now: Date.now };
 export type CheckoutEntryDependencies = typeof defaults;
@@ -36,12 +37,13 @@ export async function readCheckoutEntryOffers(raw: unknown, overrides: Partial<C
   const matching = (await deps.sites()).filter(site => site.id === query.siteId);
   if (matching.length !== 1) return [];
   const site = structuredClone(matching[0]), p = site.permissionConfig;
+  const cash = deps.cashEnabled(query.siteId), points = p?.allowPointsRedemption === true;
   const allowed = () => site.status === "online" && getMerchantServiceState(site.status, site.serviceExpiresAt, deps.now()).reason === null
-    && p?.allowMembershipManagement === true && p.allowPointsRedemption === true
+    && p?.allowMembershipManagement === true && (points || cash)
     && (query.kind === "booking" ? p.allowBookingBlock === true : p.allowProductBlock === true && p.allowOrderManagement === true);
   if (!allowed()) return [];
   const config = parseCheckoutConfigurationSnapshot(await deps.configuration(query.siteId), query.siteId);
-  const candidates = config.offers.filter(o => o.enabled && o.unitPoints !== null && o.source.kind === query.kind
+  const candidates = config.offers.filter(o => o.enabled && (points && o.unitPoints !== null || cash && o.allowOnSite && o.cash !== null) && o.source.kind === query.kind
     && o.source.blockId === query.blockId && o.checkoutBinding.viewport === query.viewport);
   if (!candidates.length) return [];
   const [published, catalog] = await Promise.all([deps.published(query.siteId), query.kind === "order" ? deps.catalog(query.siteId) : null]);
@@ -56,10 +58,11 @@ export async function readCheckoutEntryOffers(raw: unknown, overrides: Partial<C
     if (s.kind === "booking" ? s.store !== b.store || s.item !== b.item
       : offer.source.kind !== "order" || s.collectionId !== offer.source.collectionId || s.productId !== offer.source.productId || s.cashMinor !== offer.cash?.unitAmountMinor) return [];
     return [{ offerId: offer.id, offerRevision: offer.revision, title: offer.title, maxQuantity: offer.source.kind === "booking" ? 1 : offer.maxQuantity,
+      ...(!points || offer.unitPoints === null ? { onSiteOnly: true as const } : {}),
       source: s.kind === "booking" ? { kind: "booking" as const, store: s.store!, item: s.item! } : { kind: "order" as const, productId: s.productId! } }];
   });
   const after = (await deps.sites()).filter(current => current.id === query.siteId);
-  if (!deps.enabled(query.siteId) || !allowed() || after.length !== 1 || JSON.stringify(after[0]) !== JSON.stringify(site)) throw new Error("checkout_entry_unavailable");
+  if (!deps.enabled(query.siteId) || deps.cashEnabled(query.siteId) !== cash || !allowed() || after.length !== 1 || JSON.stringify(after[0]) !== JSON.stringify(site)) throw new Error("checkout_entry_unavailable");
   // Ambiguous bindings are never resolved by taking the first price/title.
   if (new Set(offers.map(o => JSON.stringify(o.source))).size !== offers.length) throw new Error("checkout_entry_unavailable");
   return offers;

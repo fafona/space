@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { isMemberCheckoutPilotEnabled } from "@/lib/merchantMemberCheckoutPilot.server";
+import { isMemberCheckoutOnSitePilotEnabled } from "@/lib/merchantCheckoutOnSitePilot.server";
 import { parseCheckoutStartQuery, type CheckoutClientSelection } from "@/lib/merchantCheckoutClient";
 import CheckoutStartClient from "./CheckoutStartClient";
 export const metadata = { robots: { index: false, follow: false }, referrer: "no-referrer" as const };
@@ -14,5 +15,5 @@ export default async function MemberCheckoutStartPage({ params, searchParams }: 
   try {
     selection = parseCheckoutStartQuery(siteId, query);
   } catch { notFound(); }
-  return <CheckoutStartClient siteId={siteId} initialSelection={selection}/>;
+  return <CheckoutStartClient siteId={siteId} initialSelection={selection} showOnSiteChoice={isMemberCheckoutOnSitePilotEnabled(siteId)}/>;
 }

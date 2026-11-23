@@ -17,3 +17,12 @@ export async function readCheckoutReporting(input: CheckoutReportingRequest, cal
     return parseCheckoutReportingSnapshot(result.data, scope);
   } catch { throw new Error("checkout_reporting_unavailable"); }
 }
+/** Separate opt-in mixed projection. Never fall back to a points-only result
+ * if cash cannot be read; an unavailable ledger is not proof of nonpayment. */
+export async function readMixedCheckoutReporting(input: CheckoutReportingRequest, call?: MemberCheckoutResultRpc) {
+  const scope = parseCheckoutReportingRequest(input);
+  try { const result = await (call ?? rpc())("faolla_member_checkout_reporting_v2", { p_site_id: scope.siteId, p_resources: scope.resources });
+    if (result.error) throw new Error("unavailable"); const snapshot = parseCheckoutReportingSnapshot(result.data, scope);
+    if (snapshot.version !== 2) throw new Error("invalid"); return snapshot;
+  } catch { throw new Error("checkout_reporting_unavailable"); }
+}

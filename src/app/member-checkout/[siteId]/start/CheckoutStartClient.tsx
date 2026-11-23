@@ -4,10 +4,13 @@ import Link from "next/link";
 import { useI18n } from "@/components/I18nProvider";
 import { serviceRequest, SERVICE_IDENTITY_CHANGED, type ServiceIdentity } from "@/components/service-center/serviceCenterClient";
 import { MemberCheckoutStartPanel } from "@/components/checkout/MemberCheckoutStartPanel";
+import { MemberOnSiteStartPanel } from "@/components/checkout/MemberOnSiteStartPanel";
+import { buildCheckoutStartHref } from "@/lib/merchantCheckoutClient";
+import { buildOnSiteCheckoutStartHref } from "@/lib/merchantCheckoutOnSiteClient";
 import type { CheckoutClientSelection } from "@/lib/merchantCheckoutClient";
 import { buildServiceLoginHref } from "@/lib/merchantServiceLogin";
 
-export default function CheckoutStartClient({ siteId, initialSelection }: { siteId: string; initialSelection: CheckoutClientSelection }) {
+export default function CheckoutStartClient({ siteId, initialSelection, onSite = false, showOnSiteChoice = false }: { siteId: string; initialSelection: CheckoutClientSelection; onSite?: boolean; showOnSiteChoice?: boolean }) {
   const { locale } = useI18n(), [accountId, setAccountId] = useState<string | null>(null), [ready, setReady] = useState(false), [failed, setFailed] = useState(false);
   const sequence = useRef(0), [loginHref, setLoginHref] = useState("/login");
   const check = useCallback(async () => {
@@ -28,7 +31,12 @@ export default function CheckoutStartClient({ siteId, initialSelection }: { site
     : locale.startsWith("es") ? failed ? "No se pudo verificar la cuenta." : "Verificando cuenta…" : failed ? "Account could not be verified." : "Verifying account…";
   return <main className="min-h-screen bg-slate-50">
     <div className="mx-auto max-w-3xl px-5 pt-4"><Link href="/" prefetch={false} className="inline-flex min-h-11 items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-800">{locale.startsWith("zh") ? "返回商户重新选择" : locale.startsWith("es") ? "Volver al comercio" : "Back to merchant"}</Link></div>
-    {ready ? <MemberCheckoutStartPanel siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} loginHref={loginHref}/>
+    {showOnSiteChoice && <nav aria-label={locale.startsWith("zh") ? "结算方式" : locale.startsWith("es") ? "Forma de pago" : "Checkout method"} className="mx-auto flex max-w-3xl flex-wrap gap-2 px-5 pt-4">
+      {[{ cash: false, href: buildCheckoutStartHref(initialSelection, locale), label: locale.startsWith("zh") ? "积分兑换" : locale.startsWith("es") ? "Canje de puntos" : "Points redemption" },
+        { cash: true, href: buildOnSiteCheckoutStartHref(initialSelection, locale), label: locale.startsWith("zh") ? "到店付款／用券" : locale.startsWith("es") ? "Pago en local / cupón" : "Pay at venue / coupon" }].map(option =>
+        <Link key={option.href} href={option.href} prefetch={false} aria-current={onSite === option.cash ? "page" : undefined} className={`min-h-11 rounded-xl border px-4 py-3 text-sm ${onSite === option.cash ? "border-teal-700 bg-teal-700 text-white" : "border-slate-200 bg-white text-slate-800"}`}>{option.label}</Link>)}
+    </nav>}
+    {ready ? onSite ? <MemberOnSiteStartPanel siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} loginHref={loginHref}/> : <MemberCheckoutStartPanel siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} loginHref={loginHref}/>
       : <div role="status" className="mx-auto max-w-3xl space-y-3 p-6 text-sm text-slate-600"><p>{label}</p>{failed && <button type="button" className="min-h-11 rounded-xl border bg-white px-4" onClick={() => void check()}>{locale.startsWith("zh") ? "重试" : locale.startsWith("es") ? "Reintentar" : "Retry"}</button>}</div>}
   </main>;
 }

@@ -47,19 +47,23 @@ export default function MemberCheckoutSourceEntry({ active, siteId, kind, blockI
   const matches = kind === "booking" ? access.offers.filter(o => o.source.kind === "booking" && o.source.store === bookingSelection?.store && o.source.item === bookingSelection.item)
     : access.offers.filter(o => o.offerId === chosen);
   const offer = matches.length === 1 ? matches[0] : null;
+  const cash = offer?.onSiteOnly || access.offers.every(o => o.onSiteOnly);
+  const cashCopy = merchantSettlementLanguage(locale) === "zh" ? { title: "会员到店付款与券", open: "在新页核对到店金额与券", note: "单独提交一个项目，不会提交或清空原表单、购物车；请勿在两个入口重复提交。金额和券需在新页重新核验。" }
+    : merchantSettlementLanguage(locale) === "es" ? { title: "Pago en local y cupones de socio", open: "Revisar importe y cupones en otra pestaña", note: "Un artículo por separado, sin enviar ni vaciar el formulario/carrito original. No lo envíes en ambos lugares. El importe y los cupones se verifican de nuevo." }
+      : { title: "Member pay-at-venue & coupons", open: "Review venue amount & coupons in a new tab", note: "One item separately, without submitting or clearing the original form/cart. Do not submit in both places. Amount and coupons are checked again." };
   if (kind === "booking" && !offer) return null;
   let href = "";
   if (offer) try { href = buildCheckoutEntryHref(siteId, offer, kind === "booking" ? 1 : /^[1-9][0-9]{0,2}$/.test(quantity) ? Number(quantity) : 0, kind === "booking" ? bookingSelection?.appointmentAt : undefined, locale); } catch { /* invalid selection is not navigable */ }
   const input = "min-h-11 w-full min-w-0 rounded-xl border border-sky-200 bg-white px-3 py-2 text-sm text-slate-900";
   return <aside data-checkout-source-entry className="my-3 min-w-0 space-y-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-slate-900">
-    <h3 className="font-semibold">{text.title}</h3>
+    <h3 className="font-semibold">{cash ? cashCopy.title : text.title}</h3>
     {kind === "order" ? <div className="grid min-w-0 gap-3 sm:grid-cols-[1fr_8rem]">
       <label className="min-w-0 space-y-1 text-sm"><span>{text.product}</span><select aria-label={text.product} className={input} value={chosen} onChange={e => setChosen(e.target.value)}>
         <option value="">{text.choose}</option>{access.offers.map(o => <option key={o.offerId} value={o.offerId}>{o.title}</option>)}</select></label>
       <label className="min-w-0 space-y-1 text-sm"><span>{text.quantity}</span><input aria-label={text.quantity} type="number" min="1" max={offer?.maxQuantity ?? 999} className={input} value={quantity} onChange={e => setQuantity(e.target.value)}/></label>
     </div> : <p className="text-sm">{offer?.title} · {bookingSelection?.appointmentAt || text.selection}<br/>{text.booking}</p>}
-    <p className="text-xs leading-5 text-slate-600">{text.note}</p>
-    {href ? <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 max-w-full items-center rounded-xl bg-sky-800 px-4 py-2 text-sm font-semibold text-white">{text.open}</a>
+    <p className="text-xs leading-5 text-slate-600">{cash ? cashCopy.note : text.note}</p>
+    {href ? <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 max-w-full items-center rounded-xl bg-sky-800 px-4 py-2 text-sm font-semibold text-white">{cash ? cashCopy.open : text.open}</a>
       : <p role="status" className="text-sm text-slate-600">{text.selection}</p>}
   </aside>;
 }
