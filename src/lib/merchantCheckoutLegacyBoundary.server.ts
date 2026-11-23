@@ -14,6 +14,10 @@ import { isMemberCheckoutOnSitePilotEnabled } from "./merchantCheckoutOnSitePilo
 import { parseCheckoutOriginalResult } from "./merchantCheckoutOriginalResult";
 import { parseOnSiteCancellation, type OnSiteCheckoutResult } from "./merchantCheckoutOnSiteResult";
 import { cancelOnSiteCheckout } from "./merchantCheckoutOnSiteResult.server";
+import { isMemberCheckoutCartManagementEnabled } from "./merchantCheckoutCartPilot.server";
+import { bridgeCartCheckoutManagement } from "./merchantCheckoutCartManagement.server";
+import { checkoutOwnerDependencies } from "./merchantCheckoutOwnerAccess.server";
+import { MerchantCheckoutError } from "./merchantCheckoutQuote.server";
 
 const id = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9:_-]{1,160}$/.test(v);
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
@@ -37,10 +41,10 @@ export function checkoutLegacyErrorDetails(error: unknown) {
                   : "原结算或业务记录已变化，请重新读取并核对原单。";
   return { error: code, message, status: error instanceof CheckoutLegacyBoundaryError ? error.status : code === "checkout_unconfirmed" || code === "checkout_unavailable" ? 503 : 409 };
 }
-function rpc(): MemberCheckoutResultRpc {
+function rpc(signal?: AbortSignal): MemberCheckoutResultRpc {
   const client = createServerSupabaseServiceClient();
   if (!client) throw new CheckoutLegacyBoundaryError("checkout_unavailable", 503);
-  return (name, args) => client.rpc(name, args).abortSignal(AbortSignal.timeout(12_000));
+  return (name, args) => client.rpc(name, args).abortSignal(signal ? AbortSignal.any([signal, AbortSignal.timeout(12_000)]) : AbortSignal.timeout(12_000));
 }
 function anyEnabled() {
   const sites = (process.env.MERCHANT_MEMBER_CHECKOUT_PILOT_SITES ?? "").split(",").map(v => v.trim());
@@ -49,7 +53,7 @@ function anyEnabled() {
 function anyCashEnabled() { return (process.env.MERCHANT_MEMBER_CHECKOUT_PILOT_SITES ?? "").split(",").some(siteId => isMemberCheckoutOnSitePilotEnabled(siteId.trim())); }
 const defaults = { enabled: isMemberCheckoutPilotEnabled, anyEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, anyCashEnabled,
   session: resolvePersonalAccountSessionFromRequest, actor: resolveMerchantBusinessActor, rpc };
-export type CheckoutLegacyBoundaryDependencies = typeof defaults;
+export type CheckoutLegacyBoundaryDependencies = typeof defaults & { cartEnabled?: (siteId: string) => boolean; cartSite?: typeof checkoutOwnerDependencies.site };
 type Link = { siteId: string; kind: "booking" | "order"; id: string; operationKey: string; record: Record<string, unknown> }
   & ({ method: "points"; result: MemberCheckoutResult } | { method: "on_site"; result: OnSiteCheckoutResult });
 async function call(callRpc: MemberCheckoutResultRpc, name: string, args: Record<string, unknown>, writing = false) {
@@ -121,12 +125,13 @@ function publicRecord(link: Link): MerchantBookingRecord | MerchantOrderRecord {
     ...Object.fromEntries(["appointmentTimeZone", "bookingBlockId", "bookingViewport", "customerAccountId", "customerUserId", "customerLoginEmail", "merchantTouchedAt",
       "confirmedAt", "completedAt", "cancelledAt", "noShowMarkedAt", "customerEmailLogs", "timeline"].filter(k => Object.hasOwn(record, k)).map(k => [k, record[k]])) };
 }
-type BoundaryInput = {
+export type CheckoutLegacyBoundaryInput = {
   request: Request; mode: "personal" | "merchant"; siteId?: string; kind: "booking" | "order"; ids: string[];
   batch?: boolean;
   action?: string; status?: string; updates?: unknown; items?: unknown; bookingBlockId?: unknown; bookingViewport?: unknown; expectedUpdatedAt?: unknown;
   actor?: MerchantBusinessActor; assertAuthorizationCurrent?: () => Promise<void>;
 };
+type BoundaryInput = CheckoutLegacyBoundaryInput;
 function assertNoUnsupportedChange(link: Link, input: BoundaryInput) {
   const updates = object(input.updates) ? input.updates : {};
   const cancelling = input.action === "cancel" || input.status === "cancelled";
@@ -152,6 +157,13 @@ export async function bridgeLegacyCheckoutMutation(input: BoundaryInput, overrid
   // impose the new grammar on an unlinked legacy record or history batch.
   const eligibleIds = scope.ids.filter(id);
   if (!eligibleIds.length) return null;
+  const cartEnabled = deps.cartEnabled ?? isMemberCheckoutCartManagementEnabled;
+  if (scope.mode === "merchant" && scope.kind === "order" && scope.siteId && cartEnabled(scope.siteId)) {
+    try { const cart = await bridgeCartCheckoutManagement(scope, { enabled: siteId => deps.enabled(siteId) && cartEnabled(siteId), actor: deps.actor,
+      site: deps.cartSite ?? checkoutOwnerDependencies.site, call: (name, args, signal) => deps.rpc(signal)(name, args) });
+      if (cart.linked) return cart.value;
+    } catch (error) { if (error instanceof MerchantCheckoutError) throw new CheckoutLegacyBoundaryError(error.code, error.status); throw error; }
+  }
   const callRpc = deps.rpc(), initialSession = scope.mode === "personal" ? await deps.session(scope.request) : null;
   const mixed = scope.siteId ? deps.cashEnabled(scope.siteId) : deps.anyCashEnabled();
   let principal: string | null = null;
@@ -217,27 +229,27 @@ export async function bridgeLegacyCheckoutMutation(input: BoundaryInput, overrid
   await reauthorize(); return { kind: link.kind, record: publicRecord(link) };
 }
 
-async function linkedCheckoutOrderOrBookingIds(siteId: string, kind: "booking" | "order", ids: string[], callRpc: MemberCheckoutResultRpc, mixed = false) {
+async function linkedCheckoutOrderOrBookingIds(siteId: string, kind: "booking" | "order", ids: string[], callRpc: MemberCheckoutResultRpc, mixed = false, cart = false) {
   const linked = new Set<string>();
   for (let offset = 0; offset < ids.length; offset += 50) {
     const scope = { siteId, resources: ids.slice(offset, offset + 50).map(id => ({ kind, id })) };
-    const raw = await call(callRpc, mixed ? "faolla_member_checkout_reporting_v2" : "faolla_member_checkout_reporting_v1", { p_site_id: siteId, p_resources: scope.resources });
+    const raw = await call(callRpc, cart ? "faolla_member_checkout_reporting_v3" : mixed ? "faolla_member_checkout_reporting_v2" : "faolla_member_checkout_reporting_v1", { p_site_id: siteId, p_resources: scope.resources });
     let snapshot;
-    try { snapshot = parseCheckoutReportingSnapshot(raw, scope); if (snapshot.version !== (mixed ? 2 : 1)) throw new Error("invalid"); }
+    try { snapshot = parseCheckoutReportingSnapshot(raw, scope); if (snapshot.version !== (cart ? 3 : mixed ? 2 : 1)) throw new Error("invalid"); }
     catch { throw new CheckoutLegacyBoundaryError("checkout_unavailable", 503); }
-    for (const row of snapshot.rows) if (row.result || row.onSite) linked.add(row.id);
+    for (const row of snapshot.rows) if (row.result || row.onSite || row.cart) linked.add(row.id);
   }
   return linked;
 }
 /** Points/coupon originals already applied their own plan. Cash originals do
  * not gain a receipt/award from business completion. Neither may normalize or
  * save the legacy membership store as a side effect of an old status action. */
-export async function legacyCheckoutPointTransitions<T extends { previous: MerchantOrderRecord; next: MerchantOrderRecord }>(transitions: T[], overrides: Partial<Pick<CheckoutLegacyBoundaryDependencies, "enabled" | "cashEnabled" | "rpc">> = {}): Promise<T[]> {
+export async function legacyCheckoutPointTransitions<T extends { previous: MerchantOrderRecord; next: MerchantOrderRecord }>(transitions: T[], overrides: Partial<Pick<CheckoutLegacyBoundaryDependencies, "enabled" | "cashEnabled" | "rpc" | "cartEnabled">> = {}): Promise<T[]> {
   if (!transitions.some(t => (t.previous.status === "completed") !== (t.next.status === "completed"))) return transitions;
   const sites = new Set(transitions.map(t => t.next.siteId));
   const deps = { enabled: isMemberCheckoutPilotEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, rpc, ...overrides };
   if (sites.size !== 1 || !deps.enabled(transitions[0].next.siteId)) return transitions;
-  const linked = await linkedCheckoutOrderOrBookingIds(transitions[0].next.siteId, "order", [...new Set(transitions.map(t => t.next.id))], deps.rpc(), deps.cashEnabled(transitions[0].next.siteId));
+  const linked = await linkedCheckoutOrderOrBookingIds(transitions[0].next.siteId, "order", [...new Set(transitions.map(t => t.next.id))], deps.rpc(), deps.cashEnabled(transitions[0].next.siteId), (deps.cartEnabled ?? isMemberCheckoutCartManagementEnabled)(transitions[0].next.siteId));
   return transitions.filter(t => !linked.has(t.next.id));
 }
 
@@ -247,12 +259,12 @@ export async function legacyCheckoutPointTransitions<T extends { previous: Merch
  * change, invent a replacement cart, or use a browser-provided receipt. The
  * final SQL constraint still validates the authoritative ledger in the commit. */
 export async function preserveCheckoutOrderStorage(siteId: string, next: MerchantOrderRecord[], expectedRows: Array<{ slug: string; blocks: unknown }>,
-  overrides: Partial<Pick<CheckoutLegacyBoundaryDependencies, "enabled" | "cashEnabled" | "rpc">> = {}): Promise<MerchantOrderRecord[]> {
+  overrides: Partial<Pick<CheckoutLegacyBoundaryDependencies, "enabled" | "cashEnabled" | "rpc" | "cartEnabled">> = {}): Promise<MerchantOrderRecord[]> {
   const deps = { enabled: isMemberCheckoutPilotEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, rpc, ...overrides };
   if (!deps.enabled(siteId)) return next;
   const ids = next.map(r => r.id).filter(id);
   if (!ids.length) return next;
-  const linked = await linkedCheckoutOrderOrBookingIds(siteId, "order", [...new Set(ids)], deps.rpc(), deps.cashEnabled(siteId));
+  const linked = await linkedCheckoutOrderOrBookingIds(siteId, "order", [...new Set(ids)], deps.rpc(), deps.cashEnabled(siteId), (deps.cartEnabled ?? isMemberCheckoutCartManagementEnabled)(siteId));
   if (!linked.size) return next;
   const chunks = expectedRows.filter(row => new RegExp(`^__merchant_orders__:${siteId}:chunk:[0-9]+$`).test(row.slug));
   const rows = chunks.length ? chunks : expectedRows.filter(row => row.slug === `__merchant_orders__:${siteId}`);
@@ -275,7 +287,7 @@ export async function preserveCheckoutOrderStorage(siteId: string, next: Merchan
  * of an enabled pilot use the snapshot-aware adapter; it commits through the
  * SAME CAS transaction, never direct page writes or a second financial call. */
 export async function saveCheckoutAwareMerchantOrders(client: Parameters<typeof saveStoredMerchantOrders>[0], input: Parameters<typeof saveStoredMerchantOrders>[1],
-  overrides: Partial<Pick<CheckoutLegacyBoundaryDependencies, "enabled" | "cashEnabled" | "rpc">> = {}): Promise<{ error: string | null }> {
+  overrides: Partial<Pick<CheckoutLegacyBoundaryDependencies, "enabled" | "cashEnabled" | "rpc" | "cartEnabled">> = {}): Promise<{ error: string | null }> {
   const deps = { enabled: isMemberCheckoutPilotEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, rpc, ...overrides }, siteId = input.siteId.trim();
   if (!deps.enabled(siteId)) return saveStoredMerchantOrders(client, input);
   if (!Array.isArray(input.expectedRows)) return { error: "order_update_conflict" };

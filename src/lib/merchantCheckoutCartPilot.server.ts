@@ -28,3 +28,10 @@ export function isMemberCheckoutAccountDraftPilotEnabled(siteId: string, env: Re
   return isMemberCheckoutIntentPilotEnabled(siteId, env) && Boolean(raw.trim()) && sites.length <= 50
     && sites.every(s => /^\d{8}$/.test(s)) && sites.includes(siteId);
 }
+/** Separate owner-management rollout. Does not grant financial staff access,
+ * register a private SQL function, collect cash or enable customer purchase. */
+export function isMemberCheckoutCartManagementEnabled(siteId: string, env: Record<string, string | undefined> = process.env) {
+  const raw = env.MERCHANT_MEMBER_CHECKOUT_CART_MANAGEMENT_PILOT_SITES ?? "", sites = raw.split(",").map(s => s.trim());
+  return isMemberCheckoutCartPilotEnabled(siteId, "points", env) && Boolean(raw.trim()) && sites.length <= 50
+    && sites.every(s => /^\d{8}$/.test(s)) && sites.includes(siteId);
+}
