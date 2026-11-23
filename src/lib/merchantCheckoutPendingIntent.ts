@@ -2,6 +2,7 @@ import { cartClientOriginalKey, parseCartClientOriginal, type CartClientOriginal
 export type PendingCheckoutOriginal = { operationKey: string; generation: number; reviewHash: string; reviewRequired: boolean; original: CartClientOriginal };
 export type PendingCheckoutSnapshot = { version: 1; siteId: string; pending: PendingCheckoutOriginal | null };
 export type CheckoutIntentAcknowledgement = { siteId: string; operationKey: string; generation: number; reviewHash: string };
+export type CheckoutIntentReview = PendingCheckoutOriginal & { acknowledged: boolean };
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const hash = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
 const generation = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 1;
@@ -29,4 +30,13 @@ export function parseCheckoutIntentAckResult(raw: unknown, expected: CheckoutInt
   need(object(raw) && raw.version === 1 && raw.siteId === expected.siteId && raw.operationKey === expected.operationKey && raw.generation === expected.generation
     && raw.acknowledged === true && typeof raw.replayed === "boolean");
   return { version: 1 as const, siteId: expected.siteId, operationKey: expected.operationKey, generation: expected.generation, acknowledged: true as const, replayed: raw.replayed };
+}
+/** An own, operation-specific durable acknowledgement proof. A pending:null
+ * response is intentionally NOT accepted in place of this proof. */
+export function parseCheckoutIntentReview(raw: unknown, scope: { siteId: string; operationKey: string }): CheckoutIntentReview | null {
+  need(object(raw) && raw.version === 1 && raw.siteId === scope.siteId && Object.hasOwn(raw, "review") && hash(scope.operationKey));
+  if (raw.review === null) return null;
+  need(object(raw.review) && raw.review.operationKey === scope.operationKey && typeof raw.review.acknowledged === "boolean");
+  const parsed = parsePendingCheckoutSnapshot({ version: 1, siteId: scope.siteId, pending: raw.review }, scope.siteId).pending!;
+  return { ...parsed, acknowledged: raw.review.acknowledged };
 }

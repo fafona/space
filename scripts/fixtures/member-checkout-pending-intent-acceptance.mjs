@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';import {randomUUID}from'node:crypto';
 import oldModule from '../../src/lib/merchantCheckoutSubmissionPlan.server.ts';
 import cashModule from '../../src/lib/merchantCheckoutOnSiteSubmissionPlan.server.ts';
 import intentModule from '../../src/lib/merchantCheckoutPendingIntent.server.ts';
+import httpModule from '../../src/lib/merchantCheckoutIntentHttp.server.ts';
 const old=oldModule,cash=cashModule;
 export async function pendingIntentAcceptance(p){
  const {t,admin,a,b,site,one,seed,prepare,commit,cancel,all,temporary,connect,definitions,beforeDefinitions}=p;
@@ -14,6 +15,8 @@ export async function pendingIntentAcceptance(p){
   f.snapshot.principalKey=`account:${accountId}:${userId}`;change(f);});
  const scope=f=>`account:${f.principal.accountId}:${f.principal.userId}`;
  const read=(f,c=admin)=>one(c,'select public.faolla_member_checkout_pending_intent_v1($1,$2) result',[site,scope(f)]).then(r=>r.result);
+ const review=(f,op,c=admin)=>one(c,'select public.faolla_member_checkout_intent_review_v1($1,$2,$3) result',[site,op,scope(f)]).then(r=>r.result);
+ const guarded=(p,c=a)=>one(c,'select public.faolla_member_checkout_intent_cart_commit_v1($1,$2,$3,$4,$5,$6,$7) result',[site,p.id.operationKey,p.id.principalKey,p.id.requestHash,p.snapshot,p.plan,p.notAfter]);
  const ack=(f,pending,c=a,overrides={})=>{const x={...pending,...overrides};return one(c,'select public.faolla_member_checkout_acknowledge_intent_v1($1,$2,$3,$4,$5,$6) result',
   [site,x.operationKey,scope(f),x.generation,x.reviewHash,x.deadline??new Date(Date.now()+11000).toISOString()]).then(r=>r.result);};
  const state=async()=>({...await all(),claims:(await admin.query('select * from faolla_checkout_design.intent_claims order by site_id,principal_key,generation')).rows,
@@ -29,7 +32,9 @@ export async function pendingIntentAcceptance(p){
   const dispatch=()=>one(a,`select public.${commitName}($1,$2,$3,$4,$5,$6,$7) result`,[site,id.operationKey,id.principalKey,id.requestHash,current,planned.plan,planned.notAfter]);
   return {id,dispatch};};
  await t.test('intent enrollment defaults off and leaves the actual old financial commit successful without metadata',async()=>{
-  const f=await seedOwn(),prepared=await prepare(f);await commit(prepared);assert.equal((await admin.query('select * from faolla_checkout_design.intent_claims')).rowCount,0);
+  const f=await seedOwn(),prepared=await prepare(f),beforeOff=await state();
+  await assert.rejects(read(f),/checkout_intent_disabled/);await assert.rejects(guarded(prepared),/checkout_intent_disabled/);assert.deepEqual(await state(),beforeOff);
+  await commit(prepared);assert.equal((await admin.query('select * from faolla_checkout_design.intent_claims')).rowCount,0);
   // An untracked cutover is review-required, never arbitrarily adopted/acked.
   await assert.rejects(read(f),/checkout_intent_review_required/);
   await admin.query('insert into faolla_checkout_design.intent_pilots(site_id,enabled) values($1,true)',[site]);
@@ -149,5 +154,46 @@ export async function pendingIntentAcceptance(p){
   const ports={principal:f.principal,authorize:async()=>f.principal},readResult=await intentModule.readPendingCheckoutIntent({siteId:site},ports,rpc);assert.equal(readResult.pending.generation,1);
   const {operationKey,generation,reviewHash}=readResult.pending,before=await all(),result=await intentModule.acknowledgePendingCheckoutIntent({siteId:site,operationKey,generation,reviewHash},ports,rpc);
   assert.equal(result.acknowledged,true);assert.equal(calls,2);assert.deepEqual(await all(),before);assert.equal((await read(f)).pending,null);
+ });
+ await t.test('protected wrapper commits one original and durable review recovers a lost ack without releasing a newer generation',async()=>{
+  const f=await seedOwn(),prepared=await prepare(f);await guarded(prepared);let current=(await read(f)).pending;
+  const initial=(await review(f,current.operationKey,b)).review;assert.equal(initial.acknowledged,false);assert.equal(initial.generation,1);
+  await ack(f,current);const before=await all(),proof=(await review(f,current.operationKey,b)).review;
+  assert.equal(proof.acknowledged,true);assert.equal((await read(f)).pending,null);assert.deepEqual(await all(),before);
+  const next=await prepare(another(f));await guarded(next);current=(await read(f)).pending;assert.equal(current.generation,2);
+  assert.equal((await review(f,initial.operationKey)).review.acknowledged,true);assert.equal((await read(f)).pending.operationKey,next.id.operationKey);
+  const foreign={...f,principal:{accountId:'58889999',userId:'foreign-intent-user'}};assert.equal((await review(foreign,current.operationKey)).review,null);
+  assert.equal((await review(f,'f'.repeat(64))).review,null);await ack(f,current);
+ });
+ await t.test('protected first commit cannot bypass disabled enrollment; enrolled replay/recovery works after closing it',async()=>{
+  const f=await seedOwn(),prepared=await prepare(f);await admin.query('update faolla_checkout_design.intent_pilots set enabled=false where site_id=$1',[site]);
+  try{const before=await state();await assert.rejects(guarded(prepared),/checkout_intent_disabled/);assert.deepEqual(await state(),before);}
+  finally{await admin.query('update faolla_checkout_design.intent_pilots set enabled=true where site_id=$1',[site]);}
+  await guarded(prepared);const pending=(await read(f)).pending;await admin.query('update faolla_checkout_design.intent_pilots set enabled=false where site_id=$1',[site]);
+  try{const before=await state();assert.equal((await guarded(prepared)).result.replayed,true);assert.deepEqual(await state(),before);
+   assert.equal((await review(f,pending.operationKey)).review.acknowledged,false);await ack(f,pending);
+  }finally{await admin.query('update faolla_checkout_design.intent_pilots set enabled=true where site_id=$1',[site]);}
+ });
+ await t.test('new review is busy during uncommitted finance and rejects retained snapshots without granting any API role',async()=>{
+  const f=await seedOwn(),prepared=await prepare(f);await a.query('begin');try{await guarded(prepared,a);await assert.rejects(review(f,prepared.id.operationKey,b),/checkout_intent_busy/);}finally{await a.query('commit');}
+  await b.query('begin isolation level repeatable read');try{await assert.rejects(review(f,prepared.id.operationKey,b),/checkout_intent_unavailable/);}finally{await b.query('rollback');}
+  for(const role of ['anon','authenticated','service_role']){const c=await connect(role);try{for(const fn of ['faolla_member_checkout_intent_review_v1(text,text,text)','faolla_member_checkout_intent_cart_commit_v1(text,text,text,text,jsonb,jsonb,text)'])
+    assert.equal((await one(c,"select has_function_privilege(current_user,$1,'EXECUTE') allowed",[`public.${fn}`])).allowed,false);
+   await assert.rejects(review(f,prepared.id.operationKey,c),/permission denied/);
+  }finally{await c.end();}}
+  const attrs=(await admin.query("select prosecdef,proconfig from pg_proc where oid in ('public.faolla_member_checkout_intent_review_v1(text,text,text)'::regprocedure,'public.faolla_member_checkout_intent_cart_commit_v1(text,text,text,text,jsonb,jsonb,text)'::regprocedure)")).rows;
+  assert.equal(attrs.length,2);assert.ok(attrs.every(fn=>!fn.prosecdef&&JSON.stringify(fn.proconfig)===JSON.stringify(['search_path=pg_catalog'])));await ack(f,(await read(f)).pending);
+ });
+ await t.test('actual new HTTP adapters read and acknowledge PostgreSQL-owned originals and recover the durable proof without business writes',async()=>{
+  const f=await seedOwn(),prepared=await prepare(f);await guarded(prepared);const pending=(await read(f)).pending,at=new Date().toISOString();let calls=0;
+  const call=async(name,args,signal)=>{assert.ok(signal instanceof AbortSignal);calls++;const keys=name.endsWith('pending_intent_v1')?['p_site_id','p_principal_key']:name.endsWith('intent_review_v1')?['p_site_id','p_operation_key','p_principal_key']:['p_site_id','p_operation_key','p_principal_key','p_generation','p_review_hash','p_not_after'];
+   try{return{data:(await one(b,`select public.${name}(${keys.map((_,i)=>'$'+(i+1)).join(',')}) result`,keys.map(k=>args[k]))).result,error:null};}catch(error){return{data:null,error:{message:error.message}};}};
+  const origin='https://intent.synthetic.invalid',session={...f.principal,servicePaused:false,user:{email_confirmed_at:at}},deps={enabled:()=>true,session:async()=>session,call};
+  const request=body=>new Request(origin+'/api/member-checkout/intent/test',{method:'POST',headers:{origin,'content-type':'application/json','x-checkout-account-scope':f.principal.accountId},body:JSON.stringify(body)});
+  const before=await all(),first=await httpModule.handleCheckoutIntent('pending',request({siteId:site}),deps);assert.equal(first.status,200);assert.equal((await first.json()).snapshot.pending.operationKey,pending.operationKey);
+  const coordinates={siteId:site,operationKey:pending.operationKey,generation:pending.generation,reviewHash:pending.reviewHash};
+  assert.equal((await httpModule.handleCheckoutIntent('acknowledge',request(coordinates),deps)).status,200);
+  const recovered=await httpModule.handleCheckoutIntent('review',request({siteId:site,operationKey:pending.operationKey}),deps);assert.equal(recovered.status,200);assert.equal((await recovered.json()).review.acknowledged,true);
+  assert.equal(calls,3);assert.deepEqual(await all(),before);
  });
 }

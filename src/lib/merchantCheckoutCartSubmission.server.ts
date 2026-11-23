@@ -13,12 +13,12 @@ const safe = new Set(["checkout_invalid_request", "checkout_invalid_customer", "
   "checkout_quote_changed", "checkout_conflict", "checkout_quote_expired", "checkout_operation_conflict", "checkout_disabled", "checkout_offer_not_found", "checkout_source_changed",
   "checkout_membership_unavailable", "checkout_module_unavailable", "checkout_quantity_unavailable", "checkout_coupon_unavailable", "checkout_coupon_stack_not_allowed", "checkout_cart_coupon_reused",
   "checkout_cart_duplicate_product", "checkout_cart_source_mismatch", "checkout_cart_method_unavailable", "checkout_insufficient_points", "checkout_total_too_large", "checkout_not_found",
-  "checkout_cancellation_not_allowed", "checkout_cancellation_review_required", "checkout_refund_required"]);
+  "checkout_cancellation_not_allowed", "checkout_cancellation_review_required", "checkout_refund_required", "checkout_original_pending", "checkout_intent_review_required", "checkout_intent_disabled"]);
 function publicError(error: unknown, writing: boolean) {
   const code = error instanceof Error ? error.message : "";
   const selected = safe.has(code) ? code : writing ? "checkout_unconfirmed" : "checkout_unavailable";
   return new MerchantCheckoutError(selected, selected === "checkout_unauthorized" ? 401 : selected.startsWith("checkout_invalid_") ? 400
-    : ["checkout_unconfirmed", "checkout_unavailable", "checkout_disabled"].includes(selected) ? 503 : 409);
+    : ["checkout_unconfirmed", "checkout_unavailable", "checkout_disabled", "checkout_intent_disabled"].includes(selected) ? 503 : 409);
 }
 function ports(input: Input, siteId: string, rpc: CartSubmissionRpc, requirePilot: boolean) {
   const principal = structuredClone(input.principal), scope = checkoutPrincipalKey(principal), now = input.now ?? Date.now, deadline = now() + 12_000;

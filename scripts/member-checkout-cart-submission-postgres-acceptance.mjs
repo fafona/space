@@ -306,7 +306,7 @@ test('whole product cart commit/recover/cancel uses original PostgreSQL writers 
    assert.equal(definitionsNew.length,2);assert.ok(definitionsNew.every(r=>r.provolatile==='s'&&r.prosecdef===false));assert.deepEqual(await definitions(),beforeDefinitions);
   });
   await pendingIntentAcceptance({t,admin,a,b,site,one,seed,prepare,commit,cancel,all,temporary,connect,definitions,beforeDefinitions,
-   sql:()=>readFile(path.resolve('database/proposals/20261123_member_checkout_pending_intents.sql'),'utf8')});
+   sql:async()=> (await Promise.all(['database/proposals/20261123_member_checkout_pending_intents.sql','database/proposals/20261123_member_checkout_intent_review.sql'].map(file=>readFile(path.resolve(file),'utf8')))).join('\n')});
   console.log(`CART_SUBMISSION_EVIDENCE=${evidence}`);
  }finally{
   await Promise.all(clients.map(c=>c.end().catch(()=>{})));if(started){const lines=(await readFile(path.join(cluster,'postmaster.pid'),'utf8')).split(/\r?\n/);

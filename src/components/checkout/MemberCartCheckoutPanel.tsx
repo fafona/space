@@ -19,9 +19,9 @@ const input = "min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-whi
 const button = "min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold disabled:opacity-50";
 const primaryButton = "min-h-11 w-full rounded-xl bg-teal-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50";
 type Props = { siteId: string; accountId: string | null; initialSelection: CartClientSelection; initialCustomer?: CheckoutCustomerDraft;
-  locale?: string; controllerFactory?: typeof createCartCheckoutController; allowNewCheckout?: boolean;
+  locale?: string; controllerFactory?: typeof createCartCheckoutController; allowNewCheckout?: boolean; intentEnabled?: boolean;
   beforeSubmit?: (customer: CheckoutCustomerDraft) => void | Promise<void>;
-  beforeRelease?: (original: CartClientOriginal) => void | Promise<void>; onReleased?: () => void; onReturnToCart?: () => void };
+  beforeRelease?: (original: CartClientOriginal, context: { createdHere: boolean }) => void | Promise<void>; onReleased?: () => void; onReturnToCart?: () => void };
 /** Shared review for standalone tests and the independently gated real cart.
  * Host callbacks own durable draft preservation; no implicit cart cleanup,
  * member change, cash collection or online payment happens here. */
@@ -31,13 +31,13 @@ export function MemberCartCheckoutPanel(props: Props) {
   return <Active key={JSON.stringify([props.siteId, props.accountId, props.initialSelection])} {...props} accountId={props.accountId}/>;
 }
 function Active({ siteId, accountId, initialSelection, initialCustomer, locale = "zh-CN", controllerFactory = createCartCheckoutController,
-  allowNewCheckout = true, beforeSubmit, beforeRelease, onReleased, onReturnToCart }: Props & { accountId: string }) {
-  const t = copy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId }), [siteId, accountId, controllerFactory]);
+  allowNewCheckout = true, intentEnabled = false, beforeSubmit, beforeRelease, onReleased, onReturnToCart }: Props & { accountId: string }) {
+  const t = copy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId, intentEnabled }), [siteId, accountId, intentEnabled, controllerFactory]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [selection, setSelection] = useState(() => structuredClone(initialSelection)), [customer, setCustomer] = useState(() => initialCustomer ? structuredClone(initialCustomer) : blank());
   const [agreed, setAgreed] = useState(false), [cancelConfirm, setCancelConfirm] = useState(false), [blocked, setBlocked] = useState(false);
   const [draftFailed, setDraftFailed] = useState(false), [draftBusy, setDraftBusy] = useState(false);
-  const busy = ["quoting", "submitting", "recovering", "cancelling"].includes(state.phase), frozen = busy || state.pending;
+  const busy = ["quoting", "submitting", "recovering", "cancelling", "acknowledging"].includes(state.phase), frozen = busy || state.pending;
   useEffect(() => {
     void controller.activate();
     const identity = () => { controller.deactivate(); setCustomer(blank()); setBlocked(true); setAgreed(false); setCancelConfirm(false); };
@@ -81,7 +81,8 @@ function Active({ siteId, accountId, initialSelection, initialCustomer, locale =
         {cancelConfirm && cart.cancellationAvailable && <button className={button + " border-rose-300 text-rose-800"} disabled={busy} onClick={() => { setCancelConfirm(false); void controller.cancel(); }}>{t.cancelConfirm}</button>}
       </> : original.kind === "single" ? <><p>{t.single}</p><a className={button + " inline-block"} href={`/member-checkout/${siteId}/${original.original.method === "on_site" ? "on-site/" : ""}${original.original.result.operationKey}?uiLocale=${encodeURIComponent(locale)}`}>{t.detail}</a></> : null}
       <button className={button} disabled={busy} onClick={() => { setCancelConfirm(false); void controller.recover(); }}>{t.recover}</button>
-      {!cart?.reviewRequired && <button className={button} disabled={busy || draftBusy} onClick={() => { setCancelConfirm(false); setAgreed(false); void acknowledge(); }}>{t.acknowledged}</button>}
+      {state.intentReviewRequired && <p role="alert">{t.reviewRequired}</p>}
+      {!cart?.reviewRequired && !state.intentReviewRequired && <button className={button} disabled={busy || draftBusy} onClick={() => { setCancelConfirm(false); setAgreed(false); void acknowledge(); }}>{t.acknowledged}</button>}
     </article> : !state.pending && allowNewCheckout && <>
       <fieldset disabled={frozen} className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-5 sm:grid-cols-2">
         {field("name")}{field("email", "email")}{field("phone", "tel")}{field("note")}

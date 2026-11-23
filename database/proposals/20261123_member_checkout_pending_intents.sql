@@ -95,6 +95,8 @@ BEGIN
  IF NOT pg_try_advisory_xact_lock(hashtextextended('faolla-customer-checkout:'||p_site_id,0)) THEN RAISE EXCEPTION 'checkout_intent_busy';END IF;
  IF EXISTS(SELECT 1 FROM faolla_checkout_design.bundle_results b WHERE b.site_id=p_site_id AND b.principal_key=p_principal_key
   AND NOT EXISTS(SELECT 1 FROM faolla_checkout_design.intent_claims tracked WHERE tracked.site_id=b.site_id AND tracked.operation_key=b.operation_key)) THEN RAISE EXCEPTION 'checkout_intent_review_required';END IF;
+ IF NOT EXISTS(SELECT 1 FROM faolla_checkout_design.intent_pilots WHERE site_id=p_site_id AND enabled)
+  AND NOT EXISTS(SELECT 1 FROM faolla_checkout_design.intent_claims WHERE site_id=p_site_id AND principal_key=p_principal_key) THEN RAISE EXCEPTION 'checkout_intent_disabled';END IF;
  SELECT * INTO c FROM faolla_checkout_design.intent_claims WHERE site_id=p_site_id AND principal_key=p_principal_key ORDER BY generation DESC LIMIT 1;
  IF NOT FOUND OR EXISTS(SELECT 1 FROM faolla_checkout_design.intent_acknowledgements a WHERE a.site_id=c.site_id AND a.operation_key=c.operation_key) THEN RETURN jsonb_build_object('version',1,'siteId',p_site_id,'pending',NULL);END IF;
  v:=faolla_checkout_design.intent_original_view(p_site_id,c.operation_key,p_principal_key);

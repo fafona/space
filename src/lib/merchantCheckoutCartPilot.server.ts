@@ -16,3 +16,9 @@ export function isMemberCheckoutCartUiPilotEnabled(siteId: string, env: Record<s
   return isMemberCheckoutCartPilotEnabled(siteId, "points", env) && Boolean(raw.trim()) && sites.length <= 50
     && sites.every(s => /^\d{8}$/.test(s)) && sites.includes(siteId);
 }
+/** Separate opt-in for the still-unreleased cross-device HTTP/UI protocol. */
+export function isMemberCheckoutIntentPilotEnabled(siteId: string, env: Record<string, string | undefined> = process.env) {
+  const raw = env.MERCHANT_MEMBER_CHECKOUT_INTENT_PILOT_SITES ?? "", sites = raw.split(",").map(s => s.trim());
+  return isMemberCheckoutCartUiPilotEnabled(siteId, env) && Boolean(raw.trim()) && sites.length <= 50
+    && sites.every(s => /^\d{8}$/.test(s)) && sites.includes(siteId);
+}

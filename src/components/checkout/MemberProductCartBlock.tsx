@@ -18,7 +18,7 @@ const texts = {
 export default function MemberProductCartBlock(props: ProductBlockProps) {
   const { locale } = useI18n(), t = texts[locale.startsWith("zh") ? "zh" : locale.startsWith("es") ? "es" : "en"];
   const query = useMemo(() => ({ siteId: props.runtimeSiteId ?? "", kind: "order" as const, blockId: props.runtimeBlockId ?? "", viewport: props.runtimeCatalogViewport === "mobile" ? "mobile" as const : "desktop" as const }), [props.runtimeSiteId, props.runtimeBlockId, props.runtimeCatalogViewport]);
-  const scope = JSON.stringify(query), [loaded, setLoaded] = useState<{ scope: string; access: CheckoutEntryAccess | null } | null>(null), [failed, setFailed] = useState(false);
+  const scope = JSON.stringify(query), [loaded, setLoaded] = useState<{ scope: string; access: CheckoutEntryAccess | null; intent: boolean } | null>(null), [failed, setFailed] = useState(false);
   const [active, setActive] = useState(false), [notice, setNotice] = useState(false), [revision, setRevision] = useState(0);
   const lock = useRef(true), generation = useRef(0), capture = useRef<{ host: ProductCartCheckoutHost; customer: ProductCartCheckoutHost["customer"]; raw: string | null; fresh: boolean; selection: ReturnType<typeof productCartCheckoutSelection> } | null>(null);
   const setLocked = useCallback((value: boolean) => { lock.current = value; }, []);
@@ -30,12 +30,12 @@ export default function MemberProductCartBlock(props: ProductBlockProps) {
       const run = generation.current, owned = new AbortController(); abort = owned;
       const timeout = setTimeout(() => owned.abort(), 13_000);
       try { const response = await fetch("/api/member-checkout/cart/entry", { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: scope, signal: owned.signal });
-        if (!response.ok) throw new Error("unavailable"); const access = parseCheckoutEntryAccess(await response.json(), query);
+        if (!response.ok) throw new Error("unavailable"); const body = await response.json(), access = parseCheckoutEntryAccess(body, query);
         if (disposed || owned.signal.aborted || run !== generation.current) return;
         // A retained nonce keeps all existing cart data frozen even before the
         // original read completes. Malformed/blocked storage never means clear.
         const pending = access ? window.localStorage.getItem(checkoutClientStorageKey(query.siteId, access.accountId)) !== null : false;
-        setLocked(pending); setLoaded({ scope, access });
+        setLocked(pending); setLoaded({ scope, access, intent: body.intent === true });
       } catch { if (!disposed && run === generation.current) { setFailed(true); setLocked(true); } }
       finally { clearTimeout(timeout); }
     };
@@ -59,7 +59,7 @@ export default function MemberProductCartBlock(props: ProductBlockProps) {
           if (host.clientRequestId && !originalPending) throw new Error("legacy");
           let selection;
           try { selection = productCartCheckoutSelection(query.siteId, access, host.items); }
-          catch { if (!originalPending) throw new Error("missing"); selection = { siteId: query.siteId, method: "points" as const, lines: [] }; }
+          catch { if (!originalPending && !loaded?.intent) throw new Error("missing"); selection = { siteId: query.siteId, method: "points" as const, lines: [] }; }
           capture.current = { host, customer: host.customer, raw, fresh: !originalPending, selection }; setLocked(true); setActive(true); setNotice(false); setFailed(false);
         } catch { setNotice(false); setFailed(true); }
       };
@@ -68,8 +68,8 @@ export default function MemberProductCartBlock(props: ProductBlockProps) {
         {!captured ? <div className="space-y-3 text-sm">{notice && <p role="status">{t.kept}</p>}{host.clientRequestId && !pending ? <p role="alert">{t.legacy}</p> : <button type="button" className={button} onClick={begin}>{pending ? t.retry : t.begin}</button>}
           {failed && <><p role="alert">{t.missing}</p>{retry}</>}</div>
           : <MemberCartCheckoutPanel siteId={query.siteId} accountId={access.accountId} initialSelection={captured.selection} initialCustomer={captured.host.customer} locale={locale}
-            allowNewCheckout={captured.fresh} beforeSubmit={customer => { captured.raw = captured.host.persist(captured.raw, customer); captured.customer = customer; }}
-            beforeRelease={original => { captured.raw = captured.host.persist(captured.raw, captured.customer, { selection: captured.selection, original, fresh: captured.fresh }); }}
+            intentEnabled={loaded?.intent} allowNewCheckout={captured.fresh && captured.selection.lines.length > 0} beforeSubmit={customer => { captured.raw = captured.host.persist(captured.raw, customer); captured.customer = customer; }}
+            beforeRelease={(original, context) => { captured.raw = captured.host.persist(captured.raw, captured.customer, { selection: captured.selection, original, fresh: captured.fresh && (!loaded?.intent || context.createdHere) }); }}
             onReturnToCart={() => { if (window.localStorage.getItem(checkoutClientStorageKey(query.siteId, access.accountId)) !== null) throw new Error("checkout_cart_changed");
               capture.current = null; setActive(false); setLocked(false); }}
             onReleased={() => { capture.current = null; setActive(false); setLocked(false); setNotice(true); }}/>}
