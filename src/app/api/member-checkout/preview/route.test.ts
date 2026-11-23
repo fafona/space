@@ -49,6 +49,8 @@ test("actual HTTP handler and quote rules use the server's live point discount a
   assert.equal(response.status, 200); const result = await response.json();
   assert.equal(result.quote.totalPoints, 91); assert.equal(result.quote.ownPointBalance, 1000);
   assert.equal(result.quote.reservationCreated, false); assert.equal(result.slot.reserved, false); assert.equal(result.slot.timeZone, "Europe/Madrid");
+  assert.deepEqual(result.bookingForm, { store: "Store", item: "Play", titles: ["Mx"], timeZone: "Europe/Madrid" });
+  assert.deepEqual(result.cancellationPolicy, { returnPoints: true, returnCoupons: true, advanceMinutes: 60 });
   assert.deepEqual(result.quote.options.map((option: { method: string }) => option.method), ["points", "on_site"]);
   assert.equal(result.quote.options[0].available, true); assert.deepEqual([f.data, f.booking], before);
   assert.ok(!/member-private|customer-synthetic|50010105|transactions|balanceAmount|principalKey/.test(JSON.stringify(result)));

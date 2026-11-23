@@ -8,7 +8,7 @@ import { parseStrictMerchantCatalog, type MerchantCatalog } from "./merchantCata
 import { normalizeMerchantMembershipRecord, type MerchantMembershipRecord } from "./merchantMemberships";
 import { normalizeMerchantMembershipSettings, type MerchantMembershipSettings } from "./merchantMembershipSettings";
 import { normalizeMerchantCouponRecord, type MerchantCouponRecord } from "./merchantCoupons";
-import { normalizeMerchantBookingRulesSnapshot } from "./merchantBookingRules";
+import { normalizeMerchantBookingRulesSnapshot, resolveMerchantBookingRuleEntry, resolveMerchantBookingRuleOptionSets } from "./merchantBookingRules";
 import { normalizeMerchantBookingWorkbenchSettings } from "./merchantBookingWorkbench";
 import type { MerchantBookingRecord } from "./merchantBookings";
 import { readAtomicBookingSnapshot, isAtomicBookingStorageEnabled } from "./merchantBookingAtomicRuntime.server";
@@ -156,7 +156,16 @@ export async function previewMemberCheckout(input: { request: unknown; authorize
         voucherCouponIds: offer.checkoutBinding.voucherCouponIds, ...(offer.checkoutBinding.durationMinutes !== null ? { durationMinutes: offer.checkoutBinding.durationMinutes } : {}) }),
       onlineReadiness: async () => fail(),
     } });
-    return { quote, slot: request.appointmentAt && offer.source.kind === "booking" ? {
+    let bookingForm: { store: string; item: string; titles: string[]; timeZone: string } | null = null;
+    if (offer.source.kind === "booking") {
+      const entry = booking && resolveMerchantBookingRuleEntry(booking.rules, { bookingBlockId: offer.source.blockId, bookingViewport: offer.checkoutBinding.viewport });
+      if (!entry) return fail("checkout_source_changed");
+      bookingForm = { store: offer.checkoutBinding.store!, item: offer.checkoutBinding.item!,
+        titles: resolveMerchantBookingRuleOptionSets(entry, site.name).title, timeZone: offer.source.timeZone };
+    }
+    const cancellationPolicy = { returnPoints: offer.checkoutBinding.pointsReturnOnCancel,
+      returnCoupons: offer.couponReturnOnCancel ?? null, advanceMinutes: offer.checkoutBinding.cancellationAdvanceMinutes };
+    return { quote, bookingForm, cancellationPolicy, slot: request.appointmentAt && offer.source.kind === "booking" ? {
       key: request.selection.slotKey!, appointmentAt: request.appointmentAt, timeZone: offer.source.timeZone, reserved: false as const } : null };
   } catch (error) {
     const code = error instanceof Error ? error.message : "";

@@ -23,6 +23,8 @@ import submissionPlan from '../src/lib/merchantCheckoutSubmissionPlan.server.ts'
 import submission from '../src/lib/merchantCheckoutSubmission.server.ts';
 import submitRoute from '../src/app/api/member-checkout/submit/route-handler.ts';
 import recoverRoute from '../src/app/api/member-checkout/recover/route-handler.ts';
+import previewRoute from '../src/app/api/member-checkout/preview/route-handler.ts';
+import checkoutClient from '../src/lib/merchantCheckoutClient.ts';
 import checkoutSources from '../src/lib/merchantCheckoutSources.server.ts';
 import bookingRules from '../src/lib/merchantBookingRules.ts';
 import workbench from '../src/lib/merchantBookingWorkbench.ts';
@@ -570,6 +572,33 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
     if new.slug='${memberSlug}' then insert into public.pages(merchant_id,slug,blocks) values('${site}','synthetic-phantom','[]'::jsonb);end if;return new;end;$$;
     create trigger synthetic_submit_phantom after update on public.pages for each row execute function public.synthetic_submit_phantom();`);
    try{await assert.rejects(commitPrepared(prepared),/checkout_conflict/);assert.deepEqual(await all(),before);}finally{await admin.query('drop trigger synthetic_submit_phantom on public.pages;drop function public.synthetic_submit_phantom()');}
+  });
+  await t.test('actual new frontend controller reaches HTTP handlers and real SQL, then restores a lost response using only its durable nonce',async()=>{
+   const f=await submissionFixture(),before=await all(),stored=new Map(),paths=[],storage={getItem:key=>stored.get(key)??null,setItem:(key,value)=>{stored.set(key,value);},removeItem:key=>{stored.delete(key);}};
+   const session=async()=>({accountId,userId,servicePaused:false,user:{id:userId,email_confirmed_at:at}});
+   const request=async(path,body,signal)=>{
+    paths.push(path);const req=new Request(`https://synthetic.faolla.invalid${path}`,{method:'POST',headers:{origin:'https://synthetic.faolla.invalid','content-type':'application/json'},body:JSON.stringify(body),signal});let response;
+    if(path.endsWith('/preview'))response=await previewRoute.handleMemberCheckoutPreview(req,{enabled:()=>true,session,preview:async input=>{
+     const identity=submissionPlan.checkoutSubmissionIdentity({...input.request,nonce:randomUUID(),method:'points',confirmationHash:'0'.repeat(64),customer:f.request.customer},{accountId,userId});
+     const snapshot=(await submitRpc(admin)('faolla_member_checkout_submission_snapshot_v2',{p_site_id:site,p_operation_key:identity.operationKey,p_principal_key:principal,p_request_hash:identity.requestHash,p_offer_id:f.offer.id})).data.snapshot;
+     return submissionPlan.quoteCheckoutSubmissionSnapshot(snapshot,identity,{accountId,userId});
+    }});
+    else if(path.endsWith('/submit'))response=await submitRoute.handleMemberCheckoutSubmit(req,{enabled:()=>true,session,submit:input=>submission.submitMemberCheckout(input,submitRpc(a))});
+    else{assert.equal(path,'/api/member-checkout/recover');response=await recoverRoute.handleMemberCheckoutRecover(req,{enabled:()=>true,session,read:input=>resultStore.readMemberCheckoutResult(input,async(name,args)=>{
+     assert.equal(name,'faolla_member_checkout_result_v2');return{data:(await one(admin,'select public.faolla_member_checkout_result_v2($1,$2,$3) as result',[args.p_site_id,args.p_operation_key,args.p_principal_key])).result,error:null};
+    })});}
+    const value=await response.json();assert.equal(response.status,200,JSON.stringify(value));
+    if(path.endsWith('/submit'))throw new Error('synthetic response lost AFTER real commit');return value;
+   };
+   const options={siteId:site,accountId,storage,request,exclusive:async(_key,run)=>{await run();return true;},randomNonce:()=>f.request.nonce};
+   const controller=checkoutClient.createCheckoutClientController(options);await controller.activate();
+   const selection={siteId:site,offerId:f.offer.id,offerRevision:f.offer.revision,quantity:1,appointmentAt:f.request.appointmentAt,couponClaims:f.request.couponClaims};
+   await controller.preview(selection);assert.equal(controller.getSnapshot().quote.points,80);assert.deepEqual(await all(),before);
+   await controller.submit(f.request.customer);assert.equal(controller.getSnapshot().phase,'unconfirmed');
+   const committed=await all();assert.equal(committed.results.length,before.results.length+1);assert.equal(committed.pages.find(row=>row.slug===memberSlug).blocks[0].pointBalance,920);
+   assert.equal(stored.size,1);const persisted=[...stored.values()][0];assert.deepEqual(JSON.parse(persisted),{version:1,nonce:f.request.nonce});assert.ok(!/synthetic|customer|coupon|member|Private/.test(persisted));
+   controller.deactivate();const restored=checkoutClient.createCheckoutClientController(options);await restored.activate();assert.equal(restored.getSnapshot().phase,'confirmed');assert.equal(restored.getSnapshot().result.totalPoints,80);
+   assert.deepEqual(paths.map(value=>value.split('/').pop()),['preview','submit','recover']);assert.deepEqual(await all(),committed);restored.deactivate();
   });
   await t.test('all browser/API roles are denied the private composition function and tables',async()=>{
    for(const role of ['anon','authenticated','service_role']){
