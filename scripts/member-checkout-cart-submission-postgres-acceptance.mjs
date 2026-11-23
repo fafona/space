@@ -7,6 +7,7 @@ import fixtures from './fixtures/member-checkout-cart-quote.ts';import quote fro
 import planner from '../src/lib/merchantCheckoutCartSubmissionPlan.server.ts';import service from '../src/lib/merchantCheckoutCartSubmission.server.ts';
 import orders from '../src/lib/merchantOrders.ts';import oldPlanner from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
 import reporting from '../src/lib/merchantCheckoutReporting.server.ts';import reportDto from '../src/lib/merchantCheckoutReporting.ts';import cashPlanner from '../src/lib/merchantCheckoutOnSiteSubmissionPlan.server.ts';
+import {pendingIntentAcceptance} from './fixtures/member-checkout-pending-intent-acceptance.mjs';
 
 test('whole product cart commit/recover/cancel uses original PostgreSQL writers atomically',{timeout:120000},async t=>{
  const runtime=path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR||'.missing-test-runtime'),relative=path.relative(tmpdir(),runtime);
@@ -304,6 +305,8 @@ test('whole product cart commit/recover/cancel uses original PostgreSQL writers 
    const definitionsNew=(await admin.query("select provolatile,prosecdef from pg_proc where oid in ('public.faolla_member_checkout_reporting_v3(text,jsonb)'::regprocedure,'public.faolla_member_checkout_original_resource_v2(text,text,text,text)'::regprocedure)")).rows;
    assert.equal(definitionsNew.length,2);assert.ok(definitionsNew.every(r=>r.provolatile==='s'&&r.prosecdef===false));assert.deepEqual(await definitions(),beforeDefinitions);
   });
+  await pendingIntentAcceptance({t,admin,a,b,site,one,seed,prepare,commit,cancel,all,temporary,connect,definitions,beforeDefinitions,
+   sql:()=>readFile(path.resolve('database/proposals/20261123_member_checkout_pending_intents.sql'),'utf8')});
   console.log(`CART_SUBMISSION_EVIDENCE=${evidence}`);
  }finally{
   await Promise.all(clients.map(c=>c.end().catch(()=>{})));if(started){const lines=(await readFile(path.join(cluster,'postmaster.pid'),'utf8')).split(/\r?\n/);

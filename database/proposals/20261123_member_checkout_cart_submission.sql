@@ -24,7 +24,10 @@ RETURNS jsonb LANGUAGE sql STABLE SET search_path=pg_catalog AS $$
   SELECT r FROM owned b JOIN public.pages p ON p.merchant_id=b.site_id AND
    (p.slug~('^__merchant_orders__:'||b.site_id||':chunk:[0-9]+$') OR p.slug='__merchant_orders__:'||b.site_id
     AND NOT EXISTS(SELECT 1 FROM public.pages c WHERE c.merchant_id=b.site_id AND c.slug~('^__merchant_orders__:'||b.site_id||':chunk:[0-9]+$')))
-  CROSS JOIN LATERAL jsonb_array_elements(p.blocks) r WHERE r->>'id'=b.resource_id AND r->>'siteId'=b.site_id
+  -- Join predicates can be evaluated AFTER a lateral expansion. Never feed
+  -- unrelated settings objects to the SRF, regardless of the chosen plan.
+  -- A malformed matching order page still has no resource and is review-required.
+  CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.blocks)='array' THEN p.blocks ELSE '[]'::jsonb END) r WHERE r->>'id'=b.resource_id AND r->>'siteId'=b.site_id
  ), resource AS (SELECT CASE WHEN count(*)=1 THEN (jsonb_agg(r))->0 ELSE NULL END r FROM records), checked AS (
   SELECT b.*,r.r,coalesce(r.r->>'customerAccountId'=split_part(p_principal_key,':',2) AND r.r->>'customerUserId'=split_part(p_principal_key,':',3)
    AND b.receipt->'resourceTerms'=jsonb_build_object('items',r.r->'items','totalQuantity',r.r->'totalQuantity','totalAmount',r.r->'totalAmount')
