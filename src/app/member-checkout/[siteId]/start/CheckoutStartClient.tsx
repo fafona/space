@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useI18n } from "@/components/I18nProvider";
 import { serviceRequest, SERVICE_IDENTITY_CHANGED, type ServiceIdentity } from "@/components/service-center/serviceCenterClient";
 import { MemberCheckoutStartPanel } from "@/components/checkout/MemberCheckoutStartPanel";
@@ -26,6 +27,7 @@ export default function CheckoutStartClient({ siteId, initialSelection }: { site
   const label = locale.startsWith("zh") ? failed ? "暂时无法核验账号，请重试。" : "正在核验账号…"
     : locale.startsWith("es") ? failed ? "No se pudo verificar la cuenta." : "Verificando cuenta…" : failed ? "Account could not be verified." : "Verifying account…";
   return <main className="min-h-screen bg-slate-50">
+    <div className="mx-auto max-w-3xl px-5 pt-4"><Link href="/" prefetch={false} className="inline-flex min-h-11 items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-800">{locale.startsWith("zh") ? "返回商户重新选择" : locale.startsWith("es") ? "Volver al comercio" : "Back to merchant"}</Link></div>
     {ready ? <MemberCheckoutStartPanel siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} loginHref={loginHref}/>
       : <div role="status" className="mx-auto max-w-3xl space-y-3 p-6 text-sm text-slate-600"><p>{label}</p>{failed && <button type="button" className="min-h-11 rounded-xl border bg-white px-4" onClick={() => void check()}>{locale.startsWith("zh") ? "重试" : locale.startsWith("es") ? "Reintentar" : "Retry"}</button>}</div>}
   </main>;

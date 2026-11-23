@@ -50,6 +50,7 @@ import { readPersonalGuestMergeToken, upsertPersonalGuestBooking } from "@/lib/p
 import { buildBookingOptionPresentations } from "./bookingOptionPresentation";
 import { getCustomerBookingTimeIssue } from "@/lib/merchantBookingTime";
 import { buildMerchantBookingSelfServiceUrl } from "@/lib/merchantBookingSelfService";
+import MemberCheckoutSourceEntry from "@/components/checkout/MemberCheckoutSourceEntry";
 
 type BookingBlockComponentProps = BookingProps & {
   runtimeSiteId?: string;
@@ -1035,6 +1036,9 @@ export default function BookingBlock({
           {error ? (
             <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
           ) : null}
+          <MemberCheckoutSourceEntry active={isLiveBooking && !submittedState && !restoredBookingId && !submitting} siteId={runtimeSiteId}
+            kind="booking" blockId={runtimeBlockId} viewport={runtimeViewport} locale={locale}
+            bookingSelection={{ store: draft.store, item: draft.item, appointmentAt: joinMerchantBookingDateTime(draft.appointmentDateInput, draft.appointmentTimeInput) }}/>
           <div className="flex flex-wrap gap-3">
             <button
               type="submit"

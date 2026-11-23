@@ -30,6 +30,7 @@ const CouponBlock = dynamic(() => import("./CouponBlock"), { ssr: false, loading
 const GoogleReviewsBlock = dynamic(() => import("./GoogleReviewsBlock"), { ssr: false, loading: () => null });
 const BookingBlock = dynamic(() => import("./BookingBlock"), { ssr: false, loading: () => null });
 const PollBlock = dynamic(() => import("./PollBlock"), { ssr: false, loading: () => null });
+const MemberCheckoutSourceEntry = dynamic(() => import("../checkout/MemberCheckoutSourceEntry"), { ssr: false, loading: () => null });
 
 class BlockRuntimeBoundary extends Component<{ blockId: string; children: ReactNode }, { hasError: boolean }> {
   constructor(props: { blockId: string; children: ReactNode }) {
@@ -312,7 +313,7 @@ export default function BlockRenderer({
         break;
       case "product":
         content = (
-          <ProductBlock
+          <><ProductBlock
             {...b.props}
             runtimeSiteId={bookingSiteId}
             runtimeSiteName={bookingSiteName}
@@ -330,6 +331,9 @@ export default function BlockRenderer({
             runtimeOpenedCartCloseSignal={options.openedCartCloseSignal}
             runtimeOnOpenedCartStateChange={options.onOpenedCartStateChange}
           />
+          {bookingInteractive && productCartEnabled && bookingSiteId && <MemberCheckoutSourceEntry active={options.openedView !== true || !openedProductCartOpen}
+            siteId={bookingSiteId} kind="order" blockId={b.id} viewport={catalogViewport}/>}
+          </>
         );
         break;
       case "coupon":

@@ -30,6 +30,8 @@ import reporting from '../src/lib/merchantCheckoutReporting.ts';
 import reportingRoute from '../src/app/api/merchant-checkout/settlements/route-handler.ts';
 import legacyBoundary from '../src/lib/merchantCheckoutLegacyBoundary.server.ts';
 import resourceRoute from '../src/app/api/member-checkout/resource/route-handler.ts';
+import entryRoute from '../src/app/api/member-checkout/entry/route-handler.ts';
+import entryStore from '../src/lib/merchantCheckoutEntry.server.ts';
 import legacyOrderRoute from '../src/app/api/orders/route-handler.ts';
 import legacyOrders from '../src/lib/merchantOrders.server.ts';
 import orderRecords from '../src/lib/merchantOrders.ts';
@@ -469,7 +471,7 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
    const identity=submissionPlan.checkoutSubmissionIdentity(request,{accountId,userId}),snapshot=(await one(admin,'select public.faolla_member_checkout_submission_snapshot_v2($1,$2,$3,$4,$5) as result',[site,identity.operationKey,principal,identity.requestHash,offerId])).result.snapshot;
    const view=await submissionPlan.quoteCheckoutSubmissionSnapshot(snapshot,identity,{accountId,userId});assert.equal(view.quote.options[0].totalPoints,100-(withCoupon?couponAmount:0));assert.ok(view.confirmationHash);
    request.confirmationHash=view.confirmationHash;
-   return{request,offer,blockId,savePage};
+   return{request,offer,blockId,savePage,siteView};
   };
   const submitRpc=client=>async(name,args)=>{try{
    const sql=name==='faolla_member_checkout_submission_snapshot_v2'?'select public.faolla_member_checkout_submission_snapshot_v2($1,$2,$3,$4,$5) as result':
@@ -488,6 +490,20 @@ test('private composite proposal uses actual legacy PostgreSQL transactions, nev
     })});
    assert.equal(response.status,200);return response.json();
   };
+  await t.test('public module entry HTTP resolves saved catalog IDs against actual PostgreSQL configuration and published sources without touching financial rows',async()=>{
+   for(const kind of ['booking','order']){
+    const f=await submissionFixture({kind}),query={siteId:site,kind,blockId:f.blockId,viewport:f.offer.checkoutBinding.viewport},before=await all();
+    const connection={rpc:async(name,args)=>{assert.equal(name,'faolla_member_checkout_catalog_snapshot_v1');return{data:(await one(a,'select public.faolla_member_checkout_catalog_snapshot_v1($1) as result',[args.p_site_id])).result,error:null};}};
+    const response=await entryRoute.handleCheckoutEntry(new Request('https://synthetic.faolla.invalid/api/member-checkout/entry',{method:'POST',headers:{origin:'https://synthetic.faolla.invalid','content-type':'application/json'},body:JSON.stringify(query)}),{
+     enabled:()=>true,session:async()=>({accountId,userId,servicePaused:false,user:{id:userId,email_confirmed_at:at}}),
+     read:input=>entryStore.readCheckoutEntryOffers(input,{enabled:()=>true,sites:async()=>[f.siteView],configuration:id=>configurationStore.loadCheckoutConfiguration(id,connection),
+      published:async id=>({siteId:id,slug:'synthetic-checkout-public',orderManagementEnabled:true,blocks:(await one(a,'select blocks from pages where merchant_id=$1 and slug=$2',[id,'synthetic-checkout-public'])).blocks}),
+      catalog:async id=>(await one(a,'select blocks from pages where merchant_id=$1 and slug=$2',[id,`__merchant_catalog__:${id}`])).blocks.catalog})});
+    assert.equal(response.status,200);const payload=await response.json();assert.equal(payload.entry.accountId,accountId);assert.equal(payload.entry.offers.length,1);
+    assert.equal(payload.entry.offers[0].offerId,f.offer.id);assert.equal(payload.entry.offers[0].offerRevision,f.offer.revision);
+    assert.ok(!/unitPoints|stock|claimEventId|couponUses|principalKey|membershipId|cashMinor|customer-synthetic/.test(JSON.stringify(payload)));assert.deepEqual(await all(),before);
+   }
+  });
   await t.test('actual submission HTTP and trusted snapshot planner commit points, coupon, finite stock and appointment once',async()=>{
    const f=await submissionFixture(),before=await all(),deps={enabled:()=>true,session:async()=>({accountId,userId,servicePaused:false,user:{id:userId,email_confirmed_at:at}}),submit:input=>submission.submitMemberCheckout(input,submitRpc(a))};
    const request=()=>new Request('https://synthetic.faolla.invalid/api/member-checkout/submit',{method:'POST',headers:{origin:'https://synthetic.faolla.invalid','content-type':'application/json'},body:JSON.stringify(f.request)});

@@ -64,7 +64,7 @@ function ActivePanel({ siteId, accountId, initialSelection, locale, controllerFa
     {result ? <article className="space-y-4 rounded-3xl border border-teal-100 bg-white p-5 shadow-sm"><h2 className="text-xl font-semibold">{text.done}</h2>
       <p className="break-all text-sm text-slate-600">{result.resourceId}</p><MerchantSettlementBadge locale={locale} showDetails snapshot={{ version: 1, method: "points", closed: result.closed, totalPoints: result.totalPoints, debitedPoints: result.totalPoints,
         returnedPoints: result.cancellation?.pointsReturned ?? 0, returnPending: false, ...(result.couponCount ? { coupons: { redeemedCount: result.couponCount, returnedCount: result.cancellation?.couponsReturned ?? 0, returnPending: false } } : {}) }}/>
-      <a href={`/member-checkout/${siteId}/${result.operationKey}`} className={buttonClass + " block text-center"}>{text.details}</a>
+      <a href={`/member-checkout/${siteId}/${result.operationKey}?uiLocale=${encodeURIComponent(locale)}`} className={buttonClass + " block text-center"}>{text.details}</a>
       <button type="button" className={buttonClass + " w-full"} disabled={busy} onClick={() => { void controller.startAnother().then(() => { if (controller.getSnapshot().phase === "idle") { setCustomer(blankCustomer()); setDraft({ ...initialSelection, siteId, couponClaims: [] }); } }); }}>{text.another}</button>
     </article> : !state.pending && <>
       <fieldset disabled={frozen} className="grid gap-3 rounded-3xl border border-slate-200 bg-white p-5 sm:grid-cols-2"><label className="space-y-1 text-sm"><span>{text.quantity}</span>
