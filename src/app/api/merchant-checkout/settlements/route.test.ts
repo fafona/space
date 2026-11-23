@@ -34,6 +34,13 @@ test("receipt capability is only a separately gated UI hint and disappears if it
   allowed = false; assert.equal((await (await handleCheckoutReporting(f.request(), f.deps)).json()).canRecordOnSiteReceipt, undefined);
   allowed = true; f.deps.readMixed = async () => { allowed = false; return { ...f.report, version: 2 }; }; assert.equal((await handleCheckoutReporting(f.request(), f.deps)).status, 503);
 });
+test("cart receipt capability is separate from old single collection and cannot survive a changed gate", async () => {
+  const f = fixture(); let allowed = true; f.deps.cartEnabled = () => true; f.deps.mixedEnabled = () => true; f.deps.cartCollectionEnabled = () => allowed; f.deps.readCart = async () => ({ ...f.report, version: 3 });
+  const response = await handleCheckoutReporting(f.request(), f.deps); assert.equal(response.status, 200); const body = await response.json(); assert.equal(body.canRecordCartReceipt, true); assert.equal(body.canRecordOnSiteReceipt, undefined);
+  allowed = false; assert.equal((await (await handleCheckoutReporting(f.request(), f.deps)).json()).canRecordCartReceipt, undefined);
+  allowed = true; f.site.permissionConfig!.allowOrderManagement = false; assert.equal((await (await handleCheckoutReporting(f.request(), f.deps)).json()).canRecordCartReceipt, undefined); f.site.permissionConfig!.allowOrderManagement = true;
+  allowed = true; f.deps.readCart = async () => { allowed = false; return { ...f.report, version: 3 }; }; assert.equal((await handleCheckoutReporting(f.request(), f.deps)).status, 503);
+});
 test("disabled, foreign, employee and paused/expired access never query the ledger", async () => {
   for (const mode of ["off", "foreign", "employee", "paused", "expired", "unauthenticated"] as const) {
     const f = fixture();

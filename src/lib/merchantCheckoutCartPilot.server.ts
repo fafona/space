@@ -35,3 +35,9 @@ export function isMemberCheckoutCartManagementEnabled(siteId: string, env: Recor
   return isMemberCheckoutCartPilotEnabled(siteId, "points", env) && Boolean(raw.trim()) && sites.length <= 50
     && sites.every(s => /^\d{8}$/.test(s)) && sites.includes(siteId);
 }
+/** Independent receipt authority; does not authorize refunds or employees. */
+export function isMemberCheckoutCartCollectionEnabled(siteId: string, env: Record<string, string | undefined> = process.env) {
+  const raw = env.MERCHANT_MEMBER_CHECKOUT_CART_COLLECTION_PILOT_SITES ?? "", sites = raw.split(",").map(s => s.trim());
+  return isMemberCheckoutCartManagementEnabled(siteId, env) && isMemberCheckoutCartPilotEnabled(siteId, "on_site", env) && Boolean(raw.trim()) && sites.length <= 50
+    && sites.every(s => /^\d{8}$/.test(s)) && sites.includes(siteId);
+}

@@ -9,6 +9,7 @@ import { OnSiteCheckoutSummary } from "./OnSiteCheckoutSummary";
 import { CartCheckoutSummary } from "./CartCheckoutSummary";
 import { parseOnSiteCollectionReceipt } from "@/lib/merchantCheckoutOnSiteCollection";
 import { formatSettlementMoney } from "@/lib/merchantSettlement";
+import { CartCollectionControls } from "./CartCollectionControls";
 
 const copy = {
   zh: { title: "结算核对", note: "仅核对本页记录。业务状态与结算状态独立；积分兑换不代表收到现金。", reload: "重新读取", export: "导出本页", all: "全部", linked: "已关联结算", closed: "已关闭", review: "需人工核对", unlinked: "未关联新结算账本", unknown: "暂无可核对记录", loading: "读取结算状态…", failed: "暂时无法核对结算，不能据此认定未付款或重新扣减。", login: "请使用商户负责人账号核验。", booking: "预约", order: "订单", business: "业务状态", missing: "原记录待核对", policy: "原单取消规则", returnPoints: "退实际扣除积分", keepPoints: "不退积分", returnCoupons: "退原券，不顺延有效期", keepCoupons: "不退券", reviewNote: "原记录缺失、内容或状态与结算不一致。请人工核对，勿在旧入口重复扣减、取消或恢复。", legacy: "沿用原有记录；此处不判断付款情况。", closedNote: "已按原单规则关闭，是否退还以实际退还记录为准。", pending: "待确认", active: "待确认", confirmed: "已确认", completed: "已完成", no_show: "未到店", cancelled: "已取消", filter: "本页筛选", readOnly: "只读核对，不更改预约、订单、积分或券。" },
@@ -31,7 +32,7 @@ export function MerchantCheckoutSettlementPanel({ siteId, resources, identityKey
 }) {
   const text = copy[merchantSettlementLanguage(locale)], collectionText = collectionCopy[merchantSettlementLanguage(locale)], api = useMemo(() => apiClient ?? createMerchantBusinessApiClient({ authMode: "owner" }), [apiClient]);
   const scope = JSON.stringify({ siteId, resources }), displayScope = JSON.stringify([scope, identityKey]);
-  const [loaded, setLoaded] = useState<{ scope: string; snapshot: CheckoutReportingSnapshot; canRecord: boolean } | null>(null);
+  const [loaded, setLoaded] = useState<{ scope: string; snapshot: CheckoutReportingSnapshot; canRecord: boolean; canRecordCart: boolean } | null>(null);
   const [loading, setLoading] = useState(false), [error, setError] = useState(false), [filter, setFilter] = useState<Filter>("all");
   const [reviewCollection, setReviewCollection] = useState<string | null>(null), [collecting, setCollecting] = useState(false), [collectionUnknown, setCollectionUnknown] = useState(false);
   const writing = useRef(false);
@@ -50,7 +51,7 @@ export function MerchantCheckoutSettlementPanel({ siteId, resources, identityKey
       const payload = await response.json();
       if (abort.signal.aborted || run !== generation.current) return;
       if (!response.ok || payload.ok !== true) throw new Error("unavailable");
-      setLoaded({ scope: displayScope, snapshot: parseCheckoutReportingSnapshot(payload.snapshot, request), canRecord: payload.canRecordOnSiteReceipt === true });
+      setLoaded({ scope: displayScope, snapshot: parseCheckoutReportingSnapshot(payload.snapshot, request), canRecord: payload.canRecordOnSiteReceipt === true, canRecordCart: payload.canRecordCartReceipt === true });
     } catch { if (!abort.signal.aborted && run === generation.current) setError(true); }
     finally { if (run === generation.current) setLoading(false); }
   }, [api, scope, displayScope, identityKey, ownerScope, invalidate]);
@@ -93,7 +94,7 @@ export function MerchantCheckoutSettlementPanel({ siteId, resources, identityKey
       {identityKey && <div className="flex flex-wrap gap-2"><button className={button} disabled={loading || collecting} onClick={() => void load()}>{text.reload}</button><button className={button} disabled={!snapshot || collecting} onClick={download}>{text.export}</button></div>}</header>
     {identityKey && collectionUnknown && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{collectionText.unknown}</p>}
     {!identityKey ? <p role="status">{text.login}</p> : loading ? <p role="status">{text.loading}</p> : error ? <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{text.failed}</p>
-      : snapshot ? <><label className="flex flex-wrap items-center gap-3 text-sm">{text.filter}<select aria-label={text.filter} value={filter} onChange={event => setFilter(event.target.value as Filter)} className={button}>
+      : snapshot ? <><label className="flex flex-wrap items-center gap-3 text-sm">{text.filter}<select aria-label={text.filter} value={filter} disabled={collecting} onChange={event => setFilter(event.target.value as Filter)} className={button}>
         {(["all", "linked", "closed", "review", "unlinked"] as Filter[]).map(value => <option key={value} value={value}>{text[value]}</option>)}</select><span>{rows.length} / {snapshot.rows.length}</span></label>
         <div className="grid gap-3 lg:grid-cols-2">{rows.map(row => {
           const r = row.cart ?? row.onSite ?? row.result, policy = (row.onSite ?? row.result)?.cancellationPolicy, review = checkoutReportingNeedsReview(row);
@@ -105,12 +106,15 @@ export function MerchantCheckoutSettlementPanel({ siteId, resources, identityKey
               {r.closed && <p className="text-xs text-slate-600">{text.closedNote}</p>}
               {policy && <details className="text-sm text-slate-600"><summary className="cursor-pointer">{text.policy}</summary><ul className="mt-2 list-inside list-disc space-y-1">{"returnPoints" in policy && <li>{policy.returnPoints ? text.returnPoints : text.keepPoints}</li>}<li>{policy.returnCoupons ? text.returnCoupons : text.keepCoupons}</li></ul></details>}
               {review && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{text.reviewNote}</p>}</>}
+            {loaded?.canRecordCart && row.cart && <CartCollectionControls key={displayScope + row.cart.operationKey + row.cart.resource?.updatedAt} result={row.cart} api={api} ownerScope={ownerScope} locale={locale}
+              onReload={load} onBusy={setCollecting} onUnknown={() => { setLoaded(null); setCollectionUnknown(true); }}/>
+            }
             {loaded?.canRecord && row.onSite && !review && !row.onSite.closed && !row.onSite.collection && row.onSite.terms.dueMinor > 0 && row.onSite.resource
               && ["active", "pending", "confirmed", "completed"].includes(row.onSite.resource.status) && (reviewCollection !== row.onSite.operationKey
                 ? <button className={button} disabled={collecting} onClick={() => setReviewCollection(row.onSite!.operationKey)}>{collectionText.open}</button>
                 : <div role="region" aria-label={collectionText.confirm} className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6"><p>{collectionText.review}</p><p className="text-lg font-bold">{formatSettlementMoney(row.onSite.terms.dueMinor, locale)}</p><div className="flex flex-wrap gap-2"><button className={button + " !bg-teal-700 !text-white"} disabled={collecting} onClick={() => void collect(row.onSite!.operationKey)}>{collecting ? collectionText.working : collectionText.confirm}</button><button className={button} disabled={collecting} onClick={() => setReviewCollection(null)}>{collectionText.back}</button></div></div>)}
           </article>;
         })}</div>{rows.length === 0 && <p>{text.unknown}</p>}</> : <p>{text.unknown}</p>}
-    <p className="text-xs text-slate-500">{loaded?.canRecord ? collectionText.note : text.readOnly}</p>
+    <p className="text-xs text-slate-500">{loaded?.canRecord || loaded?.canRecordCart ? collectionText.note : text.readOnly}</p>
   </section>;
 }

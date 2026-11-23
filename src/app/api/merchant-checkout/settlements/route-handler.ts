@@ -5,13 +5,13 @@ import { isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
 import { isMemberCheckoutPilotEnabled } from "@/lib/merchantMemberCheckoutPilot.server";
 import { parseCheckoutReportingRequest, parseCheckoutReportingSnapshot } from "@/lib/merchantCheckoutReporting";
 import { readCheckoutReporting, readMixedCheckoutReporting, readCartCheckoutReporting } from "@/lib/merchantCheckoutReporting.server";
-import { isMemberCheckoutCartPilotEnabled } from "@/lib/merchantCheckoutCartPilot.server";
+import { isMemberCheckoutCartPilotEnabled, isMemberCheckoutCartCollectionEnabled } from "@/lib/merchantCheckoutCartPilot.server";
 import { isMemberCheckoutOnSitePilotEnabled, isMemberCheckoutOnSiteCollectionEnabled } from "@/lib/merchantCheckoutOnSitePilot.server";
 import { isTrustedCheckoutReadRequest } from "@/lib/merchantCheckoutReadRequest";
 
 const defaults = { ...checkoutOwnerDependencies, enabled: isMemberCheckoutPilotEnabled, read: readCheckoutReporting,
   mixedEnabled: isMemberCheckoutOnSitePilotEnabled, readMixed: readMixedCheckoutReporting, collectionEnabled: isMemberCheckoutOnSiteCollectionEnabled };
-const cartDefaults = { cartEnabled: (siteId: string) => isMemberCheckoutCartPilotEnabled(siteId, "points"), readCart: readCartCheckoutReporting };
+const cartDefaults = { cartEnabled: (siteId: string) => isMemberCheckoutCartPilotEnabled(siteId, "points"), readCart: readCartCheckoutReporting, cartCollectionEnabled: isMemberCheckoutCartCollectionEnabled };
 export type CheckoutReportingDependencies = typeof defaults & Partial<typeof cartDefaults>;
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: {
   "cache-control": "private, no-store", pragma: "no-cache", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "cross-origin-resource-policy": "same-origin", vary: "Cookie, Authorization",
@@ -68,13 +68,16 @@ export async function handleCheckoutReporting(request: Request, overrides: Parti
     if (expectedIdentity !== null && expectedIdentity !== identityKey) return json({ error: "permission_denied" }, 403);
     await reauthorize();
     const cart = deps.cartEnabled(scope.siteId), mixed = deps.mixedEnabled(scope.siteId), collect = mixed && deps.collectionEnabled(scope.siteId);
+    const cartCollectGate = cart && mixed && deps.cartCollectionEnabled(scope.siteId);
+    const cartCollect = cartCollectGate && (await deps.site(scope.siteId))?.permissionConfig?.allowOrderManagement === true;
     const report = await (cart ? deps.readCart : mixed ? deps.readMixed : deps.read)(scope);
     await reauthorize();
     if (deps.cartEnabled(scope.siteId) !== cart || deps.mixedEnabled(scope.siteId) !== mixed || (mixed && deps.collectionEnabled(scope.siteId)) !== collect
+      || (deps.cartEnabled(scope.siteId) && deps.mixedEnabled(scope.siteId) && deps.cartCollectionEnabled(scope.siteId)) !== cartCollectGate
       || report.version !== (cart ? 3 : mixed ? 2 : 1)) throw new Error("checkout_reporting_unavailable");
     let snapshot;
     try { snapshot = parseCheckoutReportingSnapshot(report, scope); } catch { throw new Error("checkout_reporting_unavailable"); }
-    return json({ ok: true, snapshot, ...(collect ? { canRecordOnSiteReceipt: true } : {}) });
+    return json({ ok: true, snapshot, ...(collect ? { canRecordOnSiteReceipt: true } : {}), ...(cartCollect ? { canRecordCartReceipt: true } : {}) });
   } catch (error) {
     if (error instanceof MerchantBusinessAccessError) return json({ error: error.code }, error.status);
     const message = error instanceof Error ? error.message : "";

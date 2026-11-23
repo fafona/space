@@ -3,10 +3,11 @@ import { parseMemberCheckoutCancellation, type MemberCheckoutCancellation } from
 export type CartResultLine = { offerId: string; offerRevision: string; productId: string; title: string; quantity: number;
   points: number | null; grossMinor: number | null; discountMinor: number | null; dueMinor: number | null;
   returnPoints: boolean; returnCoupons: boolean; couponCount: number };
+export type CartCollectionRecord = { amountMinor: number; currency: "eur"; recordedAt: string };
 export type CartCheckoutResult = { version: 3; purpose: "product_cart_result"; siteId: string; operationKey: string; resourceKind: "order"; resourceId: string;
   method: "points" | "on_site"; currency: "eur" | null; totalPoints: number | null; grossMinor: number | null; discountMinor: number | null; dueMinor: number | null;
   capturedMinor: 0; couponCount: number; lines: CartResultLine[]; closed: boolean; reviewRequired: boolean; cancellationAvailable: boolean;
-  resource: { status: string; updatedAt: string } | null; cancellation: MemberCheckoutCancellation | null };
+  resource: { status: string; updatedAt: string } | null; cancellation: MemberCheckoutCancellation | null; collection?: CartCollectionRecord };
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const integer = (v: unknown, max = 99_999_999): v is number => Number.isSafeInteger(v) && Number(v) >= 0 && Number(v) <= max;
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(v);
@@ -43,6 +44,13 @@ export function parseCartCheckoutResult(raw: unknown, scope: { siteId: string; o
   if (raw.resource !== null) { need(object(raw.resource) && typeof raw.resource.status === "string" && ["pending", "confirmed", "completed", "cancelled"].includes(raw.resource.status) && date(raw.resource.updatedAt));
     resource = { status: raw.resource.status, updatedAt: raw.resource.updatedAt }; }
   const cancellation = raw.cancellation === null ? null : parseMemberCheckoutCancellation(raw.cancellation);
+  let collection: CartCollectionRecord | undefined;
+  if (Object.hasOwn(raw, "collection")) {
+    const c = raw.collection;
+    need(!points && object(c) && integer(c.amountMinor) && c.amountMinor > 0 && c.amountMinor === raw.dueMinor && c.currency === "eur" && date(c.recordedAt)
+      && !raw.closed && cancellation === null && raw.cancellationAvailable === false);
+    collection = { amountMinor: c.amountMinor, currency: "eur", recordedAt: c.recordedAt };
+  }
   need(raw.closed === Boolean(cancellation) && (!cancellation || cancellation.pointsReturned <= ((raw.totalPoints ?? 0) as number) && cancellation.couponsReturned <= raw.couponCount)
     && (!cancellation || cancellation.pointsReturned === lines.reduce((s, l) => s + (l.returnPoints ? l.points ?? 0 : 0), 0)
       && cancellation.couponsReturned === lines.reduce((s, l) => s + (l.returnCoupons ? l.couponCount : 0), 0) && cancellation.stockReleased <= lines.reduce((s, l) => s + l.quantity, 0))
@@ -51,5 +59,5 @@ export function parseCartCheckoutResult(raw: unknown, scope: { siteId: string; o
   return { version: 3, purpose: "product_cart_result", siteId: scope.siteId, operationKey: scope.operationKey, resourceKind: "order", resourceId: raw.resourceId,
     method: raw.method, currency: points ? null : "eur", totalPoints: raw.totalPoints as number | null, grossMinor: raw.grossMinor as number | null,
     discountMinor: raw.discountMinor as number | null, dueMinor: raw.dueMinor as number | null, capturedMinor: 0, couponCount: raw.couponCount, lines,
-    closed: raw.closed, reviewRequired: raw.reviewRequired, cancellationAvailable: raw.cancellationAvailable, resource, cancellation };
+    closed: raw.closed, reviewRequired: raw.reviewRequired, cancellationAvailable: raw.cancellationAvailable, resource, cancellation, ...(collection ? { collection } : {}) };
 }

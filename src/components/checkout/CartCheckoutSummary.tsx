@@ -9,10 +9,16 @@ const copy = {
 /** Safe version-three DTO only. Never infers cash from order completion,
  * presents a stale original after unknown writes, or flattens line policies. */
 export function CartCheckoutSummary({ result: r, locale = "zh-CN" }: { result: CartCheckoutResult; locale?: string }) {
-  const t = copy[merchantSettlementLanguage(locale)], points = r.method === "points";
+  const lang = merchantSettlementLanguage(locale), t = copy[lang], points = r.method === "points";
+  const receipt = {
+    zh: { title: "商户登记已收款", note: "此为商户确认的到店收款记录，并非 Stripe／银行付款证明。取消需先核对退款，不会自动退款或退券。" },
+    en: { title: "Cash receipt recorded by merchant", note: "This is a merchant-confirmed venue receipt, not Stripe or bank proof. Cancellation requires refund review; no automatic refund or coupon return." },
+    es: { title: "Cobro registrado por el comercio", note: "Cobro en el local confirmado por el comercio, no un justificante de Stripe o del banco. Cancelar requiere revisar el reembolso; no se devuelve dinero ni cupones automáticamente." },
+  }[lang];
   if (r.reviewRequired) return <section data-cart-summary className="space-y-2 rounded-2xl border border-amber-200 bg-amber-50 p-4"><h3 className="font-semibold">{t.review}</h3><p className="text-sm leading-6">{t.reviewNote}</p></section>;
   return <section data-cart-summary className="min-w-0 space-y-4">
-    <h3 className="text-sm font-semibold">{t.title}</h3><p data-cart-settlement-status className="rounded-xl bg-teal-50 p-3 text-sm font-semibold text-teal-900">{r.closed ? t.closed : points ? t.redeemed : r.dueMinor === 0 ? t.covered : t.unpaid}</p>
+    <h3 className="text-sm font-semibold">{t.title}</h3><p data-cart-settlement-status className="rounded-xl bg-teal-50 p-3 text-sm font-semibold text-teal-900">{r.closed ? t.closed : points ? t.redeemed : r.collection ? receipt.title : r.dueMinor === 0 ? t.covered : t.unpaid}</p>
+    {r.collection && <div data-cart-collection className="space-y-2 rounded-xl border border-teal-200 bg-teal-50 p-3"><p className="text-lg font-bold">{formatSettlementMoney(r.collection.amountMinor, locale)}</p><time className="break-all text-xs" dateTime={r.collection.recordedAt}>{r.collection.recordedAt}</time><p className="text-xs leading-5">{receipt.note}</p></div>}
     {points ? <p className="text-lg font-bold">{t.total}: {r.totalPoints} {t.points}</p> : <dl className="grid grid-cols-1 gap-2 sm:grid-cols-3">{[[t.gross, r.grossMinor], [t.discount, r.discountMinor], [t.due, r.dueMinor]].map(([label, value]) => <div key={String(label)} className="min-w-0 rounded-xl bg-slate-50 p-3"><dt className="text-xs text-slate-600">{label}</dt><dd className="mt-1 break-words font-bold">{formatSettlementMoney(Number(value), locale)}</dd></div>)}</dl>}
     <ul className="divide-y divide-slate-100">{r.lines.map(l => <li key={l.offerId} className="flex min-w-0 flex-wrap justify-between gap-2 py-2 text-sm"><span className="min-w-0 break-words">{l.title} · {t.quantity} {l.quantity}</span><span className="shrink-0 font-medium">{points ? `${l.points} ${t.points}` : formatSettlementMoney(l.dueMinor!, locale)}</span></li>)}</ul>
     <p className="text-xs text-slate-600">{t.used}: {r.couponCount}</p>

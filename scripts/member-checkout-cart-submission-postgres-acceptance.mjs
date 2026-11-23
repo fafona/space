@@ -9,6 +9,7 @@ import orders from '../src/lib/merchantOrders.ts';import oldPlanner from '../src
 import reporting from '../src/lib/merchantCheckoutReporting.server.ts';import reportDto from '../src/lib/merchantCheckoutReporting.ts';import cashPlanner from '../src/lib/merchantCheckoutOnSiteSubmissionPlan.server.ts';
 import {pendingIntentAcceptance} from './fixtures/member-checkout-pending-intent-acceptance.mjs';
 import {cartManagementAcceptance} from './fixtures/member-checkout-cart-management-acceptance.mjs';
+import {cartCollectionAcceptance} from './fixtures/member-checkout-cart-collection-acceptance.mjs';
 
 test('whole product cart commit/recover/cancel uses original PostgreSQL writers atomically',{timeout:120000},async t=>{
  const runtime=path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR||'.missing-test-runtime'),relative=path.relative(tmpdir(),runtime);
@@ -43,7 +44,7 @@ test('whole product cart commit/recover/cancel uses original PostgreSQL writers 
    'database/proposals/20261123_member_checkout_on_site_submission.sql','database/proposals/20261123_member_checkout_reporting.sql','database/proposals/20261123_member_checkout_presentation.sql',
    'database/proposals/20261123_member_checkout_on_site_management.sql','database/proposals/20261123_member_checkout_cart_quote.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
   const beforeDefinitions=await definitions();
-  for(const file of ['database/proposals/20261123_member_checkout_cart_submission.sql','database/proposals/20261123_member_checkout_cart_cancellation.sql','database/proposals/20261123_member_checkout_cart_presentation.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
+  for(const file of ['database/proposals/20261123_member_checkout_cart_collection.sql','database/proposals/20261123_member_checkout_cart_submission.sql','database/proposals/20261123_member_checkout_cart_cancellation.sql','database/proposals/20261123_member_checkout_cart_presentation.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
   assert.deepEqual(await definitions(),beforeDefinitions,'all original financial and guard functions remain byte-identical');
   const site='10909994',memberSlug=`__merchant_memberships__:${site}`,settingsSlug=`__merchant_membership_settings__:${site}`,couponSlug=`__merchant_coupons__:${site}`;
   for(const table of ['bundle_pilots','cart_quote_pilots'])await admin.query(`insert into faolla_checkout_design.${table}(site_id,enabled) values($1,true)`,[site]);
@@ -52,7 +53,8 @@ test('whole product cart commit/recover/cancel uses original PostgreSQL writers 
    if(found)await admin.query('update pages set blocks=$2 where id=$1',[found.id,JSON.stringify(row.blocks)]);else await admin.query('insert into pages(id,merchant_id,slug,blocks) values($1,$2,$3,$4)',[row.id,row.merchant_id,row.slug,JSON.stringify(row.blocks)]);};
   const all=async()=>({pages:(await admin.query('select * from pages order by id')).rows,operations:(await admin.query('select * from faolla_redemption_operations order by operation_id')).rows,
    receipts:(await admin.query('select * from faolla_checkout_design.bundle_results order by operation_key')).rows,cancellations:(await admin.query('select * from faolla_checkout_design.bundle_cancellations order by operation_key')).rows,
-   returns:(await admin.query('select * from faolla_checkout_design.bundle_coupon_returns order by redeem_event_id')).rows,collections:(await admin.query('select * from faolla_checkout_design.on_site_collections order by operation_key')).rows});
+   returns:(await admin.query('select * from faolla_checkout_design.bundle_coupon_returns order by redeem_event_id')).rows,collections:(await admin.query('select * from faolla_checkout_design.on_site_collections order by operation_key')).rows,
+   cartCollections:(await admin.query('select * from faolla_checkout_design.cart_collections order by site_id,operation_key')).rows});
   const seed=async(method='points',change=()=>{},count=2)=>{
    const f=fixtures.cartQuoteFixture(method,count);change(f);for(const row of [...f.snapshot.sourceRows,...f.snapshot.domainRows])await savePage(row);
    let version=(await one(admin,'select public.faolla_member_checkout_catalog_snapshot_v1($1) as result',[site])).result.version;
@@ -308,6 +310,7 @@ test('whole product cart commit/recover/cancel uses original PostgreSQL writers 
   });
   await cartManagementAcceptance({t,admin,a,b,site,one,seed,submit,cancel,all,temporary,definitions,beforeDefinitions,
    sql:()=>readFile(path.resolve('database/proposals/20261123_member_checkout_cart_management.sql'),'utf8')});
+  await cartCollectionAcceptance({t,admin,a,b,site,one,seed,submit,cancel,all,temporary,definitions,beforeDefinitions});
   await pendingIntentAcceptance({t,admin,a,b,site,one,seed,prepare,commit,cancel,all,temporary,connect,definitions,beforeDefinitions,
    sql:async()=> (await Promise.all(['database/proposals/20261123_member_checkout_pending_intents.sql','database/proposals/20261123_member_checkout_intent_review.sql'].map(file=>readFile(path.resolve(file),'utf8')))).join('\n')});
   console.log(`CART_SUBMISSION_EVIDENCE=${evidence}`);

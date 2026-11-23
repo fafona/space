@@ -20,7 +20,8 @@ BEGIN
   OR original.receipt->>'purpose' IS DISTINCT FROM 'product_cart' THEN RAISE EXCEPTION 'checkout_not_found';END IF;
  SELECT * INTO prior FROM faolla_checkout_design.bundle_cancellations WHERE site_id=p_site_id AND operation_key=p_operation_key;
  IF FOUND THEN RETURN jsonb_build_object('replayed',true,'result',public.faolla_member_checkout_cart_result_v1(p_site_id,p_operation_key,p_principal_key));END IF;
- IF EXISTS(SELECT 1 FROM faolla_checkout_design.on_site_collections WHERE site_id=p_site_id AND operation_key=p_operation_key) THEN RAISE EXCEPTION 'checkout_refund_required';END IF;
+ IF EXISTS(SELECT 1 FROM faolla_checkout_design.on_site_collections WHERE site_id=p_site_id AND operation_key=p_operation_key)
+  OR EXISTS(SELECT 1 FROM faolla_checkout_design.cart_collections WHERE site_id=p_site_id AND operation_key=p_operation_key) THEN RAISE EXCEPTION 'checkout_refund_required';END IF;
  PERFORM pg_advisory_xact_lock(hashtextextended('faolla-order-membership:'||p_site_id,0));
  PERFORM p.id FROM public.pages p WHERE p.merchant_id=p_site_id AND (p.slug IN ('__merchant_membership_settings__:'||p_site_id,'__merchant_memberships__:'||p_site_id,'__merchant_coupons__:'||p_site_id,'__merchant_orders__:'||p_site_id)
   OR p.slug~('^__merchant_orders__:'||p_site_id||':chunk:[0-9]+$')) ORDER BY p.slug,p.id FOR UPDATE;

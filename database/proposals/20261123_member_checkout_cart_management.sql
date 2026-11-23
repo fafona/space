@@ -31,7 +31,8 @@ BEGIN
  view:=public.faolla_member_checkout_cart_result_v1(p_site_id,b.operation_key,b.principal_key);
  IF view IS NULL THEN RAISE EXCEPTION 'checkout_cancellation_review_required';END IF;
  RETURN jsonb_build_object('siteId',p_site_id,'kind','order','id',p_id,'operationKey',b.operation_key,'record',rec,'cart',view,
-  'refundRequired',EXISTS(SELECT 1 FROM faolla_checkout_design.on_site_collections WHERE site_id=p_site_id AND operation_key=b.operation_key));
+  'refundRequired',EXISTS(SELECT 1 FROM faolla_checkout_design.on_site_collections WHERE site_id=p_site_id AND operation_key=b.operation_key)
+   OR EXISTS(SELECT 1 FROM faolla_checkout_design.cart_collections WHERE site_id=p_site_id AND operation_key=b.operation_key));
 END;
 $$;
 CREATE FUNCTION public.faolla_checkout_cart_merchant_cancel_v1(p_site_id text,p_operation_key text,p_actor_key text,p_expected_updated_at text,p_not_after text)

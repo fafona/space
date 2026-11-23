@@ -15,7 +15,8 @@ $$;
 CREATE FUNCTION public.faolla_member_checkout_cart_result_v1(p_site_id text,p_operation_key text,p_principal_key text)
 RETURNS jsonb LANGUAGE sql STABLE SET search_path=pg_catalog AS $$
  WITH owned AS (
-  SELECT b.*,c.receipt cancellation,EXISTS(SELECT 1 FROM faolla_checkout_design.on_site_collections x WHERE x.site_id=b.site_id AND x.operation_key=b.operation_key) collected
+  SELECT b.*,c.receipt cancellation,EXISTS(SELECT 1 FROM faolla_checkout_design.on_site_collections x WHERE x.site_id=b.site_id AND x.operation_key=b.operation_key) collected,
+   (SELECT jsonb_build_object('amountMinor',x.amount_minor,'currency',x.currency,'recordedAt',x.recorded_at) FROM faolla_checkout_design.cart_collections x WHERE x.site_id=b.site_id AND x.operation_key=b.operation_key) collection
   FROM faolla_checkout_design.bundle_results b LEFT JOIN faolla_checkout_design.bundle_cancellations c USING(site_id,operation_key)
   WHERE b.site_id=p_site_id AND b.operation_key=p_operation_key AND b.principal_key=p_principal_key
    AND p_site_id~'^[0-9]{8}$' AND p_operation_key~'^[a-f0-9]{64}$' AND p_principal_key~'^account:[0-9]{8}:[A-Za-z0-9_-]{8,128}$'
@@ -31,18 +32,21 @@ RETURNS jsonb LANGUAGE sql STABLE SET search_path=pg_catalog AS $$
  ), resource AS (SELECT CASE WHEN count(*)=1 THEN (jsonb_agg(r))->0 ELSE NULL END r FROM records), checked AS (
   SELECT b.*,r.r,coalesce(r.r->>'customerAccountId'=split_part(p_principal_key,':',2) AND r.r->>'customerUserId'=split_part(p_principal_key,':',3)
    AND b.receipt->'resourceTerms'=jsonb_build_object('items',r.r->'items','totalQuantity',r.r->'totalQuantity','totalAmount',r.r->'totalAmount')
-   AND (b.cancellation IS NOT NULL)=(r.r->>'status'='cancelled') AND NOT b.collected,false) ok FROM owned b CROSS JOIN resource r
+   AND (b.cancellation IS NOT NULL)=(r.r->>'status'='cancelled') AND NOT b.collected
+   AND (b.collection IS NULL OR b.receipt->>'method'='on_site' AND b.cancellation IS NULL AND b.collection->>'currency'=b.receipt->>'currency'
+    AND b.collection->'amountMinor'=b.receipt->'dueMinor'),false) ok FROM owned b CROSS JOIN resource r
  )
  SELECT jsonb_build_object('version',3,'purpose','product_cart_result','siteId',site_id,'operationKey',operation_key,'resourceKind','order','resourceId',resource_id,
   'method',receipt->'method','currency',receipt->'currency','totalPoints',receipt->'totalPoints','grossMinor',receipt->'grossMinor','discountMinor',receipt->'discountMinor',
   'dueMinor',receipt->'dueMinor','capturedMinor',0,'couponCount',receipt->'couponCount','closed',cancellation IS NOT NULL,'reviewRequired',NOT ok,
-  'cancellationAvailable',ok AND cancellation IS NULL AND r->>'status' IN ('pending','confirmed'),
+  'cancellationAvailable',ok AND cancellation IS NULL AND collection IS NULL AND r->>'status' IN ('pending','confirmed'),
   'lines',(SELECT jsonb_agg(jsonb_build_object('offerId',l->'offerId','offerRevision',l->'offerRevision','productId',l->'productId','title',l->'title','quantity',l->'quantity',
     'points',l->'points','grossMinor',l->'grossMinor','discountMinor',l->'discountMinor','dueMinor',l->'dueMinor','returnPoints',l->'returnPoints','returnCoupons',l->'returnCoupons','couponCount',jsonb_array_length(l->'couponClaims')) ORDER BY n)
     FROM jsonb_array_elements(receipt->'lines') WITH ORDINALITY x(l,n)),
   'resource',CASE WHEN r IS NOT NULL THEN jsonb_build_object('status',r->'status','updatedAt',r->'updatedAt') ELSE NULL END,
   'cancellation',CASE WHEN cancellation IS NOT NULL THEN jsonb_build_object('pointsReturned',cancellation->'pointsReturned','couponsReturned',cancellation->'couponsReturned',
-   'stockReleased',cancellation->'stockReleased','cancelledAt',cancellation->'cancelledAt') ELSE NULL END) FROM checked;
+   'stockReleased',cancellation->'stockReleased','cancelledAt',cancellation->'cancelledAt') ELSE NULL END)
+  ||CASE WHEN collection IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('collection',collection) END FROM checked;
 $$;
 
 CREATE FUNCTION public.faolla_member_checkout_cart_submission_snapshot_v1(p_site_id text,p_operation_key text,p_principal_key text,p_request_hash text,p_quote_request_hash text,p_offer_ids jsonb)

@@ -88,7 +88,7 @@ export function checkoutReportingTsv(snapshot: CheckoutReportingSnapshot): strin
       return [row.kind, row.id, cart ? "cart" : r ? "single" : "unlinked", cart?.method ?? (c ? "on_site" : p ? "points" : ""), r?.resource?.status ?? "",
         cart?.lines.length ?? "", cart?.lines.reduce((s, l) => s + l.quantity, 0) ?? "", pointTotal ?? "", pointTotal !== undefined && pointTotal !== null ? r?.cancellation?.pointsReturned ?? 0 : "",
         cart?.grossMinor ?? c?.terms.grossMinor ?? "", cart?.discountMinor ?? c?.terms.discountMinor ?? "", cart?.dueMinor ?? c?.terms.dueMinor ?? "",
-        cart?.method === "on_site" ? cart.reviewRequired ? "" : 0 : c ? c.collection?.amountMinor ?? 0 : "",
+        cart?.method === "on_site" ? cart.reviewRequired ? "" : cart.collection?.amountMinor ?? 0 : c ? c.collection?.amountMinor ?? 0 : "",
         cart?.couponCount ?? c?.terms.couponCount ?? p?.couponCount ?? "", r?.cancellation?.couponsReturned ?? (r ? 0 : ""), r?.closed ?? "", r ? checkoutReportingNeedsReview(row) : ""]; })].map(row => row.map(cell).join("\t")).join("\r\n");
   if (snapshot.version === 2) return [["kind", "resource_id", "method", "business_status", "points_debited", "points_returned", "gross_minor", "coupon_discount_minor", "due_minor", "merchant_recorded_cash_minor", "coupons_used", "coupons_returned", "closed", "review_required"],
     ...snapshot.rows.map(row => { const p = row.result, c = row.onSite, r = c ?? p; return [row.kind, row.id, c ? "on_site" : p ? "points" : "unlinked", r?.resource?.status ?? "",
