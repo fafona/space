@@ -5,6 +5,7 @@ import ownerHttp from '../src/app/api/merchant-checkout/settlements/route-handle
 import personalHttp from '../src/app/api/member-checkout/resource/route-handler.ts';
 import history from '../src/lib/merchantCheckoutHistoryRead.server.ts';
 import reporting from '../src/lib/merchantCheckoutReporting.server.ts';
+import historyPending from '../src/lib/merchantCheckoutHistoryPending.server.ts';
 
 export async function historyReadCases(t,{admin,a,seed,submit,state,site,one,dispatch}){
  const origin='https://history-postgres.synthetic.invalid';
@@ -32,8 +33,34 @@ export async function historyReadCases(t,{admin,a,seed,submit,state,site,one,dis
   }
  });
  await t.test('the history change grants no SQL execution to API roles and changes no database state',async()=>{
-  const before=await state();for(const role of ['anon','authenticated','service_role'])for(const signature of ['public.faolla_member_checkout_reporting_v3(text,jsonb)','public.faolla_member_checkout_original_resource_v2(text,text,text,text)']){
+  const before=await state();for(const role of ['anon','authenticated','service_role'])for(const signature of ['public.faolla_member_checkout_reporting_v3(text,jsonb)','public.faolla_member_checkout_original_resource_v2(text,text,text,text)','public.faolla_member_checkout_pending_intent_v1(text,text)']){
    assert.equal((await one(admin,"select has_function_privilege($1,$2,'EXECUTE') allowed",[role,signature])).allowed,false);
   }assert.deepEqual(await state(),before);
+ });
+ await t.test('independent history HTTP finds exact original pending claims after database enrollment closes, without acknowledging or changing any table',async()=>{
+  for(const method of ['points','on_site']){
+   const f=await seed(method),result=(await submit(f)).result;
+   await admin.query('update faolla_checkout_design.intent_pilots set enabled=false where site_id=$1',[site]);
+   try{
+    const before=await state(),session={...f.principal,servicePaused:false,user:{email_confirmed_at:new Date().toISOString()}};let calls=0;
+    const req=account=>new Request(`${origin}/api/member-checkout/history/pending`,{method:'POST',headers:{origin,'content-type':'application/json','x-checkout-account-scope':account},body:JSON.stringify({siteId:site})});
+    const call=async(name,args)=>{calls++;assert.equal(name,'faolla_member_checkout_pending_intent_v1');
+     try{return{data:(await one(a,'select public.faolla_member_checkout_pending_intent_v1($1,$2) result',[args.p_site_id,args.p_principal_key])).result,error:null};}
+     catch(error){return{data:null,error:{message:error.message}};}
+    };
+    const deps={enabled:()=>true,session:async()=>session,call};
+    for(let i=0;i<2;i++){
+     const response=await historyPending.handleCheckoutHistoryPending(req(session.accountId),deps);assert.equal(response.status,200);
+     const body=await response.json();assert.equal(body.readOnly,true);assert.equal(body.snapshot.pending.operationKey,result.operationKey);
+     assert.equal(body.snapshot.pending.original.result.method,method);assert.equal(body.snapshot.pending.reviewRequired,false);
+    }
+    const foreign={...session,accountId:'59999998',userId:'other-history-pending-synthetic'};
+    const other=await historyPending.handleCheckoutHistoryPending(req(foreign.accountId),{...deps,session:async()=>foreign});
+    // No durable claim + closed DB enrollment is unavailable, NOT proof of a
+    // failed or absent submission. It must not reveal this customer's claim.
+    assert.equal(other.status,503);assert.deepEqual(await other.json(),{error:'checkout_intent_unavailable'});
+    assert.equal(calls,3);assert.deepEqual(await state(),before);
+   }finally{await admin.query('update faolla_checkout_design.intent_pilots set enabled=true where site_id=$1',[site]);}
+  }
  });
 }

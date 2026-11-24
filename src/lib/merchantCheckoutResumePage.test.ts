@@ -8,6 +8,7 @@ import ts from "typescript";
 import { isMemberCheckoutIntentPilotEnabled } from "./merchantCheckoutCartPilot.server";
 import { isCanonicalPortalRequest } from "./canonicalPortalRequest";
 import { buildCheckoutResumeHref } from "./merchantCheckoutResumeClient";
+import { isMemberCheckoutHistoryReadEnabled } from "./merchantCheckoutHistoryPilot.server";
 const siteId = "10909994", notFound = new Error("synthetic-not-found"), requireRepo = createRequire(path.resolve("package.json"));
 async function fixture() {
   const file = path.resolve("src/app/member-checkout/[siteId]/resume/page.tsx"), env: Record<string, string> = Object.fromEntries(["MERCHANT_MEMBER_CHECKOUT_PILOT_SITES", "MERCHANT_MEMBER_CHECKOUT_CART_PILOT_SITES", "MERCHANT_MEMBER_CHECKOUT_CART_UI_PILOT_SITES", "MERCHANT_MEMBER_CHECKOUT_INTENT_PILOT_SITES"].map(k => [k, siteId]));
@@ -15,6 +16,7 @@ async function fixture() {
   const mocks: Record<string, unknown> = { "next/navigation": { notFound: () => { throw notFound; }, redirect: (url: string) => { redirects.push(url); throw new Error("synthetic-redirect"); } },
     "next/headers": { headers: async () => new Headers({ host: canonical ? "www.faolla.com" : "merchant.faolla.com" }) },
     "@/lib/merchantCheckoutCartPilot.server": { isMemberCheckoutIntentPilotEnabled: (site: string) => isMemberCheckoutIntentPilotEnabled(site, env) },
+    "@/lib/merchantCheckoutHistoryPilot.server": { isMemberCheckoutHistoryReadEnabled: (site: string) => isMemberCheckoutHistoryReadEnabled(site, env) },
     "@/lib/canonicalPortalRequest": { isCanonicalPortalRequest: (request: Request) => isCanonicalPortalRequest(request), resolveCanonicalPortalOrigin: () => "https://www.faolla.com" },
     "@/lib/merchantCheckoutResumeClient": { buildCheckoutResumeHref }, "./CheckoutResumeClient": () => null };
   const compiled = ts.transpileModule(await readFile(file, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
@@ -31,4 +33,16 @@ test("merchant-host page redirects only to configured platform origin without pa
   const x = await fixture(); x.merchant(); await assert.rejects(x.run(), /synthetic-redirect/); assert.equal(x.redirects[0], `https://www.faolla.com/member-checkout/${siteId}/resume?uiLocale=es-ES`);
   await assert.rejects(x.run({}), /synthetic-redirect/); assert.equal(x.redirects[1], `https://www.faolla.com/member-checkout/${siteId}/resume`);
   await assert.rejects(x.run({ uiLocale: "es-ES", origin: "https://foreign.invalid" }), e => e === notFound); assert.equal(x.redirects.length, 2);
+});
+
+test("independent history scope keeps the actual resume page read-only after every purchase gate closes", async () => {
+  const x = await fixture(); for (const key of Object.keys(x.env)) x.env[key] = "";
+  x.env.MERCHANT_MEMBER_CHECKOUT_HISTORY_READ_SITES = siteId;
+  assert.deepEqual(JSON.parse(JSON.stringify((await x.run()).props)), { siteId, readOnly: true });
+  // An explicitly read-only page is not a query-borne mode or an intent grant.
+  await assert.rejects(x.run({ readOnly: "false" }), e => e === notFound);
+  x.merchant(); await assert.rejects(x.run(), /synthetic-redirect/);
+  assert.equal(x.redirects[0], `https://www.faolla.com/member-checkout/${siteId}/resume?uiLocale=es-ES`);
+  x.env.MERCHANT_MEMBER_CHECKOUT_HISTORY_READ_SITES = "";
+  await assert.rejects(x.run(), e => e === notFound);
 });

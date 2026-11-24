@@ -12,12 +12,17 @@ const copy = {
   es: { title: "Mi pago original", note: "Solo consulta originales registrados. No envía, descuenta, confirma revisión ni vacía formularios o carritos. Que no aparezca un original no demuestra que otro envío sin confirmar haya fallado. Conserva su página y referencia; no lo envíes de nuevo.", read: "Consultar original de nuevo", reading: "Consultando tu original…", empty: "No hay originales registrados pendientes de revisión.", failed: "No se pudo consultar tu original. Consulta de nuevo; no lo reenvíes.", changed: "Tu cuenta ha cambiado. Abre de nuevo esta página.", review: "El original requiere revisión manual. No deduzcas que está pagado ni vuelvas a descontar.", detail: "Detalles y política de cancelación", single: "Original de un artículo" },
 };
 const button = "inline-flex min-h-11 items-center rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold disabled:opacity-50";
+const historyCopy = {
+  zh: { note: "只读查阅原单；这里不下单、扣减、确认下一单、取消或退款。", policy: "原单取消规则", returnPoints: "按原单退实际扣除积分", keepPoints: "原单不退积分", returnCoupons: "按原单退券，不顺延有效期", keepCoupons: "原单不退券" },
+  en: { note: "Read-only original. No order, debit, next-order acknowledgement, cancellation or refund is made here.", policy: "Original cancellation policy", returnPoints: "Return actual points under the original policy", keepPoints: "Original points are not returned", returnCoupons: "Return original coupons without extending expiry", keepCoupons: "Original coupons are not returned" },
+  es: { note: "Original de solo lectura. Aquí no se pide, descuenta, confirma otro pedido, cancela ni reembolsa.", policy: "Política original de cancelación", returnPoints: "Devolver puntos descontados según la política original", keepPoints: "No se devuelven los puntos originales", returnCoupons: "Devolver cupones originales sin ampliar validez", keepCoupons: "No se devuelven los cupones originales" },
+};
 /** Viewing cannot acknowledge/release an original: only its original host can
  * preserve/consume the corresponding account-owned draft before release. */
-export function MemberCheckoutResumePanel({ siteId, accountId, locale = "zh-CN", controllerFactory = createCheckoutResumeController }: {
-  siteId: string; accountId: string; locale?: string; controllerFactory?: typeof createCheckoutResumeController;
+export function MemberCheckoutResumePanel({ siteId, accountId, locale = "zh-CN", readOnly = false, controllerFactory = createCheckoutResumeController }: {
+  siteId: string; accountId: string; locale?: string; readOnly?: boolean; controllerFactory?: typeof createCheckoutResumeController;
 }) {
-  const t = copy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId }), [siteId, accountId, controllerFactory]);
+  const t = copy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId, ...(readOnly ? { readOnly: true } : {}) }), [siteId, accountId, readOnly, controllerFactory]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot), [blocked, setBlocked] = useState(false);
   useEffect(() => {
     void controller.activate();
@@ -29,8 +34,10 @@ export function MemberCheckoutResumePanel({ siteId, accountId, locale = "zh-CN",
   }, [controller]);
   const pending = blocked ? null : state.snapshot?.pending, original = pending?.original, single = original?.kind === "single" ? original.original : null;
   const points = single?.method === "points" ? single.result : null;
+  const history = historyCopy[merchantSettlementLanguage(locale)], policy = single?.result.cancellationPolicy;
   return <section data-checkout-resume className="mx-auto max-w-4xl space-y-5 p-4 text-slate-900 sm:p-7">
     <header><p translate="no" className="text-xs font-semibold tracking-widest text-teal-700">FAOLLA · ORIGINAL CHECKOUT</p><h1 className="mt-2 text-2xl font-bold">{t.title}</h1><p className="mt-3 text-sm leading-6 text-slate-600">{t.note}</p></header>
+    {readOnly && <p data-checkout-history-read className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">{history.note}</p>}
     {blocked ? <p role="alert">{t.changed}</p> : <>
       <button type="button" className={button} disabled={state.phase === "reading"} onClick={() => void controller.read()}>{t.read}</button>
       {(state.phase === "reading" || state.phase === "idle") && <p role="status">{t.reading}</p>}
@@ -43,7 +50,9 @@ export function MemberCheckoutResumePanel({ siteId, accountId, locale = "zh-CN",
             <MerchantSettlementBadge locale={locale} showDetails snapshot={{ version: 1, method: "points", closed: points.closed, totalPoints: points.totalPoints, debitedPoints: points.totalPoints,
               returnedPoints: points.cancellation?.pointsReturned ?? 0, returnPending: false, ...(points.couponCount ? { coupons: { redeemedCount: points.couponCount, returnedCount: points.cancellation?.couponsReturned ?? 0, returnPending: false } } : {}) }}/>
           </> : null}
-        <a className={button} href={checkoutResumeOriginalHref(original, siteId, locale)}>{t.detail}</a>
+        {readOnly && !pending?.reviewRequired && policy && <details className="text-sm text-slate-600"><summary>{history.policy}</summary>
+          <ul className="mt-2 list-inside list-disc space-y-1">{"returnPoints" in policy && <li>{policy.returnPoints ? history.returnPoints : history.keepPoints}</li>}<li>{policy.returnCoupons ? history.returnCoupons : history.keepCoupons}</li></ul></details>}
+        {!readOnly && <a className={button} href={checkoutResumeOriginalHref(original, siteId, locale)}>{t.detail}</a>}
       </article>}
     </>}
   </section>;

@@ -6,6 +6,7 @@ import { isMemberCheckoutPilotEnabled } from "@/lib/merchantMemberCheckoutPilot.
 import { readCheckoutEntryOffers } from "@/lib/merchantCheckoutEntry.server";
 import { parseCheckoutEntryAccess, parseCheckoutEntryQuery } from "@/lib/merchantCheckoutEntry";
 import { isMemberCheckoutIntentPilotEnabled } from "@/lib/merchantCheckoutCartPilot.server";
+import { isMemberCheckoutHistoryReadEnabled } from "@/lib/merchantCheckoutHistoryPilot.server";
 const defaults = { session: resolvePersonalAccountSessionFromRequest, enabled: isMemberCheckoutPilotEnabled, read: readCheckoutEntryOffers, recoveryEnabled: isMemberCheckoutIntentPilotEnabled };
 export type CheckoutEntryHttpDependencies = typeof defaults;
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { "cache-control": "private, no-store", pragma: "no-cache", vary: "Cookie, Authorization", "referrer-policy": "no-referrer", "cross-origin-resource-policy": "same-origin", "x-content-type-options": "nosniff" } });
@@ -18,7 +19,7 @@ async function readBody(request: Request) {
     return JSON.parse(value + decoder.decode());
   } catch { throw new Error("checkout_entry_invalid"); } finally { reader.releaseLock(); }
 }
-export async function handleCheckoutEntry(request: Request, overrides: Partial<CheckoutEntryHttpDependencies> = {}, preserveEmptyAccount = false) {
+export async function handleCheckoutEntry(request: Request, overrides: Partial<CheckoutEntryHttpDependencies> & { historyEnabled?: (siteId: string) => boolean } = {}, preserveEmptyAccount = false) {
   const deps = { ...defaults, ...overrides };
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
   if (!isTrustedSameOriginMutationRequest(request)) return json({ error: "forbidden_origin" }, 403);
@@ -29,7 +30,12 @@ export async function handleCheckoutEntry(request: Request, overrides: Partial<C
     query = parseCheckoutEntryQuery(await readBody(request));
   } catch { return json({ error: "checkout_entry_invalid" }, 400); }
   try {
-    if (!deps.enabled(query.siteId)) return json({ ok: true, entry: null });
+    if (!deps.enabled(query.siteId)) {
+      // Navigation only. No session/catalog/ledger read and no purchase, intent
+      // or account-draft capability, even when called from a public source.
+      const history = overrides.historyEnabled ?? isMemberCheckoutHistoryReadEnabled;
+      return json({ ok: true, entry: null, ...(history(query.siteId) && !deps.enabled(query.siteId) && history(query.siteId) ? { recovery: { siteId: query.siteId } } : {}) });
+    }
     const recoveryEnabled = deps.recoveryEnabled(query.siteId);
     const recoveryHint = recoveryEnabled ? { recovery: { siteId: query.siteId } } : {};
     const authorize = async () => { const session = await deps.session(request), stamp = (session?.user as { email_confirmed_at?: unknown } | undefined)?.email_confirmed_at;

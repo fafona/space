@@ -1,5 +1,6 @@
 import { CheckoutClientError, type CheckoutClientRequest } from "./merchantCheckoutClient";
 import { checkoutIntentTransport } from "./merchantCheckoutIntentTransport";
+import { checkoutHistoryPendingTransport } from "./merchantCheckoutHistoryTransport";
 import { parsePendingCheckoutSnapshot, type PendingCheckoutSnapshot } from "./merchantCheckoutPendingIntent";
 import type { CartClientOriginal } from "./merchantCheckoutCartReview";
 
@@ -17,9 +18,10 @@ const empty = (): CheckoutResumeState => ({ phase: "idle", snapshot: null, error
 /** Read-only discovery: no local storage, nonce, locks, acknowledgement,
  * cancellation or finance methods. Absence of a durable claim is NOT proof
  * that another in-flight/local submission failed. Never release a cart here. */
-export function createCheckoutResumeController(options: { siteId: string; accountId: string; request?: CheckoutClientRequest }) {
+export function createCheckoutResumeController(options: { siteId: string; accountId: string; readOnly?: boolean; request?: CheckoutClientRequest }) {
   site(options.siteId); if (!/^\d{8}$/.test(options.accountId)) throw new CheckoutClientError("checkout_unauthorized");
-  const request = options.request ?? checkoutIntentTransport(options.accountId), listeners = new Set<() => void>();
+  const readOnly = options.readOnly === true;
+  const request = options.request ?? (readOnly ? checkoutHistoryPendingTransport(options.accountId) : checkoutIntentTransport(options.accountId)), listeners = new Set<() => void>();
   let state = empty(), active = false, busy = false, epoch = 0, abort = new AbortController();
   const publish = (next: CheckoutResumeState) => { state = next; listeners.forEach(fn => fn()); };
   const controller = {
@@ -31,11 +33,12 @@ export function createCheckoutResumeController(options: { siteId: string; accoun
       const current = () => active && epoch === run && !signal.aborted;
       publish({ phase: "reading", snapshot: null, error: "" }); let stop: () => void = () => {};
       try {
-        const raw = await Promise.race([Promise.resolve().then(() => { if (!current()) throw new Error("stale"); return request("/api/member-checkout/intent/pending", { siteId: options.siteId }, signal); }), new Promise<never>((_, reject) => {
+        const raw = await Promise.race([Promise.resolve().then(() => { if (!current()) throw new Error("stale"); return request(readOnly ? "/api/member-checkout/history/pending" : "/api/member-checkout/intent/pending", { siteId: options.siteId }, signal); }), new Promise<never>((_, reject) => {
           stop = () => reject(new Error("unavailable")); signal.addEventListener("abort", stop, { once: true }); if (signal.aborted) stop();
         })]);
         if (!current()) return;
         if (!raw || typeof raw !== "object" || !("ok" in raw) || raw.ok !== true || !("snapshot" in raw)) throw new Error("invalid");
+        if (readOnly && (!("readOnly" in raw) || raw.readOnly !== true)) throw new Error("invalid");
         const snapshot = parsePendingCheckoutSnapshot(raw.snapshot, options.siteId);
         publish({ phase: "ready", snapshot, error: "" });
       } catch { if (active && epoch === run) publish({ phase: "error", snapshot: null, error: "checkout_intent_unavailable" }); }

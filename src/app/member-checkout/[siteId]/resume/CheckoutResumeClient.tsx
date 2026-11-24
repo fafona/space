@@ -11,7 +11,7 @@ const copy = {
   en: { back: "Back to merchant", checking: "Verifying account…", failed: "Account could not be verified.", retry: "Retry", login: "Sign in to view your own original checkout.", signIn: "Sign in" },
   es: { back: "Volver al comercio", checking: "Verificando cuenta…", failed: "No se pudo verificar la cuenta.", retry: "Reintentar", login: "Inicia sesión para consultar tu pago original.", signIn: "Iniciar sesión" },
 };
-export default function CheckoutResumeClient({ siteId }: { siteId: string }) {
+export default function CheckoutResumeClient({ siteId, readOnly = false }: { siteId: string; readOnly?: boolean }) {
   const { locale } = useI18n(), t = copy[merchantSettlementLanguage(locale)], [accountId, setAccountId] = useState<string | null>(null), [ready, setReady] = useState(false), [failed, setFailed] = useState(false), [loginHref, setLoginHref] = useState("/login");
   const epoch = useRef(0), owned = useRef<AbortController | null>(null);
   const invalidate = useCallback(() => { epoch.current++; owned.current?.abort(); }, []);
@@ -33,7 +33,7 @@ export default function CheckoutResumeClient({ siteId }: { siteId: string }) {
   }, [check, clear, invalidate]);
   const button = "inline-flex min-h-11 items-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm";
   return <main className="min-h-screen bg-slate-50"><nav className="mx-auto max-w-4xl px-5 pt-4"><Link href={`/site/${siteId}`} prefetch={false} className={button}>{t.back}</Link></nav>
-    {ready ? accountId ? <MemberCheckoutResumePanel key={`${siteId}:${accountId}`} siteId={siteId} accountId={accountId} locale={locale}/>
+    {ready ? accountId ? <MemberCheckoutResumePanel key={`${siteId}:${accountId}:${readOnly}`} siteId={siteId} accountId={accountId} locale={locale} readOnly={readOnly}/>
       : <section className="mx-auto max-w-4xl space-y-4 p-5"><p>{t.login}</p><a className={button} href={loginHref}>{t.signIn}</a></section>
       : <div role="status" className="mx-auto max-w-4xl space-y-3 p-5"><p>{failed ? t.failed : t.checking}</p>{failed && <button type="button" className={button} onClick={() => void check()}>{t.retry}</button>}</div>}
   </main>;
