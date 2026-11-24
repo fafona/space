@@ -1,6 +1,7 @@
-// NEW owned loopback TEMP PostgreSQL only; never loads .env or contacts services.
+// NEW owned loopback TEMP PostgreSQL only; never loads .env or contacts production.
 // Actual single controllers -> HTTP handlers -> trusted planners -> booking SQL.
-// Identity is synthetic/injected; this is not live Next/PostgREST or phone QA.
+// Identity is synthetic/injected, not live Next or phone QA. Explicit HTTP opt-in
+// adds a fresh owned PostgREST process with local JWTs, never an existing gateway.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile, mkdtemp } from 'node:fs/promises';
@@ -30,6 +31,7 @@ import intentHttp from '../src/lib/merchantCheckoutIntentHttp.server.ts';
 import resultHttp from '../src/app/api/member-checkout/result/route-handler.ts';
 import { checkoutCompatibilityCases } from './member-checkout-compatibility-postgres-cases.mjs';
 import { installOwnedRuntimePrototype } from './member-checkout-runtime-postgres-cases.mjs';
+import { checkoutRuntimePostgrestCases } from './member-checkout-runtime-postgrest-cases.mjs';
 import resultService from '../src/lib/merchantMemberCheckoutResult.server.ts';
 import cashHttp from '../src/lib/merchantCheckoutOnSiteHttp.server.ts';
 import { unusedReferenceCases } from './member-checkout-unused-reference-postgres-cases.mjs';
@@ -177,6 +179,8 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
     const requestFor = (f, route, body, signal) => new Request(origin + route, { method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-checkout-account-scope': f.principal.accountId }, body: JSON.stringify(body), signal });
     const sessionFor = f => async () => ({ ...f.principal, servicePaused: false, user: { email_confirmed_at: '2026-01-01T00:00:00.000Z' } });
     const decode = async response => { const value = await response.json(); assert.equal(response.status, 200, JSON.stringify(value)); return value; };
+
+    if (process.env.FAOLLA_CHECKOUT_HTTP_ACCEPTANCE === '1') await checkoutRuntimePostgrestCases(t, { db, connection, binaries, evidence, seed, state, page, site, requestFor, sessionFor, decode });
 
     for (const method of ['points', 'on_site']) for (const returns of [true, false]) {
       await t.test(`${method}: booking/coupon original survives lost acknowledgement and reopen; frozen return=${returns}`, async () => {

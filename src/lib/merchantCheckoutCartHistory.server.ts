@@ -1,4 +1,4 @@
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { resolvePersonalAccountSessionFromRequest } from "./personalAccountSession.server";
 import { isMemberCheckoutCartPilotEnabled } from "./merchantCheckoutCartPilot.server";
 import { checkoutPrincipalKey } from "./merchantCheckoutQuote.server";
@@ -6,7 +6,7 @@ import { CheckoutLegacyBoundaryError } from "./merchantCheckoutLegacyBoundary.se
 import { parseCartClientOriginal } from "./merchantCheckoutCartReview";
 const defaults = { enabled: (siteId: string) => isMemberCheckoutCartPilotEnabled(siteId, "points"), session: resolvePersonalAccountSessionFromRequest,
   call: async (args: Record<string, unknown>, signal: AbortSignal): Promise<{ data: unknown; error: unknown }> => {
-    const client = createServerSupabaseServiceClient(); if (!client) throw new Error("unavailable");
+    const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw new Error("unavailable");
     return client.rpc("faolla_member_checkout_original_resource_v2", args).abortSignal(signal);
   } };
 export type CartHistoryDependencies = typeof defaults;

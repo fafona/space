@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { resolvePersonalAccountSessionFromRequest } from "./personalAccountSession.server";
 import { isTrustedSameOriginMutationRequest } from "./requestMutationGuard";
 import { isMemberCheckoutHistoryReadEnabled } from "./merchantCheckoutHistoryPilot.server";
@@ -12,7 +12,7 @@ export function isMemberCheckoutOriginalServiceEnabled(siteId: string, env: Reco
 type Rpc = "faolla_member_checkout_original_service_review_v1" | "faolla_member_checkout_original_service_cancel_v1";
 const defaults = { enabled: isMemberCheckoutOriginalServiceEnabled, session: resolvePersonalAccountSessionFromRequest,
   call: async (name: Rpc, args: Record<string, unknown>, signal: AbortSignal): Promise<{ data: unknown; error: { message?: string } | null }> => {
-    const client = createServerSupabaseServiceClient(); if (!client) throw Error("unavailable"); return client.rpc(name, args).abortSignal(signal);
+    const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw Error("unavailable"); return client.rpc(name, args).abortSignal(signal);
   } };
 export type OriginalServiceDependencies = typeof defaults;
 const json = (v: unknown, status = 200) => NextResponse.json(v, { status, headers: { "cache-control": "private, no-store", pragma: "no-cache", "referrer-policy": "no-referrer",

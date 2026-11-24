@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { handleCheckoutIntent, type CheckoutIntentHttpDependencies } from "./merchantCheckoutIntentHttp.server";
 import { isMemberCheckoutHistoryReadEnabled } from "./merchantCheckoutHistoryPilot.server";
 import { resolvePersonalAccountSessionFromRequest } from "./personalAccountSession.server";
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 
 const pendingRpc = "faolla_member_checkout_pending_intent_v1";
 export type CheckoutHistoryPendingDependencies = Omit<CheckoutIntentHttpDependencies, "call"> & {
@@ -11,7 +11,7 @@ export type CheckoutHistoryPendingDependencies = Omit<CheckoutIntentHttpDependen
 const defaults: CheckoutHistoryPendingDependencies = {
   enabled: isMemberCheckoutHistoryReadEnabled, session: resolvePersonalAccountSessionFromRequest,
   call: async (name, args, signal) => {
-    const client = createServerSupabaseServiceClient(); if (!client) throw new Error("unavailable");
+    const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw new Error("unavailable");
     return client.rpc(name, args).abortSignal(signal);
   },
 };

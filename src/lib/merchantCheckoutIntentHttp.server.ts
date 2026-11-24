@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { resolvePersonalAccountSessionFromRequest } from "./personalAccountSession.server";
 import { isTrustedSameOriginMutationRequest } from "./requestMutationGuard";
 import { isMemberCheckoutIntentPilotEnabled } from "./merchantCheckoutCartPilot.server";
@@ -7,7 +7,7 @@ import { checkoutPrincipalKey, MerchantCheckoutError } from "./merchantCheckoutQ
 import { readPendingCheckoutIntent, readCheckoutIntentReview, acknowledgePendingCheckoutIntent, type CheckoutIntentRpc } from "./merchantCheckoutPendingIntent.server";
 import { parseCheckoutIntentAcknowledgement } from "./merchantCheckoutPendingIntent";
 const defaults = { enabled: isMemberCheckoutIntentPilotEnabled, session: resolvePersonalAccountSessionFromRequest,
-  call: (async (name, args, signal) => { const client = createServerSupabaseServiceClient(); if (!client) throw new Error("unavailable");
+  call: (async (name, args, signal) => { const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw new Error("unavailable");
     return client.rpc(name, args).abortSignal(signal); }) as CheckoutIntentRpc };
 export type CheckoutIntentHttpDependencies = typeof defaults;
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);

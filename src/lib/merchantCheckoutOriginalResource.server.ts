@@ -1,4 +1,4 @@
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { resolvePersonalAccountSessionFromRequest } from "./personalAccountSession.server";
 import { isMemberCheckoutOnSitePilotEnabled } from "./merchantCheckoutOnSitePilot.server";
 import { checkoutPrincipalKey } from "./merchantCheckoutQuote.server";
@@ -6,7 +6,7 @@ import { CheckoutLegacyBoundaryError } from "./merchantCheckoutLegacyBoundary.se
 import { parseCheckoutOriginalResult } from "./merchantCheckoutOriginalResult";
 const defaults = { enabled: isMemberCheckoutOnSitePilotEnabled, session: resolvePersonalAccountSessionFromRequest,
   call: async (args: Record<string, unknown>, signal: AbortSignal): Promise<{ data: unknown; error: unknown }> => {
-    const client = createServerSupabaseServiceClient(); if (!client) throw new Error("unavailable");
+    const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw new Error("unavailable");
     return client.rpc("faolla_member_checkout_original_resource_v1", args).abortSignal(signal);
   } };
 export async function readPersonalCheckoutOriginalResource(input: { request: Request; siteId: string; kind: "booking" | "order"; id: string; expectedAccountId?: string }, overrides: Partial<typeof defaults> = {}) {

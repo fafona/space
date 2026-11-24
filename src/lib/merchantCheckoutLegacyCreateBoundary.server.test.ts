@@ -16,9 +16,27 @@ test("new intent mode protects ordinary order creation in the final CAS instead 
     calls.push(name); return name === "faolla_checkout_legacy_order_commit_v1" ? { data: null, error: { message: "checkout_original_pending" } } : { data: { updatedAt: new Date().toISOString() }, error: null };
   } };
   const deps = { enabled: () => true, cartEnabled: () => true, cashEnabled: () => false, intentEnabled: () => true,
-    rpc: () => async () => ({ data: { version: 3, siteId, rows: [{ kind: "order", id: order.id, result: null, termsMatch: false }] }, error: null }) };
+    rpc: () => async (name: string) => name === "faolla_checkout_legacy_order_commit_v1" ? client.rpc(name)
+      : ({ data: { version: 3, siteId, rows: [{ kind: "order", id: order.id, result: null, termsMatch: false }] }, error: null }) };
   await assert.rejects(saveCheckoutAwareMerchantOrders(client, { siteId, orders: [order], expectedRows: [] }, deps), /checkout_original_pending/);
   assert.deepEqual(calls, ["faolla_checkout_legacy_order_commit_v1"]);
+});
+
+test("enabled legacy intent uses only the restricted RPC port; disabled ordinary save keeps its old client", async () => {
+  const siteId = "10909994", order = createMerchantOrder({ siteId, customerAccountId: "59000001", customerUserId: "synthetic-user", items: [{ name: "Synthetic", quantity: 1, unitPrice: 10 }] });
+  const calls: string[] = [], client = { from: () => { throw Error("no raw writes"); }, rpc: async (name: string) => {
+    calls.push("ordinary:" + name); assert.equal(name, "faolla_commit_order_membership_v1"); return { data: { updatedAt: new Date().toISOString() }, error: null };
+  } };
+  const options = { enabled: () => true, intentEnabled: () => true, cartEnabled: () => true, rpc: () => async (name: string) => {
+    calls.push("restricted:" + name);
+    if (name === "faolla_member_checkout_reporting_v3") return { data: { version: 3, siteId, rows: [{ kind: "order", id: order.id, result: null, termsMatch: false }] }, error: null };
+    assert.equal(name, "faolla_checkout_legacy_order_commit_v1"); return { data: null, error: { message: "checkout_original_pending" } };
+  } };
+  await assert.rejects(saveCheckoutAwareMerchantOrders(client, { siteId, orders: [order], expectedRows: [] }, options), /checkout_original_pending/);
+  assert.deepEqual(calls, ["restricted:faolla_member_checkout_reporting_v3", "restricted:faolla_checkout_legacy_order_commit_v1"]);
+  calls.length = 0;
+  assert.deepEqual(await saveCheckoutAwareMerchantOrders(client, { siteId, orders: [order], expectedRows: [] }, { ...options, enabled: () => false }), { error: null });
+  assert.deepEqual(calls, ["ordinary:faolla_commit_order_membership_v1"]);
 });
 
 function fixture() {
@@ -33,7 +51,10 @@ function fixture() {
     return { data: { updatedAt: at }, error: null };
   } };
   const deps = { enabled: () => true, cartEnabled: () => true, cashEnabled: () => false, intentEnabled: () => intent,
-    rpc: () => async (name: string, args: Record<string, unknown>) => { assert.equal(name, "faolla_member_checkout_reporting_v3"); return { data: { version: 3, siteId, rows: (args.p_resources as Array<{ kind: string; id: string }>).map(r => ({ ...r, result: null, termsMatch: false })) }, error: null }; } };
+    rpc: () => async (name: string, args: Record<string, unknown>) => {
+      if (name === "faolla_checkout_legacy_order_commit_v1") return client.rpc(name, args);
+      assert.equal(name, "faolla_member_checkout_reporting_v3"); return { data: { version: 3, siteId, rows: (args.p_resources as Array<{ kind: string; id: string }>).map(r => ({ ...r, result: null, termsMatch: false })) }, error: null };
+    } };
   const createDeps: MerchantOrderCreateDependencies = { createClient: () => client, loadOrders: async () => ({ siteId, orders: stored, storageRows: [], updatedAt: null }),
     saveOrders: (client, input) => saveCheckoutAwareMerchantOrders(client, input, deps), mirrorOrders: async () => { events.push("mirror"); return { status: "disabled", count: 0 }; } };
   return { siteId, input, client, deps, calls, events, createDeps, create: (value = input) => createMerchantOrderRecord(value, createDeps),

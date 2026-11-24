@@ -5,11 +5,11 @@ import { isMemberCheckoutCartCollectionEnabled } from "./merchantCheckoutCartPil
 import { isTrustedSameOriginMutationRequest } from "./requestMutationGuard";
 import { parseOnSiteCollectionReceipt } from "./merchantCheckoutOnSiteCollection";
 import { parseCartCheckoutResult } from "./merchantCheckoutCartResult";
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 
 const defaults = { ...checkoutOwnerDependencies, enabled: isMemberCheckoutCartCollectionEnabled,
   call: async (name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ data: unknown; error: { message?: string } | null }> => {
-    const client = createServerSupabaseServiceClient(); if (!client) throw new Error("unavailable");
+    const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw new Error("unavailable");
     return client.rpc(name, args).abortSignal(signal);
   } };
 export type CartCollectionDependencies = typeof defaults;

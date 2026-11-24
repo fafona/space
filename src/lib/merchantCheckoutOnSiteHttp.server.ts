@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { resolvePersonalAccountSessionFromRequest } from "./personalAccountSession.server";
 import { isTrustedSameOriginMutationRequest } from "./requestMutationGuard";
 import { checkoutPrincipalKey, MerchantCheckoutError } from "./merchantCheckoutQuote.server";
@@ -13,7 +13,7 @@ import { isMemberCheckoutOnSitePilotEnabled } from "./merchantCheckoutOnSitePilo
 export type OnSiteHttpAction = "preview" | "submit" | "recover" | "result" | "cancel";
 const defaults = { session: resolvePersonalAccountSessionFromRequest, enabled: isMemberCheckoutOnSitePilotEnabled,
   call: async (name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<{ data: unknown; error: { message?: string } | null }> => {
-    const client = createServerSupabaseServiceClient(); if (!client) throw new Error("checkout_unavailable");
+    const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw new Error("checkout_unavailable");
     return client.rpc(name, args).abortSignal(signal);
   } };
 export type OnSiteHttpDependencies = typeof defaults;

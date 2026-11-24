@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { executeAtomicBookingCommand, bookingAtomicCommandIdentity, type BookingAtomicJson, type BookingAtomicRpc, type BookingAtomicSnapshot, type BookingMailIntent } from "./merchantBookingAtomicPreparation.server";
 import type { MerchantBookingStoredRecord } from "./merchantBookings";
 import { isMemberCheckoutIntentPilotEnabled } from "./merchantCheckoutCartPilot.server";
@@ -49,6 +50,11 @@ export function bookingAtomicRpc(): BookingAtomicRpc {
   if (!client) throw new Error("booking_atomic_storage_unavailable");
   return async (name, args) => {
     try {
+      if (name === "faolla_checkout_legacy_booking_commit_v1") {
+        const runtime = createServerMerchantCheckoutRuntimeClient();
+        if (!runtime) return { data: null, error: { message: "booking_atomic_storage_unconfirmed" } };
+        return await runtime.rpc(name, args).abortSignal(AbortSignal.timeout(12_000));
+      }
       return await client.rpc(name, args).abortSignal(AbortSignal.timeout(12_000));
     } catch {
       return { data: null, error: { message: "booking_atomic_storage_unconfirmed" } };

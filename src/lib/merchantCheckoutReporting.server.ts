@@ -1,9 +1,9 @@
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { parseCheckoutReportingRequest, parseCheckoutReportingSnapshot, type CheckoutReportingRequest } from "./merchantCheckoutReporting";
 import type { MemberCheckoutResultRpc } from "./merchantMemberCheckoutResult.server";
 
 function rpc(): MemberCheckoutResultRpc {
-  const client = createServerSupabaseServiceClient();
+  const client = createServerMerchantCheckoutRuntimeClient();
   if (!client) throw new Error("checkout_reporting_unavailable");
   return (name, args) => client.rpc(name, args).abortSignal(AbortSignal.timeout(12_000));
 }

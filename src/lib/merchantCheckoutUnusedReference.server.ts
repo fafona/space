@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { resolvePersonalAccountSessionFromRequest } from "./personalAccountSession.server";
 import { isTrustedSameOriginMutationRequest } from "./requestMutationGuard";
 import { isMemberCheckoutIntentPilotEnabled } from "./merchantCheckoutCartPilot.server";
@@ -16,7 +16,7 @@ export function isMemberCheckoutUnusedReferenceEnabled(siteId: string, env: Reco
 type Rpc = "faolla_member_checkout_unused_reference_review_v1" | "faolla_member_checkout_close_unused_reference_v1";
 const defaults = { enabled: isMemberCheckoutUnusedReferenceEnabled, session: resolvePersonalAccountSessionFromRequest,
   call: async (name: Rpc, args: Record<string, unknown>, signal: AbortSignal): Promise<{ data: unknown; error: unknown }> => {
-    const client = createServerSupabaseServiceClient(); if (!client) throw new Error("unavailable"); return client.rpc(name, args).abortSignal(signal);
+    const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw new Error("unavailable"); return client.rpc(name, args).abortSignal(signal);
   } };
 export type UnusedReferenceDependencies = typeof defaults;
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { "cache-control": "private, no-store, max-age=0", pragma: "no-cache",

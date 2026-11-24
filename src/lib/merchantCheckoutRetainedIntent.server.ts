@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { resolvePersonalAccountSessionFromRequest } from "./personalAccountSession.server";
 import { isTrustedSameOriginMutationRequest } from "./requestMutationGuard";
 import { isMemberCheckoutAccountDraftPilotEnabled } from "./merchantCheckoutCartPilot.server";
@@ -14,7 +14,7 @@ export function isMemberCheckoutRetainedIntentEnabled(siteId: string, env: Recor
 type Rpc = "faolla_member_checkout_retained_intent_review_v1" | "faolla_member_checkout_register_retained_intent_v1";
 const defaults = { enabled: isMemberCheckoutRetainedIntentEnabled, session: resolvePersonalAccountSessionFromRequest,
   call: async (name: Rpc, args: Record<string, unknown>, signal: AbortSignal): Promise<{ data: unknown; error: unknown }> => {
-    const client = createServerSupabaseServiceClient(); if (!client) throw new Error("unavailable"); return client.rpc(name, args).abortSignal(signal);
+    const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw new Error("unavailable"); return client.rpc(name, args).abortSignal(signal);
   } };
 export type RetainedIntentDependencies = typeof defaults;
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { "cache-control": "private, no-store, max-age=0", pragma: "no-cache",

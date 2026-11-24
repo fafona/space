@@ -1,0 +1,282 @@
+{
+  "faolla_member_checkout_catalog_snapshot_v1": [
+    "p_site_id"
+  ],
+  "faolla_member_checkout_catalog_save_v1": [
+    "p_site_id",
+    "p_expected_version",
+    "p_next_version",
+    "p_actor_key",
+    "p_offer"
+  ],
+  "faolla_member_checkout_result_v2": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key"
+  ],
+  "faolla_member_checkout_cancel_v2": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_expected_updated_at"
+  ],
+  "faolla_checkout_resource_link_v1": [
+    "p_site_id",
+    "p_kind",
+    "p_id",
+    "p_principal_key"
+  ],
+  "faolla_checkout_merchant_cancel_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_actor_key",
+    "p_expected_updated_at"
+  ],
+  "faolla_member_checkout_on_site_result_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key"
+  ],
+  "faolla_member_checkout_on_site_cancel_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_expected_updated_at"
+  ],
+  "faolla_checkout_on_site_merchant_cancel_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_actor_key",
+    "p_expected_updated_at"
+  ],
+  "faolla_member_checkout_submission_snapshot_v2": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_request_hash",
+    "p_offer_id"
+  ],
+  "faolla_member_checkout_submission_commit_v2": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_request_hash",
+    "p_snapshot",
+    "p_plan",
+    "p_not_after"
+  ],
+  "faolla_member_checkout_on_site_snapshot_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_request_hash",
+    "p_offer_id"
+  ],
+  "faolla_member_checkout_on_site_commit_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_request_hash",
+    "p_snapshot",
+    "p_plan",
+    "p_not_after"
+  ],
+  "faolla_member_checkout_reporting_v1": [
+    "p_site_id",
+    "p_resources"
+  ],
+  "faolla_member_checkout_original_result_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key"
+  ],
+  "faolla_member_checkout_reporting_v2": [
+    "p_site_id",
+    "p_resources"
+  ],
+  "faolla_member_checkout_original_resource_v1": [
+    "p_site_id",
+    "p_kind",
+    "p_id",
+    "p_principal_key"
+  ],
+  "faolla_checkout_on_site_collect_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_actor_key",
+    "p_expected_updated_at",
+    "p_expected_due_minor",
+    "p_not_after"
+  ],
+  "faolla_checkout_resource_link_v2": [
+    "p_site_id",
+    "p_kind",
+    "p_id",
+    "p_principal_key"
+  ],
+  "faolla_member_checkout_cart_quote_snapshot_v1": [
+    "p_site_id",
+    "p_principal_key",
+    "p_request_hash",
+    "p_offer_ids"
+  ],
+  "faolla_checkout_cart_collect_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_actor_key",
+    "p_expected_updated_at",
+    "p_expected_due_minor",
+    "p_not_after"
+  ],
+  "faolla_checkout_cart_collection_read_v1": [
+    "p_site_id",
+    "p_operation_key"
+  ],
+  "faolla_member_checkout_cart_result_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key"
+  ],
+  "faolla_member_checkout_cart_submission_snapshot_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_request_hash",
+    "p_quote_request_hash",
+    "p_offer_ids"
+  ],
+  "faolla_member_checkout_cart_commit_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_request_hash",
+    "p_snapshot",
+    "p_plan",
+    "p_not_after"
+  ],
+  "faolla_member_checkout_cart_cancel_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_expected_updated_at",
+    "p_not_after"
+  ],
+  "faolla_member_checkout_reporting_v3": [
+    "p_site_id",
+    "p_resources"
+  ],
+  "faolla_member_checkout_original_resource_v2": [
+    "p_site_id",
+    "p_kind",
+    "p_id",
+    "p_principal_key"
+  ],
+  "faolla_member_checkout_pending_intent_v1": [
+    "p_site_id",
+    "p_principal_key"
+  ],
+  "faolla_member_checkout_acknowledge_intent_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_generation",
+    "p_review_hash",
+    "p_not_after"
+  ],
+  "faolla_member_checkout_intent_review_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key"
+  ],
+  "faolla_member_checkout_intent_cart_commit_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_request_hash",
+    "p_snapshot",
+    "p_plan",
+    "p_not_after"
+  ],
+  "faolla_member_checkout_history_original_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key"
+  ],
+  "faolla_member_checkout_legacy_review_v1": [
+    "p_site_id",
+    "p_block_id",
+    "p_request_id",
+    "p_principal_key",
+    "p_not_after"
+  ],
+  "faolla_member_checkout_retained_intent_review_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key"
+  ],
+  "faolla_member_checkout_register_retained_intent_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_review_hash",
+    "p_not_after"
+  ],
+  "faolla_member_checkout_history_inventory_v1": [
+    "p_site_id",
+    "p_principal_key",
+    "p_after"
+  ],
+  "faolla_checkout_legacy_order_commit_v1": [
+    "p_site_id",
+    "p_mutation",
+    "p_not_after"
+  ],
+  "faolla_checkout_legacy_booking_commit_v1": [
+    "p_site_id",
+    "p_command_key",
+    "p_request_hash",
+    "p_mutation",
+    "p_not_after"
+  ],
+  "faolla_checkout_cart_resource_link_v1": [
+    "p_site_id",
+    "p_id"
+  ],
+  "faolla_checkout_cart_merchant_cancel_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_actor_key",
+    "p_expected_updated_at",
+    "p_not_after"
+  ],
+  "faolla_member_checkout_unused_reference_review_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key"
+  ],
+  "faolla_member_checkout_close_unused_reference_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_review_hash",
+    "p_not_after"
+  ],
+  "faolla_member_checkout_original_service_review_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key"
+  ],
+  "faolla_member_checkout_original_service_cancel_v1": [
+    "p_site_id",
+    "p_operation_key",
+    "p_principal_key",
+    "p_review_hash",
+    "p_expected_updated_at",
+    "p_not_after"
+  ],
+  "faolla_checkout_cart_personal_resource_link_v1": [
+    "p_site_id",
+    "p_id",
+    "p_principal_key"
+  ]
+}

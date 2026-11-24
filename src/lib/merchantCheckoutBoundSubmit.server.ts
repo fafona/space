@@ -3,11 +3,11 @@ import { handleSingleIntentCheckout, type SingleIntentHttpDependencies } from ".
 import { handleCartCheckout, type CartHttpDependencies } from "./merchantCheckoutCartHttp.server";
 import { isMemberCheckoutUnusedReferenceEnabled } from "./merchantCheckoutUnusedReference.server";
 import { isMemberCheckoutCartPilotEnabled } from "./merchantCheckoutCartPilot.server";
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 
 type Rpc = (name: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<{ data: unknown; error: { message?: string } | null }>;
 const call: Rpc = async (name, args, signal) => {
-  const client = createServerSupabaseServiceClient(); if (!client) throw Error("checkout_unavailable"); return client.rpc(name, args).abortSignal(signal);
+  const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw Error("checkout_unavailable"); return client.rpc(name, args).abortSignal(signal);
 };
 type Dependencies = { enabled: (siteId: string) => boolean; call: Rpc; single?: SingleIntentHttpDependencies; cart?: Partial<CartHttpDependencies> };
 const json = () => NextResponse.json({ error: "checkout_unauthorized" }, { status: 401, headers: { "cache-control": "private, no-store", vary: "Cookie, Authorization, X-Checkout-Account-Scope, X-Checkout-Operation-Scope", "referrer-policy": "no-referrer" } });

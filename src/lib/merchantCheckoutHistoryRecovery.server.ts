@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { resolvePersonalAccountSessionFromRequest } from "./personalAccountSession.server";
 import { isTrustedSameOriginMutationRequest } from "./requestMutationGuard";
 import { isMemberCheckoutHistoryReadEnabled } from "./merchantCheckoutHistoryPilot.server";
@@ -10,7 +10,7 @@ import { parseCheckoutHistoryRecovery, parseCheckoutHistoryRecoveryRequest, chec
 const rpc = "faolla_member_checkout_history_original_v1";
 const defaults = { enabled: isMemberCheckoutHistoryReadEnabled, session: resolvePersonalAccountSessionFromRequest,
   call: async (name: typeof rpc, args: Record<string, unknown>, signal: AbortSignal): Promise<{ data: unknown; error: unknown }> => {
-    const client = createServerSupabaseServiceClient(); if (!client) throw new Error("unavailable"); return client.rpc(name, args).abortSignal(signal);
+    const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw new Error("unavailable"); return client.rpc(name, args).abortSignal(signal);
   } };
 export type CheckoutHistoryRecoveryDependencies = typeof defaults;
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { "cache-control": "private, no-store, max-age=0", pragma: "no-cache",

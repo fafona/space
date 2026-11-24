@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { MerchantBusinessAccessError } from "./merchantBusinessActor.server";
 import { authorizeCheckoutOwner, checkoutOwnerDependencies } from "./merchantCheckoutOwnerAccess.server";
 import { isMemberCheckoutOnSiteCollectionEnabled } from "./merchantCheckoutOnSitePilot.server";
@@ -7,7 +7,7 @@ import { isTrustedSameOriginMutationRequest } from "./requestMutationGuard";
 import { parseOnSiteCollectionReceipt } from "./merchantCheckoutOnSiteCollection";
 const defaults = { ...checkoutOwnerDependencies, enabled: isMemberCheckoutOnSiteCollectionEnabled,
   call: async (args: Record<string, unknown>, signal: AbortSignal): Promise<{ data: unknown; error: { message?: string } | null }> => {
-    const client = createServerSupabaseServiceClient(); if (!client) throw new Error("unavailable");
+    const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw new Error("unavailable");
     return client.rpc("faolla_checkout_on_site_collect_v1", args).abortSignal(signal);
   } };
 export type OnSiteCollectionDependencies = typeof defaults;

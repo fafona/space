@@ -1,4 +1,4 @@
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { isMemberCheckoutPilotEnabled } from "./merchantMemberCheckoutPilot.server";
 import { resolvePersonalAccountSessionFromRequest } from "./personalAccountSession.server";
 import { resolveMerchantBusinessActor, type MerchantBusinessActor } from "./merchantBusinessActor.server";
@@ -49,7 +49,7 @@ export function checkoutLegacyErrorDetails(error: unknown) {
   return { error: code, message, status: error instanceof CheckoutLegacyBoundaryError ? error.status : code === "checkout_unconfirmed" || code === "checkout_unavailable" || code === "checkout_create_unconfirmed" ? 503 : 409 };
 }
 function rpc(signal?: AbortSignal): MemberCheckoutResultRpc {
-  const client = createServerSupabaseServiceClient();
+  const client = createServerMerchantCheckoutRuntimeClient();
   if (!client) throw new CheckoutLegacyBoundaryError("checkout_unavailable", 503);
   return (name, args) => client.rpc(name, args).abortSignal(signal ? AbortSignal.any([signal, AbortSignal.timeout(12_000)]) : AbortSignal.timeout(12_000));
 }
@@ -382,8 +382,10 @@ export async function saveCheckoutAwareMerchantOrders(client: Parameters<typeof 
   if (!Array.isArray(input.expectedRows)) return { error: "order_update_conflict" };
   if (!enabled && !retainedCheckoutOrderCues(siteId, input.expectedRows).size) return saveStoredMerchantOrders(client, input);
   const next = await preserveCheckoutOrderStorage(siteId, normalizeMerchantOrderRecords(input.orders), input.expectedRows, { ...deps, cartEnabled: deps.cartEnabled ?? (site => isMemberCheckoutCartManagementEnabled(site) || deps.intentEnabled(site)) });
-  return (enabled && deps.intentEnabled(siteId) ? commitLegacyOrderWithCheckoutIntent : commitMerchantOrderMembershipTransaction)(client, siteId, {
+  const mutation = {
     orders: { expectedRows: input.expectedRows, next },
     ...(input.memberships ? { memberships: input.memberships } : {}),
-  });
+  };
+  if (enabled && deps.intentEnabled(siteId)) return commitLegacyOrderWithCheckoutIntent({ rpc: deps.rpc() }, siteId, mutation);
+  return commitMerchantOrderMembershipTransaction(client, siteId, mutation);
 }

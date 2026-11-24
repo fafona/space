@@ -1,4 +1,4 @@
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { checkoutPrincipalKey, MerchantCheckoutError, type CheckoutPrincipal } from "./merchantCheckoutQuote.server";
 import { checkoutSubmissionIdentity, parseCheckoutSubmissionSnapshot, planCheckoutSubmission } from "./merchantCheckoutSubmissionPlan.server";
 import { parseMemberCheckoutResult } from "./merchantMemberCheckoutResult";
@@ -9,7 +9,7 @@ const object = (value: unknown): value is Record<string, unknown> => !!value && 
 const noWrite = new Set(["checkout_conflict", "checkout_quote_changed", "checkout_quote_expired", "checkout_operation_conflict", "checkout_disabled",
   "checkout_offer_not_found", "checkout_membership_unavailable", "checkout_insufficient_points", "checkout_quantity_unavailable", "checkout_coupon_unavailable"]);
 function defaultRpc(): CheckoutSubmissionRpc {
-  const client = createServerSupabaseServiceClient();
+  const client = createServerMerchantCheckoutRuntimeClient();
   if (!client) throw new MerchantCheckoutError("checkout_unavailable", 503);
   return async (name, args, signal) => client.rpc(name, args).abortSignal(signal ? AbortSignal.any([signal, AbortSignal.timeout(12_000)]) : AbortSignal.timeout(12_000));
 }

@@ -1,4 +1,4 @@
-import { createServerSupabaseServiceClient } from "./superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "./merchantCheckoutRuntime.server";
 import { assertMerchantCheckoutOffer } from "./merchantCheckoutCatalog";
 import { checkoutConfigurationHash, checkoutConfigurationUuid, parseCheckoutConfigurationEdit, checkoutEditFromOffer,
   type CheckoutConfigurationSnapshot, type ConfiguredCheckoutOffer } from "./merchantCheckoutConfiguration";
@@ -24,7 +24,7 @@ export function parseCheckoutConfigurationSnapshot(raw: unknown, siteId: string)
   return structuredClone({ version: value.version, offers: value.offers });
 }
 function client() {
-  const connection = createServerSupabaseServiceClient();
+  const connection = createServerMerchantCheckoutRuntimeClient();
   if (!connection) throw new Error("checkout_configuration_unavailable");
   return connection as unknown as CheckoutConfigurationRpc;
 }

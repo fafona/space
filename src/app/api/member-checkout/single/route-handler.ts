@@ -6,11 +6,11 @@ import { isMemberCheckoutIntentPilotEnabled } from "@/lib/merchantCheckoutCartPi
 import { isMemberCheckoutOnSitePilotEnabled } from "@/lib/merchantCheckoutOnSitePilot.server";
 import { resolvePersonalAccountSessionFromRequest } from "@/lib/personalAccountSession.server";
 import { isTrustedSameOriginMutationRequest } from "@/lib/requestMutationGuard";
-import { createServerSupabaseServiceClient } from "@/lib/superAdminServer";
+import { createServerMerchantCheckoutRuntimeClient } from "@/lib/merchantCheckoutRuntime.server";
 import { submitMemberCheckout } from "@/lib/merchantCheckoutSubmission.server";
 type SingleRpc = (name: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<{ data: unknown; error: { message?: string } | null }>;
 const defaults = { enabled: isMemberCheckoutIntentPilotEnabled, cashEnabled: isMemberCheckoutOnSitePilotEnabled, session: resolvePersonalAccountSessionFromRequest,
-  call: (async (name, args, signal) => { const client = createServerSupabaseServiceClient(); if (!client) throw Error("unavailable"); return client.rpc(name, args).abortSignal(signal); }) as SingleRpc };
+  call: (async (name, args, signal) => { const client = createServerMerchantCheckoutRuntimeClient(); if (!client) throw Error("unavailable"); return client.rpc(name, args).abortSignal(signal); }) as SingleRpc };
 export type SingleIntentHttpDependencies = Partial<typeof defaults> & { pointsPreview?: Partial<MemberCheckoutPreviewHttpDependencies>; pointsSubmit?: Partial<MemberCheckoutSubmitDependencies>; onSite?: Partial<OnSiteHttpDependencies> };
 const json = (error: string, status: number) => NextResponse.json({ error }, { status, headers: { "cache-control": "private, no-store", pragma: "no-cache", vary: "Cookie, Authorization, X-Checkout-Account-Scope", "referrer-policy": "no-referrer", "cross-origin-resource-policy": "same-origin", "x-content-type-options": "nosniff" } });
 /** Independent adapter; old HTTP handlers and atomic financial planners stay
