@@ -11,6 +11,7 @@ import cashService from '../src/lib/merchantCheckoutOnSiteSubmission.server.ts';
 import cartFixtures from './fixtures/member-checkout-cart-quote.ts';
 import cartService from '../src/lib/merchantCheckoutCartSubmission.server.ts';
 import boundHttp from '../src/lib/merchantCheckoutBoundSubmit.server.ts';
+import { partialGateOrderCases } from './member-checkout-partial-gate-postgres-cases.mjs';
 
 export async function originalServiceCases(t, { db, peer, one, site, seed, state, rpc, requestFor, sessionFor, decode }) {
   assert.equal((await one(db, 'select count(*)::int n from faolla_checkout_design.original_service_pilots where enabled')).n, 0);
@@ -95,7 +96,7 @@ export async function originalServiceCases(t, { db, peer, one, site, seed, state
       assert.deepEqual(await state(), before);
     } finally { await restore(); }
   });
-  for (const method of ['points', 'on_site']) await t.test(`${method}: two-product original is cancelled as one cart after every purchase pilot stops`, async () => {
+  for (const method of ['points', 'on_site']) await t.test(`${method}: two-product original is cancelled as one cart after every purchase pilot stops`, async cartTest => {
     const f = cartFixtures.cartQuoteFixture(method), id = f.siteId;
     // Servicing deliberately does not acknowledge an original. Use a separate
     // synthetic owner per case instead of erasing that retained pending claim.
@@ -118,7 +119,9 @@ export async function originalServiceCases(t, { db, peer, one, site, seed, state
     const cartRpc = async (name, values) => { const map = { faolla_member_checkout_cart_submission_snapshot_v1: ['p_site_id', 'p_operation_key', 'p_principal_key', 'p_request_hash', 'p_quote_request_hash', 'p_offer_ids'], faolla_member_checkout_cart_commit_v1: ['p_site_id', 'p_operation_key', 'p_principal_key', 'p_request_hash', 'p_snapshot', 'p_plan', 'p_not_after'] }, keys = map[name]; assert.ok(keys, name);
       try { return { data: (await one(db, `select public.${name}(${keys.map((_, i) => '$' + (i + 1)).join(',')}) result`, keys.map(k => k === 'p_offer_ids' ? JSON.stringify(values[k]) : values[k]))).result, error: null }; } catch (e) { return { data: null, error: { message: e.message } }; } };
     const input = { request, principal: f.principal, authorize: async () => f.principal, enabled: () => true }; request.confirmationHash = (await cartService.previewCartSubmission(input, cartRpc)).confirmationHash;
-    const result = await cartService.submitCartCheckout(input, cartRpc), original = { ...f, operationKey: result.result.operationKey }; await enable(id); const restore = await stopPurchases(id);
+    const result = await cartService.submitCartCheckout(input, cartRpc), original = { ...f, operationKey: result.result.operationKey };
+    await partialGateOrderCases(cartTest, { db, one, state, original, result: result.result });
+    await enable(id); const restore = await stopPurchases(id);
     try { const before = await state(), review = (await decode(await invoke(original, false))).review; assert.deepEqual(await state(), before);
       const cancelled = (await decode(await invoke(original, true, bodyFor(review)))).cancellation, cart = cancelled.review.original.result; assert.equal(cart.closed, true);
       assert.equal(cart.cancellation.pointsReturned, method === 'points' ? 160 : 0); assert.equal(cart.cancellation.couponsReturned, method === 'points' ? 2 : 1); assert.equal(cart.cancellation.stockReleased, 2);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { cartReviewFixture } from "../../scripts/fixtures/member-checkout-cart-review";
 import { createMerchantOrder, normalizeMerchantOrderRecords, type MerchantOrderRecord } from "./merchantOrders";
-import { legacyCheckoutPointTransitions, preserveCheckoutOrderStorage, saveCheckoutAwareMerchantOrders } from "./merchantCheckoutLegacyBoundary.server";
+import { bridgeLegacyCheckoutMutation, legacyCheckoutPointTransitions, preserveCheckoutOrderStorage, saveCheckoutAwareMerchantOrders, type CheckoutLegacyBoundaryDependencies } from "./merchantCheckoutLegacyBoundary.server";
 import { retainedCheckoutOrderCues, verifyRetainedCheckoutOrders } from "./merchantCheckoutRetainedOrders.server";
 import { updateMerchantOrderBySite, updateMerchantOrdersBatchBySite, type MerchantOrderUpdateDependencies } from "./merchantOrders.server";
 import type { CheckoutReportingRow } from "./merchantCheckoutReporting";
@@ -22,6 +22,17 @@ test("closing all purchase gates cannot make a retained checkout order eligible 
   for (const method of ["points", "on_site"] as const) { const x = await fixture(method);
     const transitions = await legacyCheckoutPointTransitions([{ previous: x.previous, next: x.next }], x.deps, x.rows);
     assert.deepEqual(transitions, []); assert.deepEqual(x.calls, ["faolla_member_checkout_reporting_v3"]);
+  }
+});
+
+for (const base of [false, true]) for (const cash of [false, true]) for (const cart of [false, true]) test(`retained cart storage and rewards survive gate matrix base=${base},cash=${cash},cart=${cart}`, async () => {
+  for (const method of ["points", "on_site"] as const) {
+    const x = await fixture(method), deps = { ...x.deps, enabled: () => base, cashEnabled: () => cash, cartEnabled: () => cart };
+    assert.deepEqual(await legacyCheckoutPointTransitions([{ previous: x.previous, next: x.next }], deps, x.rows), []);
+    const kept = (await preserveCheckoutOrderStorage(x.f.siteId, [x.next], x.rows, deps))[0] as unknown as Record<string, unknown>;
+    assert.equal(kept.status, "completed"); assert.deepEqual(kept.items, x.raw.items);
+    assert.equal(kept.checkoutOperationKey, x.result.operationKey); assert.deepEqual(kept.futurePrivate, x.raw.futurePrivate);
+    assert.deepEqual(x.calls, ["faolla_member_checkout_reporting_v3", "faolla_member_checkout_reporting_v3"]);
   }
 });
 
@@ -127,10 +138,16 @@ test("retained read batches at 50 and stops after the shared deadline; abort ign
   finish(await rpc()("unused", { p_resources: [{ kind: "order", id: records[0].id }] })); await new Promise(r => setImmediate(r)); assert.equal(reads, 2);
 });
 
-function writer(x: Awaited<ReturnType<typeof fixture>>, options: { ordinary?: MerchantOrderRecord; failRead?: number; failCommit?: string; batch?: boolean } = {}) {
+function writer(x: Awaited<ReturnType<typeof fixture>>, options: { ordinary?: MerchantOrderRecord; failRead?: number; failCommit?: string; batch?: boolean; partial?: boolean } = {}) {
   const source = structuredClone(x.rows); if (options.ordinary) source[0].blocks.push(options.ordinary as typeof x.raw);
   const sent: Array<Record<string, unknown>> = [], prepared: string[][] = [], events: string[] = []; let reads = 0;
-  const rpc = () => async (...args: Parameters<ReturnType<typeof x.rpc>>) => { events.push("ledger"); if (++reads === options.failRead) return { data: null, error: { message: "PRIVATE" } }; return x.rpc()(...args); };
+  const gates = options.partial ? { ...x.deps, enabled: () => true, intentEnabled: () => false } : x.deps;
+  const rpc = () => async (...args: Parameters<ReturnType<typeof x.rpc>>) => { events.push("ledger"); if (++reads === options.failRead) return { data: null, error: { message: "PRIVATE" } };
+    if (options.partial && ["faolla_member_checkout_reporting_v1", "faolla_member_checkout_reporting_v2"].includes(args[0])) {
+      const refs = args[1].p_resources as Array<{ kind: string; id: string }>; assert.ok(refs.every(r => r.id !== x.raw.id));
+      return { data: { version: args[0].endsWith("_v2") ? 2 : 1, siteId: x.f.siteId, rows: refs.map(r => ({ ...r, result: null, termsMatch: false })) }, error: null };
+    } return x.rpc()(...args);
+  };
   const client = { from: () => { throw new Error("no direct pages"); }, rpc: async (name: string, args: Record<string, unknown>) => {
     assert.equal(name, "faolla_commit_order_membership_v1"); events.push("commit"); sent.push(args);
     return { data: options.failCommit ? null : { updatedAt: x.raw.updatedAt }, error: options.failCommit ? { message: options.failCommit } : null };
@@ -138,15 +155,76 @@ function writer(x: Awaited<ReturnType<typeof fixture>>, options: { ordinary?: Me
   const deps: MerchantOrderUpdateDependencies = {
     createClient: () => client,
     loadOrders: async () => ({ siteId: x.f.siteId, orders: normalizeMerchantOrderRecords(source[0].blocks), updatedAt: x.raw.updatedAt, storageRows: source }),
-    pointTransitions: (transitions, _overrides, rows) => { assert.equal(rows, source); return legacyCheckoutPointTransitions(transitions, { ...x.deps, rpc }, rows); },
+    pointTransitions: (transitions, _overrides, rows) => { assert.equal(rows, source); return legacyCheckoutPointTransitions(transitions, { ...gates, rpc }, rows); },
     prepareMemberships: async transitions => { events.push("prepare"); prepared.push(transitions.map(t => t.next.id)); return { previousMemberships: [], mutation: { expectedUpdatedAt: null, next: [] } }; },
-    saveOrders: (client, input) => saveCheckoutAwareMerchantOrders(client, input, { ...x.deps, rpc, intentEnabled: () => true }),
+    saveOrders: (client, input) => saveCheckoutAwareMerchantOrders(client, input, { ...gates, rpc, intentEnabled: () => !options.partial }),
     mirrorMemberships: async () => { events.push("mirror-member"); }, mirrorOrders: async () => { events.push("mirror-order"); return { status: "disabled", count: 0 }; },
   };
   const run = options.batch ? () => updateMerchantOrdersBatchBySite({ siteId: x.f.siteId, orderIds: [x.raw.id, ...(options.ordinary ? [options.ordinary.id] : [])], status: "completed" }, deps)
     : () => updateMerchantOrderBySite({ siteId: x.f.siteId, orderId: x.raw.id, status: "completed" }, deps);
   return { run, events, prepared, sent, source, deps };
 }
+
+function partialBridge(x: Awaited<ReturnType<typeof fixture>>) {
+  const actor = { type: "owner" as const, siteId: x.f.siteId, authUserId: "synthetic-owner", principalKey: "owner:synthetic-owner" as const, authorizationVersion: "owner" as const,
+    displayName: "Synthetic", email: "synthetic@example.invalid", authorizationSource: "database" as const, businessPermissions: [], collaborationPermissions: [] };
+  const calls: string[] = [], deps: Partial<CheckoutLegacyBoundaryDependencies> = { ...x.deps, enabled: () => true, actor: async () => actor, cartSite: async () => x.f.site,
+    rpc: () => async (name, args) => { calls.push(name);
+      if (name === "faolla_checkout_cart_resource_link_v1") return { data: { siteId: x.f.siteId, kind: "order", id: x.raw.id, operationKey: x.result.operationKey, record: x.raw, cart: x.result, refundRequired: false }, error: null };
+      return x.rpc()(name, args);
+    } };
+  return { actor, calls, deps };
+}
+
+test("actual merchant PATCH completes single/batch originals with cart management off, without financial authority or legacy gifts", async () => {
+  for (const method of ["points", "on_site"] as const) for (const batch of [false, true]) {
+    const x = await fixture(method), h = writer(x, { batch, partial: true }), bridge = partialBridge(x), origin = "https://partial-gate.synthetic.invalid";
+    const r = await handleMerchantOrderPatch(new Request(origin + "/api/orders", { method: "PATCH", headers: { origin, "content-type": "application/json" },
+      body: JSON.stringify({ siteId: x.f.siteId, ...(batch ? { orderIds: [x.raw.id] } : { orderId: x.raw.id }), status: "completed" }) }), {
+      resolveAdminSession: async () => ({ merchantId: x.f.siteId, actor: bridge.actor, assertAuthorizationCurrent: async () => {} }), isManagementEnabled: async () => true,
+      checkoutBridge: input => bridgeLegacyCheckoutMutation(input, bridge.deps), updateOrder: input => updateMerchantOrderBySite(input, h.deps), updateOrdersBatch: input => updateMerchantOrdersBatchBySite(input, h.deps),
+    });
+    const v = await r.json(); assert.equal(r.status, 200, JSON.stringify(v)); assert.equal((v.order ?? v.orders[0]).status, "completed");
+    assert.deepEqual(bridge.calls, [batch ? "faolla_member_checkout_reporting_v3" : "faolla_checkout_cart_resource_link_v1"]);
+    assert.deepEqual(h.prepared, []); assert.equal(h.sent.length, 1); assert.equal((h.sent[0].p_mutation as { memberships?: unknown }).memberships, undefined);
+    assert.ok(!/checkoutOperationKey|futurePrivate|PRIVATE|memberId/.test(JSON.stringify(v)));
+  }
+});
+
+test("partial-gate business reads cannot authorize cancellation, edits, personal servicing or stale actors", async () => {
+  const x = await fixture();
+  for (const patch of [{ action: "cancel" }, { status: "cancelled" }, { action: "restore" }, { action: "complete", items: [] }, { action: "complete", updates: {} }, { mode: "personal" as const, action: "complete" }]) {
+    const b = partialBridge(x); await assert.rejects(bridgeLegacyCheckoutMutation({ request: new Request("https://partial.synthetic.invalid/api/orders", { method: "PATCH", headers: { origin: "https://partial.synthetic.invalid" } }),
+      mode: "merchant", siteId: x.f.siteId, kind: "order", ids: [x.raw.id], actor: b.actor, ...patch }, b.deps));
+    assert.ok(!b.calls.some(name => /cancel|commit|collect/.test(name))); assert.ok(!b.calls.includes("faolla_checkout_cart_resource_link_v1"));
+  }
+  const b = partialBridge(x);
+  await assert.rejects(bridgeLegacyCheckoutMutation({ request: new Request("https://partial.synthetic.invalid/api/orders", { method: "PATCH", headers: { origin: "https://partial.synthetic.invalid" } }), mode: "merchant", siteId: x.f.siteId, kind: "order", ids: [x.raw.id], status: "completed", actor: b.actor },
+    { ...b.deps, actor: async () => ({ ...b.actor, authUserId: "changed-owner" }) }), /checkout_unauthorized/);
+  assert.deepEqual(b.calls, []);
+});
+
+test("undoing business completion under partial shutdown never reverses a checkout original's points or invents a cash refund", async () => {
+  for (const method of ["points", "on_site"] as const) {
+    const x = await fixture(method); x.raw.status = "completed"; x.result.resource!.status = "completed"; x.result.cancellationAvailable = false;
+    const previous = normalizeMerchantOrderRecords([x.raw])[0], next = { ...previous, status: "confirmed" as const }, b = partialBridge(x);
+    assert.equal(await bridgeLegacyCheckoutMutation({ request: new Request("https://partial.synthetic.invalid/api/orders", { method: "PATCH", headers: { origin: "https://partial.synthetic.invalid" } }),
+      mode: "merchant", siteId: x.f.siteId, kind: "order", ids: [x.raw.id], actor: b.actor, action: "uncomplete" }, b.deps), null);
+    assert.deepEqual(await legacyCheckoutPointTransitions([{ previous, next }], b.deps, x.rows), []);
+    const kept = (await preserveCheckoutOrderStorage(x.f.siteId, [next], x.rows, b.deps))[0]; assert.equal(kept.status, "confirmed"); assert.deepEqual(kept.items, x.raw.items);
+    assert.deepEqual(b.calls, ["faolla_checkout_cart_resource_link_v1", "faolla_member_checkout_reporting_v3", "faolla_member_checkout_reporting_v3"]);
+    assert.equal(x.result.closed, false); assert.equal(x.result.collection, undefined); assert.equal(x.result.cancellation, null);
+  }
+});
+
+test("partial shutdown still checks unmarked rows and keeps ordinary completion rewards separate", async () => {
+  const x = await fixture(), ordinary = createMerchantOrder({ siteId: x.f.siteId, items: [{ name: "Ordinary", quantity: 1, unitPrice: 15 }] }, { id: "ordinary-partial" });
+  const h = writer(x, { partial: true, ordinary, batch: true }); await h.run(); assert.deepEqual(h.prepared, [[ordinary.id]]); assert.equal(h.sent.length, 1);
+  assert.equal(h.events.filter(e => e === "ledger").length, 4);
+  for (const failRead of [1, 2, 3, 4]) { const failed = writer(x, { partial: true, ordinary, batch: true, failRead }); await assert.rejects(failed.run(), /checkout_unavailable/);
+    assert.equal(failed.sent.length, 0); assert.ok(!failed.events.some(e => e.includes("mirror")));
+  }
+});
 
 test("actual single and batch order writers carry trusted CAS context, omit linked gifts and use only the original order CAS", async () => {
   for (const method of ["points", "on_site"] as const) for (const batch of [false, true]) {

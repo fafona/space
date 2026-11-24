@@ -83,6 +83,9 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
       '20261124_member_checkout_history_original', '20261124_member_checkout_legacy_review', '20261124_member_checkout_retained_intent', '20261124_member_checkout_history_inventory',
       '20261124_member_checkout_legacy_order_rewards', '20261123_member_checkout_legacy_order_intent', '20261123_member_checkout_legacy_booking_intent', '20261123_member_checkout_closed_gate_creation'])
       await db.query(await readFile(path.resolve(`database/proposals/${name}.sql`), 'utf8'));
+    // The new actual merchant PATCH cases need the already-existing private
+    // cart resource lookup. This installs no production SQL or API-role grant.
+    await db.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_cart_management.sql'), 'utf8'));
     await db.query(await readFile(path.resolve('database/proposals/20261124_member_checkout_unused_reference.sql'), 'utf8'));
     await db.query(await readFile(path.resolve('database/proposals/20261124_member_checkout_original_service.sql'), 'utf8'));
     assert.deepEqual(await oldDefinitions(), baseline);

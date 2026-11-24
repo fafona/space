@@ -5,8 +5,11 @@ import { createMerchantOrder, normalizeMerchantOrderRecords } from "./merchantOr
 import { handleMerchantOrderPatch } from "@/app/api/orders/route-handler";
 import type { MerchantBusinessActor } from "./merchantBusinessActor.server";
 import type { OnSiteCheckoutResult } from "./merchantCheckoutOnSiteResult";
+import { buildPlatformMerchantSnapshotSite } from "./platformMerchantSnapshot";
+import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
 
-const siteId = "10909095", operationKey = "a".repeat(64), stamp = "2026-11-23T12:00:00Z";
+// Match createMerchantOrder's actual stored ISO bytes, including milliseconds.
+const siteId = "10909095", operationKey = "a".repeat(64), stamp = "2026-11-23T12:00:00.000Z";
 function fixture(kind: "booking" | "order" = "booking") {
   const calls: Array<[string, Record<string, unknown>]> = [];
   const actor: Extract<MerchantBusinessActor, { type: "owner" }> = { type: "owner", siteId, authUserId: "synthetic-owner", principalKey: "owner:synthetic-owner", authorizationVersion: "owner",
@@ -25,16 +28,20 @@ function fixture(kind: "booking" | "order" = "booking") {
   const rpc: ReturnType<CheckoutLegacyBoundaryDependencies["rpc"]> = async (name, args) => {
     calls.push([name, args]);
     if (name === "faolla_checkout_resource_link_v1") return { data: missing ? null : structuredClone(link), error: null };
-    if (name === "faolla_member_checkout_reporting_v1") {
+    if (name === "faolla_checkout_cart_resource_link_v1") return { data: null, error: null };
+    // The retained-v3 read projects earlier single-point originals too. Keep
+    // the old report for enabled, unmarked rows; do not change its assertions.
+    if (name === "faolla_member_checkout_reporting_v1" || name === "faolla_member_checkout_reporting_v3") {
       const refs = args.p_resources as Array<{ id: string; kind: string }>;
-      return { data: { version: 1, siteId, rows: refs.map(r => ({ ...r, result: r.id === link.id ? structuredClone(link.result) : null, termsMatch: r.id === link.id })) }, error: null };
+      return { data: { version: name.endsWith("_v3") ? 3 : 1, siteId, rows: refs.map(r => ({ ...r, result: r.id === link.id ? structuredClone(link.result) : null, termsMatch: r.id === link.id })) }, error: null };
     }
     assert.ok(["faolla_member_checkout_cancel_v2", "faolla_checkout_merchant_cancel_v1"].includes(name));
     const cancellation = { pointsReturned: 100, couponsReturned: 0, stockReleased: 1, cancelledAt: stamp };
     link = { ...link, record: { ...link.record, status: "cancelled" }, result: { ...link.result, closed: true, cancellationAvailable: false, resource: { status: "cancelled", updatedAt: stamp }, cancellation } };
     return { data: { replayed: false, receipt: { ...cancellation, siteId, operationKey, closed: true } }, error: null };
   };
-  const deps: CheckoutLegacyBoundaryDependencies = { enabled: () => true, anyEnabled: () => true, cashEnabled: () => false, anyCashEnabled: () => false, session: async () => session, actor: async () => actor, rpc: () => rpc };
+  const deps: CheckoutLegacyBoundaryDependencies = { enabled: () => true, anyEnabled: () => true, cashEnabled: () => false, anyCashEnabled: () => false, session: async () => session, actor: async () => actor, rpc: () => rpc,
+    cartSite: async () => buildPlatformMerchantSnapshotSite({ id: siteId, name: "Synthetic", status: "online", serviceExpiresAt: "2099-01-01T00:00:00Z", permissionConfig: createDefaultMerchantPermissionConfig() }) };
   const input = { request: new Request("https://launch.faolla.com/api/orders"), mode: "personal" as "personal" | "merchant", siteId, kind, ids: [link.id], action: "cancel", actor };
   return { deps, input, session, user, actor, calls, rpc, missing: () => { missing = true; }, link: () => link, replace: (next: typeof link) => { link = next; } };
 }
