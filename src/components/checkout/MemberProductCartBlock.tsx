@@ -10,6 +10,7 @@ import type { ProductCartCheckoutAdapter, ProductCartCheckoutHost } from "./Prod
 import { MemberCartCheckoutPanel } from "./MemberCartCheckoutPanel";
 import { createAccountCartDraft, type AccountCartDraft } from "@/lib/merchantCheckoutAccountDraft";
 import { MemberCheckoutRecoveryLink } from "./MemberCheckoutRecoveryLink";
+import { MemberCheckoutLegacyReview } from "./MemberCheckoutLegacyReview";
 const noSubscribe = () => () => {};
 const noSnapshot = () => null;
 const ownedCopy = {
@@ -27,7 +28,7 @@ const texts = {
 export default function MemberProductCartBlock(props: ProductBlockProps) {
   const { locale } = useI18n(), t = texts[locale.startsWith("zh") ? "zh" : locale.startsWith("es") ? "es" : "en"];
   const query = useMemo(() => ({ siteId: props.runtimeSiteId ?? "", kind: "order" as const, blockId: props.runtimeBlockId ?? "", viewport: props.runtimeCatalogViewport === "mobile" ? "mobile" as const : "desktop" as const }), [props.runtimeSiteId, props.runtimeBlockId, props.runtimeCatalogViewport]);
-  const scope = JSON.stringify(query), [loaded, setLoaded] = useState<{ scope: string; access: CheckoutEntryAccess | null; recoveryEnabled: boolean; intent: boolean; owned: boolean } | null>(null), [failed, setFailed] = useState(false);
+  const scope = JSON.stringify(query), [loaded, setLoaded] = useState<{ scope: string; access: CheckoutEntryAccess | null; recoveryEnabled: boolean; intent: boolean; owned: boolean; legacy: boolean } | null>(null), [failed, setFailed] = useState(false);
   const [active, setActive] = useState(false), [notice, setNotice] = useState(false), [revision, setRevision] = useState(0);
   const lock = useRef(true), generation = useRef(0), capture = useRef<{ host: ProductCartCheckoutHost; customer: ProductCartCheckoutHost["customer"]; raw: string | null; fresh: boolean; selection: ReturnType<typeof productCartCheckoutSelection> } | null>(null);
   const setLocked = useCallback((value: boolean) => { lock.current = value; }, []);
@@ -50,7 +51,8 @@ export default function MemberProductCartBlock(props: ProductBlockProps) {
         // original read completes. Malformed/blocked storage never means clear.
         const pending = access ? window.localStorage.getItem(checkoutClientStorageKey(query.siteId, access.accountId)) !== null : false;
         if (body.ownedDraft === true && body.intent !== true) throw new Error("unavailable");
-        setLocked(pending); setLoaded({ scope, access, recoveryEnabled: discovery.recoveryEnabled, intent: body.intent === true, owned: body.ownedDraft === true });
+        setLocked(pending); setLoaded({ scope, access, recoveryEnabled: discovery.recoveryEnabled, intent: body.intent === true, owned: body.ownedDraft === true,
+          legacy: !!access && body.intent === true && body.ownedDraft === true && body.legacyReview === true });
       } catch { if (!disposed && run === generation.current) { setFailed(true); setLocked(true); } }
       finally { clearTimeout(timeout); }
     };
@@ -100,5 +102,8 @@ export default function MemberProductCartBlock(props: ProductBlockProps) {
     },
   };
   return <ProductBlock key={loaded?.scope === scope ? owned?.storageKey ?? `legacy:${access?.accountId ?? "guest"}` : "unresolved"} {...props} runtimeCheckoutAdapter={adapter}
-    runtimeCheckoutRecoveryEntry={loaded?.scope === scope && loaded.recoveryEnabled ? <MemberCheckoutRecoveryLink siteId={query.siteId} locale={locale}/> : undefined}/>;
+    runtimeCheckoutRecoveryEntry={loaded?.scope === scope ? <>
+      {loaded.recoveryEnabled && <MemberCheckoutRecoveryLink siteId={query.siteId} locale={locale}/>}
+      {loaded.legacy && access && <MemberCheckoutLegacyReview siteId={query.siteId} blockId={query.blockId} accountId={access.accountId} locale={locale}/>}
+    </> : undefined}/>;
 }

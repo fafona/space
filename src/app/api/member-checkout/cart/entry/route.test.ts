@@ -53,3 +53,12 @@ test("public recovery navigation cannot grant cart intent/draft authority or tur
   const failed = await handleCartCheckoutEntry(req(), { ...verified.deps, ...gates }); assert.equal(failed.status, 503);
   assert.deepEqual(await failed.json(), { error: "checkout_entry_unavailable" });
 });
+
+test("legacy record-review capability is independently closed and available only with verified account intent/draft access", async () => {
+  const gates = { intentEnabled: () => true, draftEnabled: () => true, legacyReviewEnabled: () => true };
+  const x = fixture(), r = await handleCartCheckoutEntry(req(), { ...x.deps, ...gates }); assert.equal((await r.json()).legacyReview, true);
+  for (const patch of [{ legacyReviewEnabled: () => false }, { draftEnabled: () => false }, { draftEnabled: () => false, intentEnabled: () => false }, { session: async () => null }]) {
+    const response = await handleCartCheckoutEntry(req(), { ...x.deps, ...gates, ...patch }); assert.equal(response.status, 200); assert.equal(Object.hasOwn(await response.json(), "legacyReview"), false);
+  }
+  let n = 0; const changed = await handleCartCheckoutEntry(req(), { ...x.deps, ...gates, legacyReviewEnabled: () => ++n === 1 }); assert.equal(changed.status, 503); assert.deepEqual(await changed.json(), { error: "checkout_entry_unavailable" });
+});
