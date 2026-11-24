@@ -9,10 +9,11 @@ import boundary from '../src/lib/merchantCheckoutLegacyBoundary.server.ts';
 import runtime from '../src/lib/merchantBookingAtomicRuntime.server.ts';
 import pointResult from '../src/lib/merchantMemberCheckoutResult.ts';
 
-export async function partialGateBookingCases(t, { db, one, state, original }) {
+export async function partialGateBookingCases(t, { db, one, state, original, closed = false }) {
   const siteId = original.siteId, primary = '__merchant_booking_records__:v1', effects = [];
   const retained = (await one(db, 'select public.faolla_checkout_resource_link_v2($1,$2,resource_id,null) result from faolla_checkout_design.bundle_results where site_id=$1 and operation_key=$3', [siteId, 'booking', original.operationKey])).result;
   assert.ok(retained); const bookingId = retained.id, method = retained.original.method;
+  assert.equal(retained.original.result.closed, closed);
   const earlier = (await one(db, 'select public.faolla_checkout_resource_link_v1($1,$2,$3,null) result', [siteId, 'booking', bookingId])).result;
   if (method === 'on_site') assert.throws(() => pointResult.parseMemberCheckoutResult(earlier.result, { siteId, operationKey: original.operationKey }), /checkout_invalid_response/);
   else assert.equal(pointResult.parseMemberCheckoutResult(earlier.result, { siteId, operationKey: original.operationKey }).resourceId, bookingId);
@@ -26,7 +27,7 @@ export async function partialGateBookingCases(t, { db, one, state, original }) {
       if (name.startsWith('./')) return requireRepo(path.join(path.dirname(file), name + '.ts'));
       return requireRepo(name);
     };
-    runInNewContext(compiled, { module: m, exports: m.exports, require, process: { cwd: () => root }, Date, Buffer, Promise, JSON, Math, structuredClone, Request, Response, URL }, { filename: file }); return m.exports;
+    runInNewContext(compiled, { module: m, exports: m.exports, require, process: { cwd: () => root }, Error, Date, Buffer, Promise, JSON, Math, structuredClone, Request, Response, URL }, { filename: file }); return m.exports;
   };
   const forbidden = name => () => { effects.push(name); throw Error('forbidden ' + name); };
   const core = await moduleFrom('src/lib/merchantBookings.server.ts', {
@@ -39,7 +40,7 @@ export async function partialGateBookingCases(t, { db, one, state, original }) {
   const employee = { ...owner, type: 'employee', authUserId: 'synthetic-employee', principalKey: 'employee:synthetic-employee', authorizationVersion: 'staff-version',
     employeeId: 'synthetic-employee', roleId: 'synthetic-role', employeeVersion: 1, roleVersion: 1, businessPermissions: ['bookings.status.manage'] };
   const before = await state();
-  for (const base of [false, true]) for (const cash of [false, true]) for (const batch of [false, true]) await t.test(`${method} booking status base=${base},cash=${cash},batch=${batch} keeps original terms and finance`, async () => {
+  for (const base of [false, true]) for (const cash of [false, true]) for (const batch of [false, true]) await t.test(`${method} booking status base=${base},cash=${cash},batch=${batch},closed=${closed} keeps original terms and finance`, async () => {
     const calls = [], actor = batch ? employee : owner;
     let authorizations = 0;
     const dispatch = async (name, args) => {
@@ -49,8 +50,19 @@ export async function partialGateBookingCases(t, { db, one, state, original }) {
         faolla_booking_atomic_read_v2: [], faolla_booking_atomic_snapshot_v1: ['p_site_id', 'p_command_key', 'p_request_hash'],
         faolla_booking_atomic_commit_v1: ['p_site_id', 'p_command_key', 'p_request_hash', 'p_mutation'],
       }[name]; assert.ok(fields, name); calls.push(name);
-      try { return { data: (await one(db, `select public.${name}(${fields.map((_, i) => '$' + (i + 1)).join(',')}) result`, fields.map(k => k === 'p_resources' ? JSON.stringify(args[k]) : args[k]))).result, error: null }; }
-      catch (error) { return { data: null, error: { message: error.message } }; }
+      // Each real RPC is its own transaction in use. In the enclosing TEMP
+      // test transaction, a savepoint models only an SQL failure rollback;
+      // successful calls are NOT rolled back or hidden from state assertions.
+      if (closed) await db.query('savepoint synthetic_closed_rpc');
+      try {
+        const data = (await one(db, `select public.${name}(${fields.map((_, i) => '$' + (i + 1)).join(',')}) result`, fields.map(k => k === 'p_resources' ? JSON.stringify(args[k]) : args[k]))).result;
+        if (closed && name === 'faolla_booking_atomic_commit_v1') await db.query('set constraints all immediate');
+        if (closed) await db.query('release savepoint synthetic_closed_rpc');
+        return { data, error: null };
+      } catch (error) {
+        if (closed) { await db.query('rollback to savepoint synthetic_closed_rpc'); await db.query('release savepoint synthetic_closed_rpc'); }
+        return { data: null, error: { message: error.message } };
+      }
     };
     const gates = { enabled: () => base, anyEnabled: () => base, cashEnabled: () => base && cash, anyCashEnabled: () => base && cash, actor: async () => actor, rpc: () => dispatch };
     const actualActors = requireRepo(path.join(root, 'src/lib/merchantBusinessActor.server.ts'));
@@ -63,13 +75,30 @@ export async function partialGateBookingCases(t, { db, one, state, original }) {
     try {
       await db.query('update faolla_checkout_design.bundle_pilots set enabled=$2 where site_id=$1', [siteId, base]);
       await db.query('update faolla_checkout_design.intent_pilots set enabled=false where site_id=$1', [siteId]);
+      let ordinaryId = null;
+      if (closed && batch) {
+        const record = retained.record;
+        // Do not consume the original's one-person capacity: this test targets
+        // ledger closure, not the earlier and separately tested capacity guard.
+        const nextDay = new Date(Date.parse(record.appointmentAt.slice(0, 10) + 'T12:00:00Z') + 86400000).toISOString().slice(0, 10) + record.appointmentAt.slice(10);
+        const ordinary = await runtime.withIsolatedBookingAtomicRpc(dispatch, () => core.createMerchantBooking({ siteId, bookingBlockId: record.bookingBlockId,
+          bookingViewport: record.bookingViewport, store: record.store, item: record.item, appointmentAt: nextDay, title: record.title,
+          customerName: 'Ordinary synthetic', email: 'ordinary@example.invalid', phone: '000', note: 'Ordinary booking must stay unchanged' }));
+        ordinaryId = ordinary.booking.id;
+      }
       const protectedBefore = await state();
       const stored = (await one(db, 'select blocks from pages where slug=$1', [primary])).blocks.records;
       const target = stored.find(r => r.id === bookingId), commitCount = () => calls.filter(n => n === 'faolla_booking_atomic_commit_v1').length;
+      const initialCommits = commitCount();
       for (const status of ['confirmed', 'completed', 'no_show', 'active']) {
         const request = new Request('https://booking.synthetic.invalid/api/bookings', { method: 'PATCH', headers: { origin: 'https://booking.synthetic.invalid', 'content-type': 'application/json' },
-          body: JSON.stringify({ siteId, ...(batch ? { bookingIds: [bookingId] } : { bookingId }), status }) });
+          body: JSON.stringify({ siteId, ...(batch ? { bookingIds: ordinaryId ? [ordinaryId, bookingId] : [bookingId] } : { bookingId }), status }) });
         const response = await runtime.withIsolatedBookingAtomicRpc(dispatch, () => http.PATCH(request)), body = await response.json();
+        if (closed) {
+          assert.equal(response.status, 409, JSON.stringify(body)); assert.equal(body.error, 'checkout_original_cancellation_required');
+          assert.match(body.message, /不能直接取消或恢复/); assert.equal(response.headers.get('cache-control'), 'private, no-store');
+          assert.deepEqual(await state(), protectedBefore); continue;
+        }
         assert.equal(response.status, 200, JSON.stringify(body)); assert.equal((body.booking ?? body.bookings[0]).status, status);
         assert.ok(!/checkoutOperationKey|editToken|pointTransaction|couponClaims|PRIVATE/.test(JSON.stringify(body)), JSON.stringify(body));
         if (batch) assert.equal(body.bookings[0].email, '');
@@ -80,6 +109,9 @@ export async function partialGateBookingCases(t, { db, one, state, original }) {
         else assert.equal(current.result.totalPoints, retained.original.result.totalPoints);
       }
       const after = await state(), saved = (await one(db, 'select blocks from pages where slug=$1', [primary])).blocks.records, next = saved.find(r => r.id === bookingId);
+      if (closed) {
+        assert.equal(commitCount() - initialCommits, base ? 0 : 4); assert.deepEqual(after, protectedBefore); assert.deepEqual(effects, []); return;
+      }
       assert.equal(commitCount(), 4); assert.ok(authorizations >= 4); assert.equal(next.status, 'active');
       for (const key of ['customerAccountId', 'customerUserId', 'checkoutOperationKey', 'store', 'item', 'appointmentAt', 'appointmentTimeZone', 'bookingBlockId', 'bookingViewport', 'note', 'editToken']) assert.deepEqual(next[key], target[key], key);
       assert.deepEqual(saved.filter(r => r.id !== bookingId), stored.filter(r => r.id !== bookingId));
@@ -90,7 +122,7 @@ export async function partialGateBookingCases(t, { db, one, state, original }) {
       const financePages = rows => rows.filter(({ r }) => !r.slug.startsWith('__merchant_booking_records'));
       assert.deepEqual(financePages(after['public.pages']), financePages(protectedBefore['public.pages']));
       assert.deepEqual(effects, []);
-    } finally { await db.query('rollback'); }
+    } finally { await db.query('rollback'); if (closed) assert.deepEqual(await state(), before); }
     assert.deepEqual(await state(), before);
   });
 }

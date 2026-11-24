@@ -33,9 +33,9 @@ function fixture(kind: "booking" | "order" = "booking") {
     if (name === "faolla_checkout_cart_resource_link_v1") return { data: null, error: null };
     // The retained-v3 read projects earlier single-point originals too. Keep
     // the old report for enabled, unmarked rows; do not change its assertions.
-    if (name === "faolla_member_checkout_reporting_v1" || name === "faolla_member_checkout_reporting_v3") {
+    if (["faolla_member_checkout_reporting_v1", "faolla_member_checkout_reporting_v2", "faolla_member_checkout_reporting_v3"].includes(name)) {
       const refs = args.p_resources as Array<{ id: string; kind: string }>;
-      return { data: { version: name.endsWith("_v3") ? 3 : 1, siteId, rows: refs.map(r => ({ ...r, result: r.id === link.id ? structuredClone(link.result) : null, termsMatch: r.id === link.id })) }, error: null };
+      return { data: { version: Number(name.slice(-1)), siteId, rows: refs.map(r => ({ ...r, result: r.id === link.id ? structuredClone(link.result) : null, termsMatch: r.id === link.id })) }, error: null };
     }
     assert.ok(["faolla_member_checkout_cancel_v2", "faolla_checkout_merchant_cancel_v1"].includes(name));
     const cancellation = { pointsReturned: 100, couponsReturned: 0, stockReleased: 1, cancelledAt: stamp };
@@ -131,6 +131,30 @@ test("retained booking protocol still projects old points and lets an unlinked o
     const f = fixture(); if (missing) f.missing();
     assert.equal(await bridgeLegacyCheckoutMutation({ ...f.input, mode: "merchant", action: undefined, status: "confirmed" }, f.deps), null);
     assert.deepEqual(f.calls.map(([name]) => name), ["faolla_checkout_resource_link_v2"]); assert.equal(writes(f).length, 0);
+  }
+});
+
+for (const method of ["points", "on_site"]) test(`${method}: closed booking in any batch chunk refuses every business reopening before an old writer`, async () => {
+  for (const cashEnabled of [false, true]) for (const status of ["active", "confirmed", "completed", "no_show"]) {
+    const f = method === "points" ? fixture() : cashFixture();
+    await bridgeLegacyCheckoutMutation(f.input, f.deps); f.calls.length = 0;
+    // A closed original in the second page must stop the whole mixed batch.
+    const ids = [...Array.from({ length: 50 }, (_, i) => `ordinary-${i}`), f.link().id];
+    f.deps.cashEnabled = () => method === "on_site" && cashEnabled;
+    await assert.rejects(bridgeLegacyCheckoutMutation({ ...f.input, mode: "merchant", ids, batch: true, action: undefined, status }, f.deps), /checkout_original_cancellation_required/);
+    assert.equal(writes(f).length, 0); assert.equal(f.calls.length, 2);
+  }
+});
+
+test("closed batch still rechecks current permission and malformed later pages never become a legacy fallback", async () => {
+  for (const failure of ["authorization", "late-page"]) {
+    const f = cashFixture(); await bridgeLegacyCheckoutMutation(f.input, f.deps); f.calls.length = 0; f.deps.cashEnabled = () => false;
+    const call = f.deps.rpc(), ids = [f.link().id, ...Array.from({ length: 50 }, (_, i) => `ordinary-${i}`)];
+    f.deps.rpc = () => async (name, args) => failure === "late-page" && (args.p_resources as unknown[]).length === 1
+      ? { data: { version: 2, siteId, rows: [] }, error: null } : call(name, args);
+    await assert.rejects(bridgeLegacyCheckoutMutation({ ...f.input, mode: "merchant", ids, batch: true, action: undefined, status: "completed",
+      assertAuthorizationCurrent: async () => { if (failure === "authorization") throw Error("authorization expired"); } }, f.deps), new RegExp(failure === "authorization" ? "authorization expired" : "checkout_unavailable"));
+    assert.equal(writes(f).length, 0);
   }
 });
 

@@ -1,5 +1,5 @@
 import { parseCartCheckoutResult, type CartCheckoutResult } from "./merchantCheckoutCartResult";
-import { parseCheckoutReportingSnapshot } from "./merchantCheckoutReporting";
+import { checkoutBatchWouldReopenClosedOriginal, parseCheckoutReportingSnapshot } from "./merchantCheckoutReporting";
 import { normalizeMerchantOrderRecord, type MerchantOrderRecord } from "./merchantOrders";
 import { MerchantCheckoutError } from "./merchantCheckoutQuote.server";
 import { checkoutOwnerDependencies } from "./merchantCheckoutOwnerAccess.server";
@@ -84,15 +84,18 @@ export async function bridgeCartCheckoutManagement(input: CheckoutLegacyBoundary
     const actor = await authorize();
     const cancelling = input.action === "cancel" || input.status === "cancelled";
     if (input.batch || input.ids.length > 1) {
-      let cart = false;
+      let cart = false, reopensClosed = false;
+      const requiresSingle = cancelling || input.action === "restore" || input.action === "uncomplete" || input.items !== undefined || input.updates !== undefined;
       for (let offset = 0; offset < ids.length; offset += 50) {
         const scope = { siteId, resources: ids.slice(offset, offset + 50).map(id => ({ kind: "order" as const, id })) };
         const report = parseCheckoutReportingSnapshot(await call("faolla_member_checkout_reporting_v3", { p_site_id: siteId, p_resources: scope.resources }), scope);
         if (report.version !== 3) throw new Error("invalid"); cart ||= report.rows.some(row => !!row.cart);
+        if (!requiresSingle) reopensClosed ||= checkoutBatchWouldReopenClosedOriginal(input, report.rows);
       }
       await authorize();
       if (!cart) return none;
-      if (cancelling || input.action === "restore" || input.action === "uncomplete" || input.items !== undefined || input.updates !== undefined) throw new MerchantCheckoutError("checkout_batch_requires_single", 409);
+      if (requiresSingle) throw new MerchantCheckoutError("checkout_batch_requires_single", 409);
+      if (reopensClosed) throw new MerchantCheckoutError("checkout_original_cancellation_required", 409);
       return { linked: true, value: null };
     }
     const link = await read(ids[0]); await authorize(); if (!link) return none;

@@ -5,7 +5,7 @@ import { resolveMerchantBusinessActor, type MerchantBusinessActor } from "./merc
 import { checkoutPrincipalKey } from "./merchantCheckoutQuote.server";
 import { parseMemberCheckoutCancellation, parseMemberCheckoutResult, type MemberCheckoutResult } from "./merchantMemberCheckoutResult";
 import { cancelMemberCheckout, type MemberCheckoutResultRpc } from "./merchantMemberCheckoutResult.server";
-import { parseCheckoutReportingSnapshot } from "./merchantCheckoutReporting";
+import { checkoutBatchWouldReopenClosedOriginal, parseCheckoutReportingSnapshot, type CheckoutReportingRow } from "./merchantCheckoutReporting";
 import { normalizeMerchantOrderRecord, normalizeMerchantOrderRecords, type MerchantOrderRecord } from "./merchantOrders";
 import { saveStoredMerchantOrders } from "./merchantOrdersStore";
 import { commitMerchantOrderMembershipTransaction } from "./merchantOrderMembershipTransaction.server";
@@ -235,9 +235,16 @@ export async function bridgeLegacyCheckoutMutation(input: BoundaryInput, overrid
     }
   };
   if (scope.batch || scope.ids.length > 1) {
-    const linked = await linkedCheckoutOrderOrBookingIds(scope.siteId!, scope.kind, eligibleIds, callRpc, mixed);
-    if (linked.size && (scope.action === "cancel" || scope.status === "cancelled" || scope.action === "restore" || scope.action === "uncomplete" || scope.items !== undefined || scope.updates !== undefined)) throw new CheckoutLegacyBoundaryError("checkout_batch_requires_single");
+    const requiresSingle = scope.action === "cancel" || scope.status === "cancelled" || scope.action === "restore" || scope.action === "uncomplete" || scope.items !== undefined || scope.updates !== undefined;
+    let reopensClosed = false;
+    const linked = await linkedCheckoutOrderOrBookingIds(scope.siteId!, scope.kind, eligibleIds, callRpc, mixed, false, requiresSingle ? undefined
+      : rows => { reopensClosed ||= checkoutBatchWouldReopenClosedOriginal(scope, rows); });
+    if (linked.size && requiresSingle) throw new CheckoutLegacyBoundaryError("checkout_batch_requires_single");
     await reauthorizeRetainedBooking();
+    if (reopensClosed) {
+      if (!retainedBookingStatus) await scope.assertAuthorizationCurrent?.();
+      throw new CheckoutLegacyBoundaryError("checkout_original_cancellation_required");
+    }
     return null; // final-state constraint still checks all original writers.
   }
   const lookup = { siteId: scope.siteId ?? null, kind: scope.kind, id: scope.ids[0], principal };
@@ -283,7 +290,7 @@ export async function bridgeLegacyCheckoutMutation(input: BoundaryInput, overrid
   await reauthorize(); return { kind: link.kind, record: publicRecord(link) };
 }
 
-async function linkedCheckoutOrderOrBookingIds(siteId: string, kind: "booking" | "order", ids: string[], callRpc: MemberCheckoutResultRpc, mixed = false, cart = false) {
+async function linkedCheckoutOrderOrBookingIds(siteId: string, kind: "booking" | "order", ids: string[], callRpc: MemberCheckoutResultRpc, mixed = false, cart = false, observe?: (rows: readonly CheckoutReportingRow[]) => void) {
   const linked = new Set<string>();
   for (let offset = 0; offset < ids.length; offset += 50) {
     const scope = { siteId, resources: ids.slice(offset, offset + 50).map(id => ({ kind, id })) };
@@ -291,6 +298,7 @@ async function linkedCheckoutOrderOrBookingIds(siteId: string, kind: "booking" |
     let snapshot;
     try { snapshot = parseCheckoutReportingSnapshot(raw, scope); if (snapshot.version !== (cart ? 3 : mixed ? 2 : 1)) throw new Error("invalid"); }
     catch { throw new CheckoutLegacyBoundaryError("checkout_unavailable", 503); }
+    observe?.(snapshot.rows);
     for (const row of snapshot.rows) if (row.result || row.onSite || row.cart) linked.add(row.id);
   }
   return linked;

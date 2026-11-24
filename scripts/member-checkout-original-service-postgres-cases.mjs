@@ -64,6 +64,7 @@ export async function originalServiceCases(t, { db, peer, one, site, seed, state
       assert.equal(member.pointBalance, method === 'points' && !returns ? 920 : 1000);
       const coupon = (await one(db, 'select blocks from pages where merchant_id=$1 and slug=$2', [site, '__merchant_coupons__:' + site])).blocks.find(v => v.id === f.coupon.id);
       assert.equal(coupon.claimEvents[0].validUntil, f.coupon.claimEvents[0].validUntil); assert.equal(coupon.redeemEvents.length, returns ? 0 : 1);
+      if (returns) await partialGateBookingCases(bookingTest, { db, one, state, original: f, closed: true });
     } finally { c.deactivate(); await restore(); }
   });
   await t.test('wrong owner/hash, disabled service, retained snapshot and real lock contention do not change an original', async () => {
@@ -130,6 +131,7 @@ export async function originalServiceCases(t, { db, peer, one, site, seed, state
       assert.equal(cart.cancellation.pointsReturned, method === 'points' ? 160 : 0); assert.equal(cart.cancellation.couponsReturned, method === 'points' ? 2 : 1); assert.equal(cart.cancellation.stockReleased, 2);
       const after = await state(); assert.equal((await decode(await invoke(original, true, bodyFor(cancelled.review)))).cancellation.replayed, true); assert.deepEqual(await state(), after);
       assert.deepEqual(after['faolla_checkout_design.intent_acknowledgements'], before['faolla_checkout_design.intent_acknowledgements']);
+      await partialGateOrderCases(cartTest, { db, one, state, original, result: cart, closed: true });
     } finally { await restore(); }
   });
   await t.test('new service table/functions stay inaccessible to API roles', async () => {

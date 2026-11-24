@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkoutReportingNeedsReview, checkoutReportingSettlement, checkoutReportingTsv, parseCheckoutReportingRequest, parseCheckoutReportingSnapshot } from "./merchantCheckoutReporting";
+import { checkoutBatchWouldReopenClosedOriginal, checkoutReportingNeedsReview, checkoutReportingSettlement, checkoutReportingTsv, parseCheckoutReportingRequest, parseCheckoutReportingSnapshot } from "./merchantCheckoutReporting";
 import { summarizeMerchantSettlement } from "./merchantSettlement";
 import { readCheckoutReporting, readMixedCheckoutReporting, readCartCheckoutReporting } from "./merchantCheckoutReporting.server";
 import { cartReviewFixture } from "../../scripts/fixtures/member-checkout-cart-review";
@@ -14,6 +14,23 @@ function fixture() {
       closed: false, resource: { status: "pending", updatedAt: "2026-11-23T12:00:00Z" }, cancellationAvailable: false,
       cancellationPolicy: { returnPoints: true, returnCoupons: false, advanceMinutes: 0, cancellableUntil: null }, cancellation: null as null | { pointsReturned: number; couponsReturned: number; stockReleased: number; cancelledAt: string } } }] };
 }
+
+test("closed-original batch preflight covers status aliases without treating cancel, touch or print as reopening", () => {
+  const row = fixture().rows[0]; row.result.closed = true;
+  for (const status of ["active", "pending", "confirmed", "completed", "no_show"]) assert.equal(checkoutBatchWouldReopenClosedOriginal({ status }, [row]), true);
+  for (const action of ["restore", "confirm", "uncomplete", "complete"]) assert.equal(checkoutBatchWouldReopenClosedOriginal({ action }, [row]), true);
+  for (const action of [undefined, "cancel", "touch", "print", "unknown"]) assert.equal(checkoutBatchWouldReopenClosedOriginal({ action }, [row]), false);
+  assert.equal(checkoutBatchWouldReopenClosedOriginal({ status: "cancelled" }, [row]), false);
+});
+
+test("ordinary and open originals retain legitimate batch transitions and the helper never changes payment facts", async () => {
+  for (const method of ["points", "on_site"] as const) {
+    const x = await cartReviewFixture(method), row = { kind: "order" as const, id: x.result.resourceId, result: null, cart: x.result, termsMatch: true }, before = structuredClone(row);
+    assert.equal(checkoutBatchWouldReopenClosedOriginal({ status: "completed" }, [row, { kind: "order", id: "ordinary", result: null, termsMatch: false }]), false);
+    assert.deepEqual(row, before); assert.equal(checkoutBatchWouldReopenClosedOriginal({ status: "completed" }, []), false);
+    assert.equal(checkoutBatchWouldReopenClosedOriginal({ status: "completed" }, [{ ...row, cart: { ...x.result, closed: true } }]), true);
+  }
+});
 
 test("version-three report preserves each cart tender, line policies and sums without exposing raw records", async () => {
   for (const method of ["points", "on_site"] as const) {

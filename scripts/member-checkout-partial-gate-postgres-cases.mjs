@@ -7,7 +7,7 @@ import updater from '../src/lib/merchantOrders.server.ts';
 import route from '../src/app/api/orders/route-handler.ts';
 import reporting from '../src/lib/merchantCheckoutReporting.ts';
 
-export async function partialGateOrderCases(t, { db, one, state, original, result }) {
+export async function partialGateOrderCases(t, { db, one, state, original, result, closed = false }) {
   const siteId = original.siteId, refs = [{ kind: 'order', id: result.resourceId }];
   const earlier = (await one(db, 'select public.faolla_member_checkout_reporting_v1($1,$2) result', [siteId, JSON.stringify(refs)])).result;
   if (result.method === 'on_site') assert.throws(() => reporting.parseCheckoutReportingSnapshot(earlier, { siteId, resources: refs }), /checkout_invalid_response/);
@@ -20,7 +20,7 @@ export async function partialGateOrderCases(t, { db, one, state, original, resul
   const sourceRows = async () => (await db.query('select id,slug,blocks,updated_at from public.pages where merchant_id=$1 and (slug=$2 or slug~$3) order by slug,id', [siteId, `__merchant_orders__:${siteId}`, `^__merchant_orders__:${siteId}:chunk:[0-9]+$`])).rows;
   const records = rows => { const chunks = rows.filter(r => r.slug.includes(':chunk:')); return (chunks.length ? chunks : rows).flatMap(r => r.blocks); };
   const before = await state();
-  for (const base of [false, true]) for (const cash of [false, true]) for (const cart of [false, true]) await t.test(`${result.method} merchant completion base=${base},cash=${cash},cart=${cart} preserves finance and immutable cart`, async () => {
+  for (const base of [false, true]) for (const cash of [false, true]) for (const cart of [false, true]) await t.test(`${result.method} merchant completion base=${base},cash=${cash},cart=${cart},closed=${closed} preserves finance and immutable cart`, async () => {
     const calls = [], writes = [], mirrors = [];
     const dispatch = async (name, args) => {
       const keys = {
@@ -56,7 +56,12 @@ export async function partialGateOrderCases(t, { db, one, state, original, resul
         checkoutBridge: input => boundary.bridgeLegacyCheckoutMutation(input, { ...gates, actor: async () => actor, cartSite: async () => original.site }),
         updateOrder: input => updater.updateMerchantOrderBySite(input, deps), updateOrdersBatch: input => updater.updateMerchantOrdersBatchBySite(input, deps),
       });
-      const body = await response.json(); assert.equal(response.status, 200, JSON.stringify(body)); assert.equal((body.order ?? body.orders[0]).status, 'completed');
+      const body = await response.json();
+      if (closed) {
+        assert.equal(response.status, 409, JSON.stringify(body)); assert.equal(body.error, 'checkout_original_cancellation_required');
+        assert.equal(writes.length, 0); assert.deepEqual(mirrors, []); assert.deepEqual(await state(), protectedBefore); return;
+      }
+      assert.equal(response.status, 200, JSON.stringify(body)); assert.equal((body.order ?? body.orders[0]).status, 'completed');
       assert.ok(!/checkoutOperationKey|pointTransaction|couponClaims|PRIVATE/.test(JSON.stringify(body)));
       // Validate deferred enforcement too, not only a write that would fail at COMMIT.
       await db.query('set constraints all immediate');
@@ -70,7 +75,7 @@ export async function partialGateOrderCases(t, { db, one, state, original, resul
       const finance = rows => rows.filter(({ r }) => !r.slug.startsWith(`__merchant_orders__:${siteId}`) && !r.slug.startsWith(`__merchant_orders_history_v2__:${siteId}`) && !r.slug.startsWith(`__merchant_orders_history_backup_v2__:${siteId}`));
       assert.deepEqual(finance(after['public.pages']), finance(protectedBefore['public.pages']));
       assert.ok(calls.every(name => /reporting|resource_link|^faolla_commit_order_membership_v1$/.test(name)));
-    } finally { await db.query('rollback'); }
+    } finally { await db.query('rollback'); if (closed) assert.deepEqual(await state(), before); }
     assert.deepEqual(await state(), before);
   });
 }

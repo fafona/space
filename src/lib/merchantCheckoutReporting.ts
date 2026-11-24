@@ -12,6 +12,14 @@ export type CheckoutReportingRow = CheckoutResourceReference & {
   cart?: CartCheckoutResult;
 };
 export type CheckoutReportingSnapshot = { version: 1 | 2 | 3; siteId: string; rows: CheckoutReportingRow[] };
+
+/** Read-only batch preflight, not payment authority or a replacement for the
+ * final-state database constraint. Ordinary/open rows keep their old writer. */
+export function checkoutBatchWouldReopenClosedOriginal(input: { status?: string; action?: string }, rows: readonly CheckoutReportingRow[]) {
+  const status = input.status ?? (input.action === "restore" ? "active" : input.action === "confirm" || input.action === "uncomplete" ? "confirmed" : input.action === "complete" ? "completed" : undefined);
+  return ["active", "pending", "confirmed", "completed", "no_show"].includes(status ?? "")
+    && rows.some(row => row.result?.closed || row.onSite?.closed || row.cart?.closed);
+}
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 const validId = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9:_-]{1,160}$/.test(v);
 const key = (r: CheckoutResourceReference) => `${r.kind}:${r.id}`;

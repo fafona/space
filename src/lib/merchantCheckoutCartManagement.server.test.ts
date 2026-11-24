@@ -30,6 +30,29 @@ async function fixture(method: "points" | "on_site" = "points") {
     replaceResult: (value: typeof result) => { result = value; }, missing: () => { linked = false; } };
 }
 const writes = (x: Awaited<ReturnType<typeof fixture>>) => x.calls.filter(([name]) => name === "faolla_checkout_cart_merchant_cancel_v1");
+
+for (const method of ["points", "on_site"] as const) test(`${method}: a cancelled cart in a later batch page never reaches an operational writer`, async () => {
+  const x = await fixture(method); x.closed();
+  for (const cartEnabled of [false, true]) for (const patch of [{ action: undefined, status: "pending" }, { action: undefined, status: "confirmed" }, { action: undefined, status: "completed" }, { action: "confirm" }, { action: "complete" }]) {
+    x.calls.length = 0;
+    const input = { ...x.input, ...patch, ids: [...Array.from({ length: 50 }, (_, i) => `ordinary-${i}`), x.record().id], batch: true };
+    await assert.rejects(bridgeLegacyCheckoutMutation(input, { ...x.oldDeps, cartEnabled: () => cartEnabled }), /checkout_original_cancellation_required/);
+    assert.equal(writes(x).length, 0); assert.equal(x.calls.length, 2);
+  }
+});
+
+test("actual merchant order PATCH rejects a mixed closed-original batch before touching any ordinary order", async () => {
+  for (const cartEnabled of [false, true]) {
+    const x = await fixture(); x.closed(); let legacy = 0;
+    const response = await handleMerchantOrderPatch(x.request({ siteId: x.siteId, orderIds: ["ordinary", x.record().id], status: "completed" }), {
+      resolveAdminSession: async () => ({ merchantId: x.siteId, actor: x.actor, assertAuthorizationCurrent: async () => {} }), isManagementEnabled: async () => true,
+      checkoutBridge: input => bridgeLegacyCheckoutMutation(input, { ...x.oldDeps, cartEnabled: () => cartEnabled }),
+      updateOrdersBatch: async () => { legacy++; throw Error("must not start a partial batch"); },
+    });
+    assert.equal(response.status, 409); assert.equal((await response.json()).error, "checkout_original_cancellation_required");
+    assert.equal(legacy, 0); assert.equal(writes(x).length, 0);
+  }
+});
 test("management has a separate exact default-closed allowlist and never enables cash collection", () => {
   const site = "10909994", env = { MERCHANT_MEMBER_CHECKOUT_PILOT_SITES: site, MERCHANT_MEMBER_CHECKOUT_CART_PILOT_SITES: site };
   assert.equal(isMemberCheckoutCartManagementEnabled(site, env), false);
