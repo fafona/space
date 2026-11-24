@@ -103,7 +103,10 @@ test('closed purchasing retains read-only originals for four types, both sizes a
    await page.locator('[data-checkout-resume] article').waitFor();await page.locator('[data-checkout-history-read]').waitFor();
    assert.equal(await page.locator('[data-checkout-resume] article a').count(),0);assert.equal(await page.getByRole('link',{name:text.detail,exact:true}).count(),0);
    if(kind==='single_on_site')assert.equal(await page.locator('[data-checkout-resume] article details').count(),1);
-   assert.equal(await page.locator('input,textarea,select').count(),0);assert.equal(await page.locator('[data-checkout-resume] button').count(),2);
+   assert.equal(await page.locator('input,textarea,select').count(),0);assert.equal(await page.locator('[data-checkout-resume] button').count(),3);
+   // Original two read buttons remain; one new, explicit inventory read does
+   // not start IO until clicked and adds no acknowledgement/financial action.
+   assert.equal(await page.locator('[data-checkout-resume]>button').count(),1);assert.equal(await page.locator('[data-checkout-local-recovery] button').count(),1);assert.equal(await page.locator('[data-checkout-history-inventory] button').count(),1);
    await page.getByRole('button',{name:text.read,exact:true}).click();await page.locator('[data-checkout-resume] article').waitFor();
    assert.deepEqual(await page.evaluate(()=>Object.fromEntries(Object.entries(localStorage))),entries);assert.equal(state.count(),2);
    assert.ok(state.paths.every(p=>p==='GET /api/personal-favorites'||p==='POST /api/member-checkout/history/pending'||p==='POST /api/member-checkout/history/recover'));
