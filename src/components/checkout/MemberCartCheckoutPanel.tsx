@@ -8,6 +8,8 @@ import { checkoutCouponClaimKey } from "@/lib/merchantCheckoutCoupons";
 import { merchantSettlementLanguage, formatSettlementMoney } from "@/lib/merchantSettlement";
 import { SERVICE_IDENTITY_CHANGED } from "@/components/service-center/serviceCenterClient";
 import { MerchantCheckoutCouponPicker } from "./MerchantCheckoutCouponPicker";
+import { OnSiteCheckoutSummary } from "./OnSiteCheckoutSummary";
+import { MerchantSettlementBadge } from "./MerchantSettlementBadge";
 import type { CheckoutDraftLease, CheckoutDraftReleaseCheck } from "@/lib/merchantCheckoutDraftLease";
 
 const copy = {
@@ -24,8 +26,18 @@ const retainedDraftCopy = {
   en: "The saved cart changed or cannot be read. The original reference is kept. Keep this page and check the cart; do not resubmit the original.",
   es: "El carrito guardado cambió o no se puede leer. Se conserva la referencia original. Conserva esta página y revisa el carrito; no reenvíes el original.",
 };
+const registrationCopy = {
+  zh: { info: "这份原单尚未登记到恢复流程。登记不会重新扣积分、收款、取消原单或清空购物车。", agreed: "我已核对这份原单，保留原购物车并登记恢复记录", action: "核对并登记原单" },
+  en: { info: "This original is not registered for recovery. Registration does not charge, redeem again, cancel or clear the cart.", agreed: "I reviewed this original; keep my cart and register recovery", action: "Register reviewed original" },
+  es: { info: "Este original no está registrado para su recuperación. Registrarlo no cobra, no vuelve a canjear, no cancela ni vacía el carrito.", agreed: "He revisado el original; conservar el carrito y registrar la recuperación", action: "Registrar original revisado" },
+};
+const receiptCopy = {
+  zh: { title: "商户登记已收款", note: "这是商户登记的到店收款记录，不是银行或在线支付凭证。" },
+  en: { title: "Cash receipt recorded by merchant", note: "This is a merchant-recorded venue receipt, not bank or online-payment proof." },
+  es: { title: "Cobro registrado por el comercio", note: "Es un cobro en el local registrado por el comercio, no un justificante bancario ni de pago en línea." },
+};
 type Props = { siteId: string; accountId: string | null; initialSelection: CartClientSelection; initialCustomer?: CheckoutCustomerDraft;
-  locale?: string; controllerFactory?: typeof createCartCheckoutController; allowNewCheckout?: boolean; intentEnabled?: boolean;
+  locale?: string; controllerFactory?: typeof createCartCheckoutController; allowNewCheckout?: boolean; intentEnabled?: boolean; retainedIntentEnabled?: boolean;
   prepareInsideLock?: boolean; beforeSubmit?: (customer: CheckoutCustomerDraft, lease?: CheckoutDraftLease) => void | Promise<void>;
   beforeRelease?: (original: CartClientOriginal, context: { createdHere: boolean; lease: CheckoutDraftLease }) => void | Promise<void>;
   verifyBeforeRelease?: CheckoutDraftReleaseCheck; onReleased?: () => void; onReturnToCart?: () => void };
@@ -38,12 +50,14 @@ export function MemberCartCheckoutPanel(props: Props) {
   return <Active key={JSON.stringify([props.siteId, props.accountId, props.initialSelection])} {...props} accountId={props.accountId}/>;
 }
 function Active({ siteId, accountId, initialSelection, initialCustomer, locale = "zh-CN", controllerFactory = createCartCheckoutController,
-  allowNewCheckout = true, intentEnabled = false, prepareInsideLock = false, beforeSubmit, beforeRelease, verifyBeforeRelease, onReleased, onReturnToCart }: Props & { accountId: string }) {
-  const t = copy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId, intentEnabled }), [siteId, accountId, intentEnabled, controllerFactory]);
+  allowNewCheckout = true, intentEnabled = false, retainedIntentEnabled = false, prepareInsideLock = false, beforeSubmit, beforeRelease, verifyBeforeRelease, onReleased, onReturnToCart }: Props & { accountId: string }) {
+  const t = copy[merchantSettlementLanguage(locale)], rt = registrationCopy[merchantSettlementLanguage(locale)], receipt = receiptCopy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId, intentEnabled, retainedIntentEnabled }), [siteId, accountId, intentEnabled, retainedIntentEnabled, controllerFactory]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [selection, setSelection] = useState(() => structuredClone(initialSelection)), [customer, setCustomer] = useState(() => initialCustomer ? structuredClone(initialCustomer) : blank());
   const [agreed, setAgreed] = useState(false), [cancelConfirm, setCancelConfirm] = useState(false), [blocked, setBlocked] = useState(false);
   const [draftFailed, setDraftFailed] = useState(false), [draftBusy, setDraftBusy] = useState(false);
+  const [registrationAgreed, setRegistrationAgreed] = useState(false);
+  useEffect(() => { setRegistrationAgreed(false); }, [state.phase, state.original, state.retainedRegistrationRequired]);
   // React state alone does not exclude two click handlers in the same frame.
   // Keep draft preparation/ack callbacks single-dispatch too, not just finance.
   const draftBusyRef = useRef(false);
@@ -57,6 +71,7 @@ function Active({ siteId, accountId, initialSelection, initialCustomer, locale =
   }, [controller]);
   if (blocked) return <p role="alert" className="p-5">{t.changed}</p>;
   const quote = state.review?.quote, original = state.original, cart = original?.kind === "cart" ? original.result : null;
+  const retainedSingle = state.retainedRegistrationRequired && !state.intentReviewRequired && original?.kind === "single" ? original.original : null;
   const pointUnit = merchantSettlementLanguage(locale) === "zh" ? "积分" : merchantSettlementLanguage(locale) === "es" ? "puntos" : "points";
   const amount = (value: number | null, method = selection.method) => method === "points" ? `${value ?? "—"} ${pointUnit}` : value === null ? "—" : formatSettlementMoney(value, locale);
   const preview = (next = selection) => { setAgreed(false); setCancelConfirm(false); void controller.preview(next, customer); };
@@ -85,16 +100,29 @@ function Active({ siteId, accountId, initialSelection, initialCustomer, locale =
     {state.pending && !original && !busy && <button className={button} onClick={() => void controller.recover()}>{t.recover}</button>}
     {original ? <article className="space-y-4 rounded-2xl border border-teal-200 bg-white p-5">
       {cart ? <><h2 className="text-xl font-semibold">{t.done}</h2><p className="break-all text-xs text-slate-500">{cart.resourceId}</p>
-        {cart.reviewRequired ? <p role="alert">{t.reviewRequired}</p> : <p data-cart-payment-status className="font-semibold text-teal-800">{cart.closed ? t.closed : cart.method === "points" ? t.redeemed : cart.dueMinor === 0 ? t.covered : t.unpaid}</p>}
+        {cart.reviewRequired ? <p role="alert">{t.reviewRequired}</p> : <p data-cart-payment-status className="font-semibold text-teal-800">{cart.closed ? t.closed : cart.method === "points" ? t.redeemed : cart.collection ? `${receipt.title} · ${formatSettlementMoney(cart.collection.amountMinor, locale)}` : cart.dueMinor === 0 ? t.covered : t.unpaid}</p>}
+        {!cart.reviewRequired && cart.collection && <p className="text-xs leading-5 text-slate-500">{receipt.note}</p>}
         <ul className="divide-y divide-slate-100">{cart.lines.map(l => <li key={l.offerId} className="flex flex-wrap justify-between gap-2 py-3 text-sm"><span>{l.title} × {l.quantity}</span><strong>{amount(l.points ?? l.dueMinor, cart.method)}</strong></li>)}</ul>
         {!cart.reviewRequired && <p className="font-semibold">{t.total}: {amount(cart.totalPoints ?? cart.dueMinor, cart.method)}</p>}
         <a className={button + " inline-flex items-center"} href={`/member-checkout/${siteId}/cart/${cart.operationKey}?uiLocale=${encodeURIComponent(locale)}`}>{t.detail}</a>
-        {cart.cancellationAvailable && !cancelConfirm && <button className={button} disabled={busy} onClick={() => setCancelConfirm(true)}>{t.cancel}</button>}
+        {cart.cancellationAvailable && !state.retainedRegistrationRequired && !cancelConfirm && <button className={button} disabled={busy} onClick={() => setCancelConfirm(true)}>{t.cancel}</button>}
         {cancelConfirm && cart.cancellationAvailable && <button className={button + " border-rose-300 text-rose-800"} disabled={busy} onClick={() => { setCancelConfirm(false); void controller.cancel(); }}>{t.cancelConfirm}</button>}
       </> : original.kind === "single" ? <><p>{t.single}</p><a className={button + " inline-block"} href={`/member-checkout/${siteId}/${original.original.method === "on_site" ? "on-site/" : ""}${original.original.result.operationKey}?uiLocale=${encodeURIComponent(locale)}`}>{t.detail}</a></> : null}
       <button className={button} disabled={busy} onClick={() => { setCancelConfirm(false); void controller.recover(); }}>{t.recover}</button>
       {state.intentReviewRequired && <p role="alert">{t.reviewRequired}</p>}
-      {!cart?.reviewRequired && !state.intentReviewRequired && <button className={button} disabled={busy || draftBusy} onClick={() => { setCancelConfirm(false); setAgreed(false); void acknowledge(); }}>{t.acknowledged}</button>}
+      {retainedSingle && <div data-retained-single-summary className="space-y-3">
+        <p className="break-all text-xs text-slate-500">{retainedSingle.method === "points" ? retainedSingle.result.resourceId : retainedSingle.result.terms.resourceId}</p>
+        {retainedSingle.method === "on_site" ? <OnSiteCheckoutSummary result={retainedSingle.result} locale={locale}/> : <MerchantSettlementBadge locale={locale} showDetails snapshot={{ version: 1, method: "points", closed: retainedSingle.result.closed,
+          totalPoints: retainedSingle.result.totalPoints, debitedPoints: retainedSingle.result.totalPoints, returnedPoints: retainedSingle.result.cancellation?.pointsReturned ?? 0, returnPending: false,
+          ...(retainedSingle.result.couponCount ? { coupons: { redeemedCount: retainedSingle.result.couponCount, returnedCount: retainedSingle.result.cancellation?.couponsReturned ?? 0, returnPending: false } } : {}) }}/>
+        }
+        {retainedSingle.result.cancellationPolicy && <p className="text-xs leading-5 text-slate-600">{t.policy}: {"returnPoints" in retainedSingle.result.cancellationPolicy ? `${retainedSingle.result.cancellationPolicy.returnPoints ? t.returnPoints : t.keepPoints} · ` : ""}{retainedSingle.result.cancellationPolicy.returnCoupons ? t.returnCoupons : t.keepCoupons}</p>}
+      </div>}
+      {state.retainedRegistrationRequired && !state.intentReviewRequired && <div data-retained-registration className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">
+        <p>{rt.info}</p><label className="flex items-start gap-3"><input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-teal-700" checked={registrationAgreed} disabled={busy} onChange={e => setRegistrationAgreed(e.target.checked)}/><span>{rt.agreed}</span></label>
+        <button type="button" className={button} disabled={busy || !registrationAgreed} onClick={() => { setRegistrationAgreed(false); void controller.registerRetained(true); }}>{rt.action}</button>
+      </div>}
+      {!cart?.reviewRequired && !state.intentReviewRequired && !state.retainedRegistrationRequired && <button className={button} disabled={busy || draftBusy} onClick={() => { setCancelConfirm(false); setAgreed(false); void acknowledge(); }}>{t.acknowledged}</button>}
     </article> : !state.pending && allowNewCheckout && <>
       <fieldset disabled={frozen} className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-5 sm:grid-cols-2">
         {field("name")}{field("email", "email")}{field("phone", "tel")}{field("note")}

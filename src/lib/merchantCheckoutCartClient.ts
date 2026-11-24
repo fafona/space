@@ -4,13 +4,15 @@ import { cartClientOriginalKey, parseCartClientOriginal, parseCartClientReview, 
 import { checkoutIntentTransport } from "./merchantCheckoutIntentTransport";
 import { parsePendingCheckoutSnapshot, parseCheckoutIntentReview, parseCheckoutIntentAckResult, type CheckoutIntentReview } from "./merchantCheckoutPendingIntent";
 import { withCheckoutDraftLease, type CheckoutDraftLease, type CheckoutDraftReleaseCheck } from "./merchantCheckoutDraftLease";
+import { parseRetainedIntentReview, parseRetainedIntentRegistration, type RetainedIntentReview } from "./merchantCheckoutRetainedIntent";
 
 export type CartClientState = { phase: "idle" | "quoting" | "ready" | "submitting" | "recovering" | "unconfirmed" | "confirmed" | "cancelling" | "acknowledging" | "error";
-  pending: boolean; review: CartClientReview | null; original: CartClientOriginal | null; error: string; intentReviewRequired?: boolean };
+  pending: boolean; review: CartClientReview | null; original: CartClientOriginal | null; error: string; intentReviewRequired?: boolean; retainedRegistrationRequired?: boolean };
 const empty = (): CartClientState => ({ phase: "idle", pending: false, review: null, original: null, error: "" });
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const nonceValid = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(v);
 function need(v: unknown): asserts v { if (!v) throw new CheckoutClientError("checkout_invalid_response"); }
+class MissingTrackedIntent extends CheckoutClientError { constructor() { super("checkout_intent_unconfirmed"); } }
 function verifyRetainedDraft(check: CheckoutDraftReleaseCheck, lease: CheckoutDraftLease) {
   try { need(check(lease) === undefined); }
   catch { throw new CheckoutClientError("checkout_draft_unconfirmed"); }
@@ -42,7 +44,7 @@ const definiteNoWrite = new Set(["checkout_invalid_request", "checkout_invalid_c
  * items, amounts, coupon claims or confirmation hash in storage/URL. Unknown
  * writes can only be read, never resubmitted or silently discarded. */
 export function createCartCheckoutController(options: { siteId: string; accountId: string; request?: CheckoutClientRequest;
-  storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">; exclusive?: CheckoutClientExclusive; randomNonce?: () => string; intentEnabled?: boolean }) {
+  storage?: Pick<Storage, "getItem" | "setItem" | "removeItem">; exclusive?: CheckoutClientExclusive; randomNonce?: () => string; intentEnabled?: boolean; retainedIntentEnabled?: boolean }) {
   const key = checkoutClientStorageKey(options.siteId, options.accountId), request = options.request ?? (options.intentEnabled ? checkoutIntentTransport(options.accountId) : checkoutClientRequest);
   const exclusive: CheckoutClientExclusive = options.exclusive ?? (async (name, run) => {
     if (!navigator.locks) throw new CheckoutClientError("checkout_browser_unsupported");
@@ -50,10 +52,12 @@ export function createCartCheckoutController(options: { siteId: string; accountI
   });
   let state = empty(), active = false, epoch = 0, busy = false, nonce: string | null = null;
   let intent: CheckoutIntentReview | null = null, intentReady = !options.intentEnabled, createdOperation: string | null = null, preparedOperation: string | null = null;
+  let retained: RetainedIntentReview | null = null;
   let selection: CartClientSelection | null = null, person: CheckoutCustomerDraft | null = null, abort = new AbortController();
   const listeners = new Set<() => void>(), valid = (run: number) => active && epoch === run && !abort.signal.aborted;
   const publish = (patch: Partial<CartClientState>) => { state = { ...state, ...patch, pending: nonce !== null || !!options.intentEnabled && (!intentReady || intent !== null),
-    ...(options.intentEnabled ? { intentReviewRequired: intent?.reviewRequired ?? false } : {}) }; listeners.forEach(fn => fn()); };
+    ...(options.intentEnabled ? { intentReviewRequired: intent?.reviewRequired ?? retained?.reviewRequired ?? false,
+      ...(options.retainedIntentEnabled ? { retainedRegistrationRequired: retained !== null } : {}) } : {}) }; listeners.forEach(fn => fn()); };
   const storage = () => { try { return options.storage ?? window.localStorage; } catch { throw new CheckoutClientError("checkout_storage_unavailable"); } };
   const read = () => { try {
     const raw = storage().getItem(key); if (raw === null) return null; const value: unknown = JSON.parse(raw);
@@ -77,7 +81,7 @@ export function createCartCheckoutController(options: { siteId: string; accountI
     const raw = await call("/api/member-checkout/intent/review", { siteId: options.siteId, operationKey }, run); if (!valid(run)) return null;
     need(object(raw) && raw.ok === true && Object.hasOwn(raw, "review"));
     const reviewed = parseCheckoutIntentReview({ version: 1, siteId: options.siteId, review: raw.review }, { siteId: options.siteId, operationKey });
-    if (!reviewed) throw new CheckoutClientError("checkout_intent_unconfirmed"); intent = reviewed; intentReady = true; return reviewed;
+    if (!reviewed) throw new MissingTrackedIntent(); retained = null; intent = reviewed; intentReady = true; return reviewed;
   };
   const pendingIntent = async (run: number, preservePhase = false) => {
     const raw = await call("/api/member-checkout/intent/pending", { siteId: options.siteId }, run); if (!valid(run)) return;
@@ -86,6 +90,7 @@ export function createCartCheckoutController(options: { siteId: string; accountI
     publish(pending ? { phase: "confirmed", review: null, original: pending.original, error: "" } : preservePhase ? {} : empty());
   };
   const recover = async (run: number) => {
+    retained = null;
     const stored = read(); if (nonce && stored !== nonce) throw new CheckoutClientError(stored ? "checkout_other_tab" : "checkout_storage_unavailable");
     nonce = stored; selection = null; person = null;
     if (!nonce && !options.intentEnabled) { publish(empty()); return; } const ref = nonce;
@@ -100,18 +105,30 @@ export function createCartCheckoutController(options: { siteId: string; accountI
     need(object(raw) && raw.ok === true && ["confirmed", "unconfirmed"].includes(String(raw.state)));
     if (raw.state === "unconfirmed") publish({ phase: "unconfirmed", error: "checkout_unconfirmed" });
     else { const original = parseCartClientOriginal(raw.original, options.siteId);
-      const reviewed = options.intentEnabled ? await reviewIntent(cartClientOriginalKey(original), run) : null;
+      let reviewed: CheckoutIntentReview | null = null;
+      try { reviewed = options.intentEnabled ? await reviewIntent(cartClientOriginalKey(original), run) : null; }
+      catch (error) {
+        // Only an exact, successful review:null may use the separately gated
+        // proposal. Transport failures never become an invitation to register.
+        if (!options.intentEnabled || !options.retainedIntentEnabled || !(error instanceof MissingTrackedIntent)) throw error;
+        const raw = await call("/api/member-checkout/intent/retained-review", { siteId: options.siteId, nonce: ref }, run);
+        if (!valid(run)) return; if (read() !== ref) throw new CheckoutClientError("checkout_other_tab");
+        need(object(raw) && raw.ok === true && raw.readOnly === true && object(raw.proposal));
+        const proposal = parseRetainedIntentReview({ version: 1, siteId: options.siteId, operationKey: cartClientOriginalKey(original), proposal: raw.proposal }, { siteId: options.siteId, operationKey: cartClientOriginalKey(original) });
+        need(proposal && originalFinancialKey(proposal.original) === originalFinancialKey(original));
+        retained = proposal; intent = null; intentReady = false;
+      }
       if (!valid(run)) return; if (read() !== ref) throw new CheckoutClientError("checkout_other_tab");
       if (reviewed) need(originalFinancialKey(reviewed.original) === originalFinancialKey(original));
-      publish({ phase: "confirmed", original: reviewed?.original ?? original, error: "" }); }
+      publish({ phase: "confirmed", original: reviewed?.original ?? retained?.original ?? original, error: "" }); }
   };
   const failed = (error: unknown) => { const editable = !nonce && !intent && intentReady && error instanceof CheckoutClientError && definiteNoWrite.has(error.code);
-    if (options.intentEnabled && !editable) intentReady = false;
+    retained = null; if (options.intentEnabled && !editable) intentReady = false;
     publish({ phase: nonce || options.intentEnabled && !editable ? "unconfirmed" : "error", review: null, original: null,
       error: error instanceof CheckoutClientError ? error.code : nonce || options.intentEnabled ? "checkout_unconfirmed" : "checkout_unavailable" }); };
   const controller = { storageKey: key, getSnapshot: () => state, subscribe(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn); }; },
-    async activate() { abort.abort(); active = true; epoch++; busy = false; nonce = null; intent = null; intentReady = !options.intentEnabled; createdOperation = null; preparedOperation = null; selection = null; person = null; abort = new AbortController(); state = empty(); return controller.recover(); },
-    deactivate() { active = false; epoch++; busy = false; abort.abort(); nonce = null; intent = null; intentReady = !options.intentEnabled; createdOperation = null; preparedOperation = null; selection = null; person = null; state = empty(); },
+    async activate() { abort.abort(); active = true; epoch++; busy = false; nonce = null; intent = null; retained = null; intentReady = !options.intentEnabled; createdOperation = null; preparedOperation = null; selection = null; person = null; abort = new AbortController(); state = empty(); return controller.recover(); },
+    deactivate() { active = false; epoch++; busy = false; abort.abort(); nonce = null; intent = null; retained = null; intentReady = !options.intentEnabled; createdOperation = null; preparedOperation = null; selection = null; person = null; state = empty(); },
     edit() { if (!active || busy || nonce || options.intentEnabled && (!intentReady || intent)) return; selection = null; person = null; publish(empty()); },
     async recover() { if (!active || busy) return; busy = true; const run = epoch;
       try { await recover(run); } catch (error) { if (valid(run)) failed(error); } finally { if (valid(run)) busy = false; } },
@@ -165,7 +182,7 @@ export function createCartCheckoutController(options: { siteId: string; accountI
     },
     async cancel() {
       const original = state.original;
-      if (!active || busy || !nonce && !intent || state.phase !== "confirmed" || original?.kind !== "cart" || !original.result.cancellationAvailable || !original.result.resource) return;
+      if (!active || busy || retained || !nonce && !intent || state.phase !== "confirmed" || original?.kind !== "cart" || !original.result.cancellationAvailable || !original.result.resource) return;
       const ref = nonce, previous = original.result, run = epoch; busy = true; publish({ phase: "cancelling", original: null, review: null, error: "" });
       try { const locked = await exclusive(key, async () => {
         if (!valid(run)) return; if (read() !== ref) throw new CheckoutClientError("checkout_other_tab");
@@ -182,8 +199,28 @@ export function createCartCheckoutController(options: { siteId: string; accountI
       }); if (valid(run) && !locked) throw new CheckoutClientError("checkout_other_tab");
       } catch (error) { if (valid(run)) failed(error); } finally { if (valid(run)) busy = false; }
     },
+    async registerRetained(confirmed: boolean) {
+      if (confirmed !== true || !active || busy || !nonce || !options.intentEnabled || !options.retainedIntentEnabled || !retained || retained.reviewRequired || state.phase !== "confirmed") return;
+      const ref = nonce, displayed = structuredClone(retained), run = epoch; busy = true;
+      try { const locked = await exclusive(key, async () => {
+        if (!valid(run)) return; await recover(run);
+        if (!valid(run) || read() !== ref || nonce !== ref || !retained || retained.reviewRequired || retained.reviewHash !== displayed.reviewHash
+          || retained.operationKey !== displayed.operationKey || originalFinancialKey(retained.original) !== originalFinancialKey(displayed.original)) throw new CheckoutClientError("checkout_intent_changed");
+        publish({ phase: "acknowledging", original: null, error: "" });
+        const raw = await call("/api/member-checkout/intent/register-retained", { siteId: options.siteId, nonce: ref, reviewHash: displayed.reviewHash }, run);
+        if (!valid(run)) return; if (read() !== ref) throw new CheckoutClientError("checkout_other_tab");
+        need(object(raw) && raw.ok === true && object(raw.registration));
+        const registration = parseRetainedIntentRegistration({ version: 1, siteId: options.siteId, ...raw.registration }, { siteId: options.siteId, operationKey: displayed.operationKey, reviewHash: displayed.reviewHash });
+        need(originalFinancialKey(registration.review.original) === originalFinancialKey(displayed.original));
+        retained = null; intent = registration.review; intentReady = true;
+        publish({ phase: "confirmed", original: intent.original, error: "" });
+        // No acknowledgement, draft consumption or nonce removal here. The
+        // original host's existing explicit startAnother remains mandatory.
+      }); if (valid(run) && !locked) throw new CheckoutClientError("checkout_other_tab");
+      } catch (error) { if (valid(run)) failed(error); } finally { if (valid(run)) busy = false; }
+    },
     async startAnother(beforeRelease?: (original: CartClientOriginal, context: { createdHere: boolean; lease: CheckoutDraftLease }) => void | Promise<void>, verifyDraft?: CheckoutDraftReleaseCheck) {
-      if (!active || busy || !nonce && !intent || state.phase !== "confirmed" || !state.original || intent?.reviewRequired || state.original.kind === "cart" && state.original.result.reviewRequired) return;
+      if (!active || busy || retained || !nonce && !intent || state.phase !== "confirmed" || !state.original || intent?.reviewRequired || state.original.kind === "cart" && state.original.result.reviewRequired) return;
       const ref = nonce, op = cartClientOriginalKey(state.original), displayedHash = intent?.reviewHash, run = epoch; busy = true;
       try { const locked = await exclusive(key, () => withCheckoutDraftLease(key, async lease => {
         if (!valid(run)) return; await recover(run);
