@@ -103,7 +103,9 @@ export async function unusedReferenceCases(t, { db, peer, one, site, seed, state
   });
   await t.test('closure expiring during insertion rolls back the marker rather than returning false proof', async () => {
     const f = await prepare(), review = (await decode(await invoke(f, false))).review;
-    await db.query("create sequence public.synthetic_unused_close_ticks;create function public.synthetic_slow_unused_close() returns trigger language plpgsql as $$begin perform nextval('public.synthetic_unused_close_ticks');perform pg_sleep(0.08);return NEW;end;$$; create trigger synthetic_slow_unused_close before insert on faolla_checkout_design.closed_unused_references for each row execute function public.synthetic_slow_unused_close();");
+    // Test-only instrumentation owns its sequence; the runtime capability must
+    // not gain fixture permissions just to observe an expiry inside SQL.
+    await db.query("create sequence public.synthetic_unused_close_ticks;create function public.synthetic_slow_unused_close() returns trigger language plpgsql security definer set search_path=pg_catalog,pg_temp as $$begin perform nextval('public.synthetic_unused_close_ticks');perform pg_sleep(0.08);return NEW;end;$$; create trigger synthetic_slow_unused_close before insert on faolla_checkout_design.closed_unused_references for each row execute function public.synthetic_slow_unused_close();");
     try {
       const before = await state(), r = await raw(closeRpc, { ...closeArgs(f, review.reviewHash), p_not_after: new Date(Date.now() + 40).toISOString() });
       assert.equal(r.error.message, 'checkout_unused_expired'); assert.equal((await one(db, 'select is_called from public.synthetic_unused_close_ticks')).is_called, true); assert.deepEqual(await state(), before);

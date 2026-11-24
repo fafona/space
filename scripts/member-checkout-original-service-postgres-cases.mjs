@@ -82,7 +82,8 @@ export async function originalServiceCases(t, { db, peer, one, site, seed, state
   });
   await t.test('cancellation expiring inside the old atomic writer rolls back all domain effects and the return receipt', async () => {
     const f = await prepare('points'); await enable(site); const review = (await decode(await invoke(f, false))).review;
-    await db.query("create sequence public.synthetic_service_ticks;create function public.synthetic_slow_service() returns trigger language plpgsql as $$begin perform nextval('public.synthetic_service_ticks');perform pg_sleep(0.12);return NEW;end;$$;create trigger synthetic_slow_service before insert on faolla_checkout_design.bundle_cancellations for each row execute function public.synthetic_slow_service();");
+    // Only the synthetic observer needs sequence access, not the runtime role.
+    await db.query("create sequence public.synthetic_service_ticks;create function public.synthetic_slow_service() returns trigger language plpgsql security definer set search_path=pg_catalog,pg_temp as $$begin perform nextval('public.synthetic_service_ticks');perform pg_sleep(0.12);return NEW;end;$$;create trigger synthetic_slow_service before insert on faolla_checkout_design.bundle_cancellations for each row execute function public.synthetic_slow_service();");
     try { const before = await state(), r = await rpc('faolla_member_checkout_original_service_cancel_v1', { ...serviceArgs(f, review), p_not_after: new Date(Date.now() + 80).toISOString() });
       assert.equal(r.error.message, 'checkout_service_expired'); assert.equal((await one(db, 'select is_called from public.synthetic_service_ticks')).is_called, true); assert.deepEqual(await state(), before);
     } finally { await db.query('drop trigger synthetic_slow_service on faolla_checkout_design.bundle_cancellations;drop function public.synthetic_slow_service();drop sequence public.synthetic_service_ticks'); }

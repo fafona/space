@@ -29,6 +29,7 @@ import cartHttp from '../src/lib/merchantCheckoutCartHttp.server.ts';
 import intentHttp from '../src/lib/merchantCheckoutIntentHttp.server.ts';
 import resultHttp from '../src/app/api/member-checkout/result/route-handler.ts';
 import { checkoutCompatibilityCases } from './member-checkout-compatibility-postgres-cases.mjs';
+import { installOwnedRuntimePrototype } from './member-checkout-runtime-postgres-cases.mjs';
 import resultService from '../src/lib/merchantMemberCheckoutResult.server.ts';
 import cashHttp from '../src/lib/merchantCheckoutOnSiteHttp.server.ts';
 import { unusedReferenceCases } from './member-checkout-unused-reference-postgres-cases.mjs';
@@ -94,6 +95,7 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
     await db.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_cart_personal_boundary.sql'), 'utf8'));
     assert.deepEqual(await oldDefinitions(), baseline);
     await checkoutCompatibilityCases(t, { db });
+    const runtimeCall = await installOwnedRuntimePrototype(t, { db });
     for (const table of ['bundle_pilots', 'intent_pilots']) {
       assert.equal((await one(db, `select count(*)::int n from faolla_checkout_design.${table} where enabled`)).n, 0);
       await db.query(`insert into faolla_checkout_design.${table}(site_id,enabled) values($1,true)`, [site]);
@@ -140,8 +142,8 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
       const offer = { version: 1, id: randomUUID(), revision: randomUUID(), siteId: site, enabled: true, title: 'Synthetic booking', maxQuantity: 1,
         source: { kind: 'booking', blockId, serviceId: randomUUID(), timeZone: 'Europe/Madrid' }, cash: { currency: 'eur', unitAmountMinor: 1000, initialPolicy: { mode: 'full' } }, unitPoints: 100, allowOnSite: true, couponReturnOnCancel: returns,
         checkoutBinding: { sourceKey: source.key, sourceVersion: source.sourceVersion, viewport: source.viewport, store: source.store, item: source.item, stockItemId: 'booking-stock', voucherCouponIds: [], durationMinutes: 60, pointsReturnOnCancel: returns, cancellationAdvanceMinutes: 60 } };
-      const current = (await one(db, 'select public.faolla_member_checkout_catalog_snapshot_v1($1) result', [site])).result;
-      await db.query('select public.faolla_member_checkout_catalog_save_v1($1,$2,$3,$4,$5)', [site, current.version, randomUUID(), 'owner:synthetic-owner', offer]);
+      const current = await runtimeCall('faolla_member_checkout_catalog_snapshot_v1', { p_site_id:site });
+      await runtimeCall('faolla_member_checkout_catalog_save_v1', { p_site_id:site,p_expected_version:current.version,p_next_version:randomUUID(),p_actor_key:'owner:synthetic-owner',p_offer:offer });
       return { method, returns, principal, member, offer, coupon, appointmentAt,
         selection: { siteId: site, offerId: offer.id, offerRevision: offer.revision, quantity: 1, appointmentAt, couponClaims: [{ couponId: coupon.id, claimEventId: coupon.claimEvents[0].id }] },
         customer: { name: 'Synthetic', title: 'Mx', email: 'synthetic@example.invalid', phone: '000000000', note: 'Preserved booking note' } };
@@ -169,7 +171,7 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
     const rpc = async (name, args, signal) => {
       assert.ok(keys[name], `unexpected private RPC ${name}`); if (signal) assert.equal(signal.aborted, false);
       calls.push(name);
-      try { return { data: (await one(db, `select public.${name}(${keys[name].map((_, i) => '$' + (i + 1)).join(',')}) result`, keys[name].map(k => args[k]))).result, error: null }; }
+      try { return { data: await runtimeCall(name,args), error: null }; }
       catch (error) { return { data: null, error: { message: error.message } }; }
     };
     const requestFor = (f, route, body, signal) => new Request(origin + route, { method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-checkout-account-scope': f.principal.accountId }, body: JSON.stringify(body), signal });
