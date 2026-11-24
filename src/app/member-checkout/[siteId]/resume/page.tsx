@@ -5,6 +5,7 @@ import { isMemberCheckoutHistoryReadEnabled } from "@/lib/merchantCheckoutHistor
 import { isCanonicalPortalRequest, resolveCanonicalPortalOrigin } from "@/lib/canonicalPortalRequest";
 import { buildCheckoutResumeHref } from "@/lib/merchantCheckoutResumeClient";
 import CheckoutResumeClient from "./CheckoutResumeClient";
+import { isMemberCheckoutOriginalServiceEnabled } from "@/lib/merchantCheckoutOriginalService.server";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const metadata = { robots: { index: false, follow: false }, referrer: "no-referrer" as const };
@@ -19,5 +20,5 @@ export default async function CheckoutResumePage({ params, searchParams }: {
   // not cross-origin credentials, an iframe exception or query-borne tokens.
   const request = new Request("https://invalid.invalid", { headers: await headers() });
   if (!isCanonicalPortalRequest(request)) redirect(new URL(buildCheckoutResumeHref(siteId, query.uiLocale as string | undefined), resolveCanonicalPortalOrigin()).toString());
-  return <CheckoutResumeClient siteId={siteId} {...(readOnly ? { readOnly: true } : {})}/>;
+  return <CheckoutResumeClient siteId={siteId} {...(readOnly ? { readOnly: true } : {})} {...(isMemberCheckoutOriginalServiceEnabled(siteId) ? { originalServiceEnabled: true } : {})}/>;
 }

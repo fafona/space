@@ -6,6 +6,7 @@ import { merchantSettlementLanguage } from "@/lib/merchantSettlement";
 import { CartCheckoutSummary } from "./CartCheckoutSummary";
 import { OnSiteCheckoutSummary } from "./OnSiteCheckoutSummary";
 import { MerchantSettlementBadge } from "./MerchantSettlementBadge";
+import { OriginalServiceLink } from "./OriginalServiceLink";
 const copy = {
   zh: { title: "找不到原编号？查阅本人历史原单", note: "仅查阅尚未登记到恢复流程的本人原单，每页最多 10 笔，按固定编号排序，不代表交易先后。这里不登记、不确认下一单、不重复扣减，也不清空原表单或购物车。", read: "查阅／重读首页", next: "下一页", working: "正在查阅本人原单…", empty: "本页没有可查阅的未登记原单；这不代表其他未知提交已失败，请保留原页和编号。", failed: "暂时无法查阅，请重新读取，不能据此重复提交。", changed: "账号已变化，请重新打开原单页。", manual: "原单需要人工核对，不代表已付款或可再次扣减。", detail: "只读查看详情与取消规则", single: "单项目原单" },
   en: { title: "Lost the reference? View your historical originals", note: "Read your originals not yet registered for recovery. Up to 10 per page in fixed reference order, not transaction order. No registration, next-order acknowledgement, debit or form/cart clearing is made here.", read: "Read / reload first page", next: "Next page", working: "Reading your originals…", empty: "No unregistered originals on this page. This does not prove another unknown submission failed. Keep its page and reference.", failed: "Could not read originals. Read again; do not resubmit.", changed: "Your account changed. Reopen the original page.", manual: "Needs manual review. Do not infer payment or debit again.", detail: "Read-only details & cancellation policy", single: "Single-item original" },
@@ -17,8 +18,8 @@ const policies = {
   en: { title: "Original cancellation policy", returnPoints: "Return original points debited", keepPoints: "No points return", returnCoupons: "Return original coupons; no expiry extension", keepCoupons: "No coupon return" },
   es: { title: "Política original de cancelación", returnPoints: "Devolver puntos descontados", keepPoints: "No devolver puntos", returnCoupons: "Devolver cupones sin ampliar validez", keepCoupons: "No devolver cupones" },
 };
-export function MemberCheckoutHistoryInventory({ siteId, accountId, locale = "zh-CN", controllerFactory = createCheckoutHistoryInventoryController }: {
-  siteId: string; accountId: string; locale?: string; controllerFactory?: typeof createCheckoutHistoryInventoryController;
+export function MemberCheckoutHistoryInventory({ siteId, accountId, locale = "zh-CN", originalServiceEnabled = false, controllerFactory = createCheckoutHistoryInventoryController }: {
+  siteId: string; accountId: string; locale?: string; originalServiceEnabled?: boolean; controllerFactory?: typeof createCheckoutHistoryInventoryController;
 }) {
   const controller = useMemo(() => controllerFactory({ siteId, accountId }), [siteId, accountId, controllerFactory]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot), [blocked, setBlocked] = useState(false);
@@ -53,6 +54,7 @@ export function MemberCheckoutHistoryInventory({ siteId, accountId, locale = "zh
           {!item.reviewRequired && policy && <details className="text-sm leading-6"><summary>{p.title}</summary><ul className="mt-2 list-inside list-disc">
             {"returnPoints" in policy && <li>{policy.returnPoints ? p.returnPoints : p.keepPoints}</li>}<li>{policy.returnCoupons ? p.returnCoupons : p.keepCoupons}</li>
           </ul></details>}
+          <OriginalServiceLink enabled={originalServiceEnabled} siteId={siteId} operationKey={item.operationKey} locale={locale}/>
         </article>;
       })}
     </>}

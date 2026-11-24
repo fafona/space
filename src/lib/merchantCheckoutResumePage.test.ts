@@ -9,19 +9,23 @@ import { isMemberCheckoutIntentPilotEnabled } from "./merchantCheckoutCartPilot.
 import { isCanonicalPortalRequest } from "./canonicalPortalRequest";
 import { buildCheckoutResumeHref } from "./merchantCheckoutResumeClient";
 import { isMemberCheckoutHistoryReadEnabled } from "./merchantCheckoutHistoryPilot.server";
+import { isMemberCheckoutOriginalServiceEnabled } from "./merchantCheckoutOriginalService.server";
+import { originalServiceHref } from "./merchantCheckoutOriginalService";
 const siteId = "10909994", notFound = new Error("synthetic-not-found"), requireRepo = createRequire(path.resolve("package.json"));
-async function fixture() {
-  const file = path.resolve("src/app/member-checkout/[siteId]/resume/page.tsx"), env: Record<string, string> = Object.fromEntries(["MERCHANT_MEMBER_CHECKOUT_PILOT_SITES", "MERCHANT_MEMBER_CHECKOUT_CART_PILOT_SITES", "MERCHANT_MEMBER_CHECKOUT_CART_UI_PILOT_SITES", "MERCHANT_MEMBER_CHECKOUT_INTENT_PILOT_SITES"].map(k => [k, siteId]));
+async function fixture(kind: "resume" | "service" = "resume") {
+  const file = path.resolve(kind === "service" ? "src/app/member-checkout/[siteId]/service/[operationKey]/page.tsx" : "src/app/member-checkout/[siteId]/resume/page.tsx"), env: Record<string, string> = Object.fromEntries(["MERCHANT_MEMBER_CHECKOUT_PILOT_SITES", "MERCHANT_MEMBER_CHECKOUT_CART_PILOT_SITES", "MERCHANT_MEMBER_CHECKOUT_CART_UI_PILOT_SITES", "MERCHANT_MEMBER_CHECKOUT_INTENT_PILOT_SITES"].map(k => [k, siteId]));
   let canonical = true; const redirects: string[] = [], sandboxModule = { exports: {} as { default: (props: unknown) => Promise<{ props: unknown }>; metadata: { robots: unknown; referrer: string }; dynamic: string; revalidate: number } };
   const mocks: Record<string, unknown> = { "next/navigation": { notFound: () => { throw notFound; }, redirect: (url: string) => { redirects.push(url); throw new Error("synthetic-redirect"); } },
     "next/headers": { headers: async () => new Headers({ host: canonical ? "www.faolla.com" : "merchant.faolla.com" }) },
     "@/lib/merchantCheckoutCartPilot.server": { isMemberCheckoutIntentPilotEnabled: (site: string) => isMemberCheckoutIntentPilotEnabled(site, env) },
     "@/lib/merchantCheckoutHistoryPilot.server": { isMemberCheckoutHistoryReadEnabled: (site: string) => isMemberCheckoutHistoryReadEnabled(site, env) },
+    "@/lib/merchantCheckoutOriginalService.server": { isMemberCheckoutOriginalServiceEnabled: (site: string) => isMemberCheckoutOriginalServiceEnabled(site, env) },
+    "@/lib/merchantCheckoutOriginalService": { originalServiceHref },
     "@/lib/canonicalPortalRequest": { isCanonicalPortalRequest: (request: Request) => isCanonicalPortalRequest(request), resolveCanonicalPortalOrigin: () => "https://www.faolla.com" },
-    "@/lib/merchantCheckoutResumeClient": { buildCheckoutResumeHref }, "./CheckoutResumeClient": () => null };
+    "@/lib/merchantCheckoutResumeClient": { buildCheckoutResumeHref }, "./CheckoutResumeClient": () => null, "../../resume/CheckoutResumeClient": () => null };
   const compiled = ts.transpileModule(await readFile(file, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
   runInNewContext(compiled, { module: sandboxModule, exports: sandboxModule.exports, require: (name: string) => Object.hasOwn(mocks, name) ? mocks[name] : requireRepo(name), Request, URL }, { filename: file });
-  return { env, page: sandboxModule.exports, redirects, merchant: () => { canonical = false; }, run: (query: unknown = { uiLocale: "es-ES" }, id = siteId) => sandboxModule.exports.default({ params: Promise.resolve({ siteId: id }), searchParams: Promise.resolve(query) }) };
+  return { env, page: sandboxModule.exports, redirects, merchant: () => { canonical = false; }, run: (query: unknown = { uiLocale: "es-ES" }, id = siteId, operationKey = "a".repeat(64)) => sandboxModule.exports.default({ params: Promise.resolve({ siteId: id, operationKey }), searchParams: Promise.resolve(query) }) };
 }
 test("actual resume page requires the existing full gate and accepts only a site/optional language, never browser authority", async () => {
   const x = await fixture(); assert.deepEqual(JSON.parse(JSON.stringify((await x.run()).props)), { siteId }); assert.equal(x.page.dynamic, "force-dynamic"); assert.equal(x.page.revalidate, 0); assert.equal(x.page.metadata.referrer, "no-referrer");
@@ -45,4 +49,29 @@ test("independent history scope keeps the actual resume page read-only after eve
   assert.equal(x.redirects[0], `https://www.faolla.com/member-checkout/${siteId}/resume?uiLocale=es-ES`);
   x.env.MERCHANT_MEMBER_CHECKOUT_HISTORY_READ_SITES = "";
   await assert.rejects(x.run(), e => e === notFound);
+});
+
+test("original service is opt-in navigation on history, never a grant to the old purchase or acknowledgement path", async () => {
+  const x = await fixture(); for (const key of Object.keys(x.env)) x.env[key] = "";
+  x.env.MERCHANT_MEMBER_CHECKOUT_HISTORY_READ_SITES = siteId;
+  x.env.MERCHANT_MEMBER_CHECKOUT_ORIGINAL_SERVICE_SITES = siteId;
+  assert.deepEqual(JSON.parse(JSON.stringify((await x.run()).props)), { siteId, readOnly: true, originalServiceEnabled: true });
+  assert.equal(isMemberCheckoutIntentPilotEnabled(siteId, x.env), false);
+  x.env.MERCHANT_MEMBER_CHECKOUT_HISTORY_READ_SITES = "";
+  await assert.rejects(x.run(), e => e === notFound);
+});
+
+test("actual original-service page has its own closed gate, exact operation and canonical personal-login origin", async () => {
+  const x = await fixture("service"); await assert.rejects(x.run(), e => e === notFound);
+  for (const key of Object.keys(x.env)) x.env[key] = "";
+  x.env.MERCHANT_MEMBER_CHECKOUT_HISTORY_READ_SITES = siteId;
+  x.env.MERCHANT_MEMBER_CHECKOUT_ORIGINAL_SERVICE_SITES = siteId;
+  assert.deepEqual(JSON.parse(JSON.stringify((await x.run()).props)), { siteId, serviceOperationKey: "a".repeat(64) });
+  assert.equal(x.page.dynamic, "force-dynamic"); assert.equal(x.page.revalidate, 0); assert.equal(x.page.metadata.referrer, "no-referrer");
+  for (const query of [{ accountId: "50010105" }, { reviewHash: "a".repeat(64) }, { returnTo: "https://foreign.invalid" }, { uiLocale: ["es-ES"] }, { uiLocale: "es_ES" }]) await assert.rejects(x.run(query), e => e === notFound);
+  await assert.rejects(x.run({}, siteId, "bad"), e => e === notFound);
+  x.merchant(); await assert.rejects(x.run(), /synthetic-redirect/);
+  assert.equal(x.redirects[0], `https://www.faolla.com/member-checkout/${siteId}/service/${"a".repeat(64)}?uiLocale=es-ES`);
+  x.env.MERCHANT_MEMBER_CHECKOUT_ORIGINAL_SERVICE_SITES = "";
+  await assert.rejects(x.run(), e => e === notFound); assert.equal(x.redirects.length, 1);
 });

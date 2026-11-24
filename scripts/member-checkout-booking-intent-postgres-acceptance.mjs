@@ -32,6 +32,7 @@ import resultService from '../src/lib/merchantMemberCheckoutResult.server.ts';
 import cashHttp from '../src/lib/merchantCheckoutOnSiteHttp.server.ts';
 import { unusedReferenceCases } from './member-checkout-unused-reference-postgres-cases.mjs';
 import { boundCheckoutCases } from './member-checkout-bound-postgres-cases.mjs';
+import { originalServiceCases } from './member-checkout-original-service-postgres-cases.mjs';
 
 test('owned booking intent lifecycle preserves coupons, points, slots and exact originals', { timeout: 120000 }, async t => {
   const runtime = path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR || '.missing-test-runtime');
@@ -83,6 +84,7 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
       '20261124_member_checkout_legacy_order_rewards', '20261123_member_checkout_legacy_order_intent', '20261123_member_checkout_legacy_booking_intent', '20261123_member_checkout_closed_gate_creation'])
       await db.query(await readFile(path.resolve(`database/proposals/${name}.sql`), 'utf8'));
     await db.query(await readFile(path.resolve('database/proposals/20261124_member_checkout_unused_reference.sql'), 'utf8'));
+    await db.query(await readFile(path.resolve('database/proposals/20261124_member_checkout_original_service.sql'), 'utf8'));
     assert.deepEqual(await oldDefinitions(), baseline);
     for (const table of ['bundle_pilots', 'intent_pilots']) {
       assert.equal((await one(db, `select count(*)::int n from faolla_checkout_design.${table} where enabled`)).n, 0);
@@ -152,6 +154,8 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
       faolla_member_checkout_on_site_cancel_v1: ['p_site_id', 'p_operation_key', 'p_principal_key', 'p_expected_updated_at'],
       faolla_member_checkout_unused_reference_review_v1: ['p_site_id', 'p_operation_key', 'p_principal_key'],
       faolla_member_checkout_close_unused_reference_v1: ['p_site_id', 'p_operation_key', 'p_principal_key', 'p_review_hash', 'p_not_after'],
+      faolla_member_checkout_original_service_review_v1: ['p_site_id', 'p_operation_key', 'p_principal_key'],
+      faolla_member_checkout_original_service_cancel_v1: ['p_site_id', 'p_operation_key', 'p_principal_key', 'p_review_hash', 'p_expected_updated_at', 'p_not_after'],
     };
     const calls = [];
     const rpc = async (name, args, signal) => {
@@ -256,6 +260,7 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
     }
     await unusedReferenceCases(t, { db, peer, one, site, seed, state, rpc, requestFor, sessionFor, decode });
     await boundCheckoutCases(t, { db, one, site, seed, state, rpc, requestFor, sessionFor });
+    await originalServiceCases(t, { db, peer, one, site, seed, state, rpc, requestFor, sessionFor, decode });
     await t.test('all original writers and public-role execution boundaries remain unchanged', async () => {
       assert.deepEqual(await oldDefinitions(), baseline);
       for (const role of ['anon', 'authenticated', 'service_role']) for (const signature of ['faolla_member_checkout_submission_commit_v2(text,text,text,text,jsonb,jsonb,text)', 'faolla_member_checkout_acknowledge_intent_v1(text,text,text,bigint,text,text)'])

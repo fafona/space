@@ -7,6 +7,7 @@ import { SERVICE_IDENTITY_CHANGED } from "@/components/service-center/serviceCen
 import { CartCheckoutSummary } from "./CartCheckoutSummary";
 import { OnSiteCheckoutSummary } from "./OnSiteCheckoutSummary";
 import { MerchantSettlementBadge } from "./MerchantSettlementBadge";
+import { OriginalServiceLink } from "./OriginalServiceLink";
 const copy = {
   zh: { title: "本设备保留的原单", note: "只核对本账号在此设备保留的原编号，不是下方最新待核对原单的替代。不清号、不清车、不重新提交。", read: "核对本设备原编号", reading: "正在核对原编号…", unknown: "原结果尚未确认，原编号已保留。不要重复提交或扣减，可稍后再次核对。", failed: "暂时无法核对或原编号已变化。不会据此判定未付款；请保留原结算页与购物车。", changed: "账号或本设备原编号已变化，请重新打开本页。", review: "已找到原单，但原记录需人工核对。不要重复提交或扣减。", policy: "原取消规则", returnPoints: "按原单退实际扣除积分", keepPoints: "原单不退积分", returnCoupons: "按原单退券，不顺延有效期", keepCoupons: "原单不退券" },
   en: { title: "Original kept on this device", note: "Check only this account’s retained reference. It does not replace the latest pending original below. No reference/cart is cleared and nothing is resubmitted.", read: "Check this device’s reference", reading: "Checking the retained reference…", unknown: "The outcome is unconfirmed; the reference is kept. Do not submit or debit again. Check again later.", failed: "The reference could not be checked or has changed. This does not mean unpaid. Keep the original page and cart.", changed: "Account or device reference changed. Reopen this page.", review: "Original found, but the record needs manual review. Do not submit or debit again.", policy: "Original cancellation policy", returnPoints: "Return actual original points", keepPoints: "No original points return", returnCoupons: "Return original coupons without extending expiry", keepCoupons: "No original coupon return" },
@@ -14,8 +15,8 @@ const copy = {
 };
 
 /** Mounted only by the independently history-gated page after account checks. */
-export function MemberCheckoutLocalRecovery({ siteId, accountId, locale = "zh-CN", controllerFactory = createCheckoutHistoryRecoveryController }: {
-  siteId: string; accountId: string; locale?: string; controllerFactory?: typeof createCheckoutHistoryRecoveryController;
+export function MemberCheckoutLocalRecovery({ siteId, accountId, locale = "zh-CN", originalServiceEnabled = false, controllerFactory = createCheckoutHistoryRecoveryController }: {
+  siteId: string; accountId: string; locale?: string; originalServiceEnabled?: boolean; controllerFactory?: typeof createCheckoutHistoryRecoveryController;
 }) {
   const controller = useMemo(() => controllerFactory({ siteId, accountId }), [siteId, accountId, controllerFactory]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot), [blocked, setBlocked] = useState(false), t = copy[merchantSettlementLanguage(locale)];
@@ -41,6 +42,7 @@ export function MemberCheckoutLocalRecovery({ siteId, accountId, locale = "zh-CN
             returnedPoints: points.cancellation?.pointsReturned ?? 0, returnPending: false, ...(points.couponCount ? { coupons: { redeemedCount: points.couponCount, returnedCount: points.cancellation?.couponsReturned ?? 0, returnPending: false } } : {}) }}/></div> : null}
       {original && !recovery?.reviewRequired && policy && <details className="text-slate-600"><summary>{t.policy}</summary><ul className="mt-2 list-inside list-disc space-y-1">
         {"returnPoints" in policy && <li>{policy.returnPoints ? t.returnPoints : t.keepPoints}</li>}<li>{policy.returnCoupons ? t.returnCoupons : t.keepCoupons}</li></ul></details>}
+      {original && recovery && <OriginalServiceLink enabled={originalServiceEnabled} siteId={siteId} operationKey={recovery.operationKey} locale={locale}/>}
     </>}
   </section>;
 }
