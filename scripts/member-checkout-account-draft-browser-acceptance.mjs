@@ -29,7 +29,8 @@ test('owned actual cart isolates identity and serializes every draft writer with
  en:{begin:'Review member points & coupons',retry:'Recheck',review:'Review cart & coupons',confirm:'Confirm cart checkout',agreed:'I reviewed every item, points or amount, and each cancellation policy',done:'Original cart checkout',ack:'Reviewed — start another',kept:'Original checked. Contacts and unsubmitted products remain in the cart.'},
  es:{begin:'Revisar puntos y cupones',retry:'Verificar',review:'Revisar carrito y cupones',confirm:'Confirmar pedido completo',agreed:'He revisado todos los artículos, puntos o importe y las reglas de cancelación',done:'Pedido original del carrito',ack:'Revisado — empezar otro',kept:'Original verificado. Se conservan los contactos y productos no enviados.'}};
  const browser=await chromium.launch({headless:true});
- try{for(const width of [390,1280])for(const locale of ['zh','en','es'])for(const mode of locale==='zh'?['fresh','accounts','crossTab','storage','legacyOriginal','wrongOwner','ackLost','staleDraft','retainedNonce','ackDraftChanged','ackDraftLost','ackDraftUnreadable','ackLostDraftChanged','ackLostSamePage']:['fresh','ackDraftChanged'])await t.test(`${width} ${locale} ${mode}`,async()=>{
+ const reopenedModes=['ackMissingOnOpen','ackMissingOnNewDevice','ackCorruptOnOpen','ackWrongOwnerOnOpen'];
+ try{for(const width of [390,1280])for(const locale of ['zh','en','es'])for(const mode of [...(locale==='zh'?['fresh','accounts','crossTab','storage','legacyOriginal','wrongOwner','ackLost','staleDraft','retainedNonce','ackDraftChanged','ackDraftLost','ackDraftUnreadable','ackLostDraftChanged','ackLostSamePage']:['fresh','ackDraftChanged']),...reopenedModes])await t.test(`${width} ${locale} ${mode}`,async()=>{
   const method=width===1280&&mode.startsWith('ack')&&mode!=='ackLost'?'on_site':'points';
   const x=await cartReviewFixture(method),text=copy[locale],context=await browser.newContext({viewport:{width,height:900}}),page=await context.newPage();
   let account=x.f.principal.accountId,original=null,acknowledged=false,changedDraft=null,savedDraft=null;const requests=[],acks=[],errors=[],foreign=[];
@@ -46,13 +47,13 @@ test('owned actual cart isolates identity and serializes every draft writer with
   const snapshotFor=body=>{const s=x.snapshotFor(body);s.quoteSnapshot.databaseNow=new Date().toISOString();return s;};
   await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());
    if(url.pathname==='/')return route.fulfill({status:200,contentType:'text/html',body:'<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div>'});
-   if(url.pathname==='/api/member-checkout/cart/entry')return route.fulfill({status:200,json:{ok:true,intent:true,ownedDraft:true,entry:{siteId:x.f.siteId,accountId:account,query:request.postDataJSON(),offers:x.result.lines.map(l=>({offerId:l.offerId,offerRevision:l.offerRevision,title:l.title,maxQuantity:99,...(method==='on_site'?{onSiteOnly:true}:{}),source:{kind:'order',productId:l.productId}}))}}});
+   if(url.pathname==='/api/member-checkout/cart/entry')return route.fulfill({status:200,json:{ok:true,intent:true,ownedDraft:true,entry:{siteId:x.f.siteId,accountId:account,query:request.postDataJSON(),...(reopenedModes.includes(mode)?{recoveryEnabled:true}:{}),offers:x.result.lines.map(l=>({offerId:l.offerId,offerRevision:l.offerRevision,title:l.title,maxQuantity:99,...(method==='on_site'?{onSiteOnly:true}:{}),source:{kind:'order',productId:l.productId}}))}}});
    if(!/^\/api\/member-checkout\/(cart|intent)\//.test(url.pathname)){foreign.push(url.pathname);return route.abort();}
    assert.equal(request.headers()['x-checkout-account-scope'],account);const body=request.postDataJSON();
    if(url.pathname.endsWith('intent/pending'))return route.fulfill({status:200,json:{ok:true,snapshot:{version:1,siteId:x.f.siteId,pending:original&&!acknowledged?reviewed():null}}});
    if(url.pathname.endsWith('intent/review'))return route.fulfill({status:200,json:{ok:true,review:original?reviewed():null}});
    if(url.pathname.endsWith('intent/acknowledge')){acks.push(body);acknowledged=true;assert.equal(acks.length,1);
-    savedDraft=await page.evaluate(k=>localStorage.getItem(k),key);const saved=JSON.parse(savedDraft);assert.equal(saved.data.items.length,1,'owned draft durable before server ack');
+    savedDraft=await page.evaluate(k=>localStorage.getItem(k),key);const saved=JSON.parse(savedDraft);assert.equal(saved.data.items.length,reopenedModes.includes(mode)?3:1,'owned draft durable before server ack; reloaded originals preserve every item');
     if(mode==='ackDraftChanged')changedDraft=await page.evaluate(k=>{const value=JSON.parse(localStorage.getItem(k));value.revision++;value.data.customer.name='Newer local contact';const raw=JSON.stringify(value);localStorage.setItem(k,raw);return raw;},key);
     if(mode==='ackDraftLost')await page.evaluate(k=>localStorage.removeItem(k),key);
     if(mode==='ackDraftUnreadable')await page.evaluate(k=>{const get=Storage.prototype.getItem;window.__draftGet=get;Storage.prototype.getItem=function(name){if(name===k)throw new DOMException('synthetic read refusal');return get.call(this,name);};},key);
@@ -103,6 +104,35 @@ test('owned actual cart isolates identity and serializes every draft writer with
    if(mode==='storage'||mode==='staleDraft'){await page.getByRole('alert').waitFor();assert.equal(requests.length,0);assert.equal(await page.evaluate(k=>localStorage.getItem(k),nonceKey),null);assert.equal(await page.evaluate(k=>localStorage.getItem(k),key),intervening??envelope);return;}
    await page.getByRole('heading',{name:text.done,exact:true}).waitFor();assert.equal(requests.length,1);assert.equal(original.method,method);
    if(method==='on_site')assert.equal(original.capturedMinor,0,'draft acknowledgement is never cash collection');
+   if(reopenedModes.includes(mode)){
+    const intactDraft=await page.evaluate(k=>localStorage.getItem(k),key),intactNonce=await page.evaluate(k=>localStorage.getItem(k),nonceKey);
+    assert.notEqual(intactDraft,null);assert.notEqual(intactNonce,null);
+    const damaged=mode==='ackCorruptOnOpen'?'{not-json':mode==='ackWrongOwnerOnOpen'?JSON.stringify({...JSON.parse(intactDraft),scope:{...scope,accountId:'59999999'}}):null;
+    await page.evaluate(({key,nonceKey,damaged,newDevice})=>{if(damaged===null)localStorage.removeItem(key);else localStorage.setItem(key,damaged);if(newDevice)localStorage.removeItem(nonceKey);},{key,nonceKey,damaged,newDevice:mode==='ackMissingOnNewDevice'});
+    await mount(page);await open(page);
+    const readOnlyLink=page.locator('[data-checkout-resume-link]');await readOnlyLink.waitFor();
+    assert.equal(await readOnlyLink.getAttribute('href'),`/member-checkout/${x.f.siteId}/resume?uiLocale=${locale}`);assert.equal(await readOnlyLink.getAttribute('target'),'_blank');
+    if(damaged!==null){await page.locator('[data-cart-draft-error]').waitFor();assert.equal(await page.locator('[data-member-cart-checkout]').count(),0);assert.equal(await page.getByRole('button',{name:text.ack,exact:true}).count(),0);}
+    else{
+     await page.getByRole('button',{name:mode==='ackMissingOnNewDevice'?text.begin:text.retry,exact:true}).click();await page.getByRole('heading',{name:text.done,exact:true}).waitFor();
+     await page.getByRole('button',{name:text.ack,exact:true}).click();
+     await page.getByRole('alert').filter({hasText:locale==='zh'?'不会新建空草稿':locale==='es'?'no se crea un carrito vacío':'no empty replacement'}).waitFor();
+     await page.getByRole('button',{name:locale==='zh'?'读取原单':locale==='es'?'Consultar original':'Read original',exact:true}).click();await page.getByRole('heading',{name:text.done,exact:true}).waitFor();
+     await page.getByRole('button',{name:text.ack,exact:true}).click();await page.getByRole('alert').filter({hasText:locale==='zh'?'不会新建空草稿':locale==='es'?'no se crea un carrito vacío':'no empty replacement'}).waitFor();
+    }
+    assert.equal(await page.evaluate(k=>localStorage.getItem(k),key),damaged,'never fabricate or normalize a replacement draft');
+    assert.equal(await page.evaluate(k=>localStorage.getItem(k),nonceKey),mode==='ackMissingOnNewDevice'?null:intactNonce);assert.equal(acks.length,0);assert.equal(requests.length,1);
+    assert.equal(await readOnlyLink.count(),1);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+    await page.screenshot({path:path.join(evidence,`${width}-${locale}-${mode}-protected.png`),fullPage:true,animations:'disabled'});
+    // Only the test fixture restores exact original bytes. The application
+    // has no reset/reconstruction path and must reread explicitly afterward.
+    await page.evaluate(({key,raw})=>localStorage.setItem(key,raw),{key,raw:intactDraft});await mount(page);await open(page);
+    await page.getByRole('button',{name:mode==='ackMissingOnNewDevice'?text.begin:text.retry,exact:true}).click();await page.getByRole('heading',{name:text.done,exact:true}).waitFor();
+    await page.getByRole('button',{name:text.ack,exact:true}).click();await page.getByText(text.kept,{exact:true}).waitFor();
+    const kept=JSON.parse(await page.evaluate(k=>localStorage.getItem(k),key));assert.deepEqual(kept.data,JSON.parse(intactDraft).data);assert.equal(kept.revision,JSON.parse(intactDraft).revision+1);
+    assert.equal(acks.length,1);assert.equal(requests.length,1);assert.equal(await page.evaluate(k=>localStorage.getItem(k),nonceKey),null);assert.equal(original.capturedMinor??0,0);
+    await page.screenshot({path:path.join(evidence,`${width}-${locale}-${mode}-restored.png`),fullPage:true,animations:'disabled'});return;
+   }
    await page.getByRole('button',{name:text.ack,exact:true}).evaluate(b=>{b.click();b.click();});
    if(['ackLostDraftChanged','ackLostSamePage'].includes(mode)){
     await page.getByRole('alert').waitFor();assert.notEqual(await page.evaluate(k=>localStorage.getItem(k),nonceKey),null);

@@ -5,6 +5,7 @@ import { createCartCheckoutController } from "./merchantCheckoutCartClient";
 import { CheckoutClientError, checkoutClientStorageKey, type CheckoutClientRequest } from "./merchantCheckoutClient";
 import { checkoutIntentTransport } from "./merchantCheckoutIntentTransport";
 import { assertCheckoutDraftLease, type CheckoutDraftReleaseCheck } from "./merchantCheckoutDraftLease";
+import { createAccountCartDraft } from "./merchantCheckoutAccountDraft";
 const nonce = "33333333-3333-4333-8333-333333333333";
 async function fixture(existing = false) {
   const x = await cartReviewFixture(), store = new Map<string, string>(), calls: string[] = [], events: string[] = [];
@@ -67,9 +68,47 @@ test("a retained draft must still be verifiable before acknowledgement dispatch"
   const x = await fixture(), c = x.create(); await c.activate(); await c.preview(x.f.request, x.customer); await c.submit();
   let prepared = 0;
   await c.startAnother(() => { prepared++; }, () => { throw new Error("draft no longer available"); });
-  assert.equal(prepared, 1); assert.ok(x.store.has(x.key)); assert.equal(c.getSnapshot().phase, "unconfirmed");
+  assert.equal(prepared, 0); assert.ok(x.store.has(x.key)); assert.equal(c.getSnapshot().phase, "unconfirmed");
   assert.equal(c.getSnapshot().error, "checkout_draft_unconfirmed");
   assert.equal(x.events.filter(e => e === "ack" || e === "release").length, 0);
+});
+
+test("an absent account cart cannot be fabricated by preparation to acknowledge a local or new-device original", async () => {
+  for (const localReference of [true, false]) {
+    const x = await fixture(true);
+    if (localReference) x.store.set(x.key, JSON.stringify({ version: 1, nonce }));
+    const draft = createAccountCartDraft({ siteId: x.f.siteId, blockId: "products", accountId: x.f.principal.accountId },
+      { storage: x.options.storage, exclusive: x.options.exclusive });
+    await draft.activate(); const captured = draft.getSnapshot();
+    assert.equal(captured.ready, true, "first visits may still have an empty unsaved cart");
+    assert.equal(captured.raw, null);
+    const c = x.create(); await c.activate(); let prepared = 0, expected: string | null = captured.raw;
+    await c.startAnother(async (_original, { lease }) => { prepared++; expected = await draft.persist(expected, captured.data, lease); },
+      lease => draft.verify(expected, lease));
+    assert.equal(prepared, 0, "verify the existing draft before preparation can create an empty replacement");
+    assert.equal(x.store.get(draft.storageKey), undefined); assert.equal(x.events.length, 0);
+    assert.equal(x.store.has(x.key), localReference); assert.equal(c.getSnapshot().pending, true);
+    assert.equal(c.getSnapshot().error, "checkout_draft_unconfirmed");
+    assert.equal(x.calls.some(p => /acknowledge|submit|cancel/.test(p)), false);
+  }
+});
+
+test("release checks bracket preparation and acknowledgement under the same live lease", async () => {
+  const x = await fixture(), c = x.create(); await c.activate(); await c.preview(x.f.request, x.customer); await c.submit();
+  await c.startAnother((_original, { lease }) => { assertCheckoutDraftLease(lease, x.key); x.events.push("prepare"); },
+    lease => { assertCheckoutDraftLease(lease, x.key); x.events.push("verify"); return undefined; });
+  assert.deepEqual(x.events, ["verify", "prepare", "verify", "ack", "verify", "release"]);
+  assert.equal(c.getSnapshot().pending, false);
+});
+
+test("successful precheck cannot replace the post-preparation draft check", async () => {
+  const x = await fixture(), c = x.create(); await c.activate(); await c.preview(x.f.request, x.customer); await c.submit();
+  let intact = true, checks = 0;
+  await c.startAnother(() => { intact = false; x.events.push("prepare"); }, () => {
+    checks++; if (!intact) throw new Error("draft lost during preparation"); return undefined;
+  });
+  assert.equal(checks, 2); assert.deepEqual(x.events, ["prepare"]); assert.ok(x.store.has(x.key));
+  assert.equal(c.getSnapshot().error, "checkout_draft_unconfirmed"); assert.equal(c.getSnapshot().pending, true);
 });
 test("draft proof is rechecked after ack and on retry without repeating cleanup or acknowledgement", async () => {
   const x = await fixture(); let intact = true, checks = 0, prepared = 0;
@@ -77,12 +116,12 @@ test("draft proof is rechecked after ack and on retry without repeating cleanup 
   const verify = () => { checks++; if (!intact) throw new Error("draft changed while ack was in flight"); return undefined; };
   await c.activate(); await c.preview(x.f.request, x.customer); await c.submit();
   await c.startAnother(() => { prepared++; }, verify);
-  assert.equal(checks, 2); assert.equal(prepared, 1); assert.ok(x.store.has(x.key)); assert.equal(c.getSnapshot().phase, "unconfirmed");
+  assert.equal(checks, 3); assert.equal(prepared, 1); assert.ok(x.store.has(x.key)); assert.equal(c.getSnapshot().phase, "unconfirmed");
   assert.equal(c.getSnapshot().error, "checkout_draft_unconfirmed");
   await c.recover(); await c.startAnother(() => { prepared++; }, verify);
-  assert.equal(prepared, 1); assert.equal(checks, 3); assert.ok(x.store.has(x.key));
+  assert.equal(prepared, 1); assert.equal(checks, 4); assert.ok(x.store.has(x.key));
   intact = true; await c.recover(); await c.startAnother(() => { prepared++; }, verify);
-  assert.equal(prepared, 1); assert.equal(checks, 5); assert.equal(c.getSnapshot().pending, false);
+  assert.equal(prepared, 1); assert.equal(checks, 7); assert.equal(c.getSnapshot().pending, false);
   assert.deepEqual(x.events, ["ack", "release"]);
 });
 test("lost ack response cannot bypass a new draft check on same-instance recovery", async () => {
@@ -91,9 +130,9 @@ test("lost ack response cannot bypass a new draft check on same-instance recover
   const verify = () => { checked++; if (!intact) throw new Error("changed"); return undefined; };
   await c.activate(); await c.preview(x.f.request, x.customer); await c.submit(); await c.startAnother(() => { prepared++; }, verify);
   intact = false; await c.recover(); await c.startAnother(() => { prepared++; }, verify);
-  assert.equal(prepared, 1); assert.equal(checked, 2); assert.ok(x.store.has(x.key)); assert.equal(c.getSnapshot().phase, "unconfirmed");
+  assert.equal(prepared, 1); assert.equal(checked, 3); assert.ok(x.store.has(x.key)); assert.equal(c.getSnapshot().phase, "unconfirmed");
   intact = true; await c.recover(); await c.startAnother(() => { prepared++; }, verify);
-  assert.equal(prepared, 1); assert.equal(checked, 4); assert.equal(c.getSnapshot().pending, false);
+  assert.equal(prepared, 1); assert.equal(checked, 6); assert.equal(c.getSnapshot().pending, false);
   assert.deepEqual(x.events, ["ack", "release"]);
 });
 test("a draft verification callback receives a live matching lease and identity invalidation cannot continue ack or release", async () => {

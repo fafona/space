@@ -22,9 +22,9 @@ const input = "min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-whi
 const button = "min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold disabled:opacity-50";
 const primaryButton = "min-h-11 w-full rounded-xl bg-teal-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50";
 const retainedDraftCopy = {
-  zh: "购物车草稿已变化或暂时无法读取，原编号已保留。请保留本页并核对购物车；不要重新提交原单。",
-  en: "The saved cart changed or cannot be read. The original reference is kept. Keep this page and check the cart; do not resubmit the original.",
-  es: "El carrito guardado cambió o no se puede leer. Se conserva la referencia original. Conserva esta página y revisa el carrito; no reenvíes el original.",
+  zh: "购物车草稿已变化、缺失或暂时无法读取，原编号已保留。不会新建空草稿替代原车。请保留本页并核对原购物车，也可只读查看本人原单；不要重新提交原单。",
+  en: "The saved cart changed, is missing or cannot be read. The original reference is kept; no empty replacement will be created. Keep this page and check the original cart, or view your original read-only. Do not resubmit it.",
+  es: "El carrito guardado cambió, falta o no se puede leer. Se conserva la referencia; no se crea un carrito vacío para sustituirlo. Conserva esta página y revisa el carrito original, o consulta tu original en solo lectura. No lo reenvíes.",
 };
 const registrationCopy = {
   zh: { info: "这份原单尚未登记到恢复流程。登记不会重新扣积分、收款、取消原单或清空购物车。", agreed: "我已核对这份原单，保留原购物车并登记恢复记录", action: "核对并登记原单" },

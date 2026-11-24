@@ -119,7 +119,7 @@ test("unknown original can be reviewed and explicitly registered once, but only 
   await Promise.all([x.c.registerRetained(true), x.c.registerRetained(true)]); assert.equal(x.calls.filter(p => p.endsWith("register-retained")).length, 1);
   assert.equal(x.c.getSnapshot().retainedRegistrationRequired, false); assert.equal(x.c.getSnapshot().pending, true); assert.equal(x.store.get(x.key), x.stored); assert.deepEqual(x.writes, []);
   let prepared = 0, verified = 0; await x.c.startAnother((_original, ctx) => { assert.equal(ctx.createdHere, false); prepared++; }, () => { verified++; });
-  assert.equal(prepared, 1); assert.equal(verified, 2); assert.equal(x.calls.filter(p => p.endsWith("acknowledge")).length, 1); assert.equal(x.c.getSnapshot().pending, false); assert.deepEqual(x.writes, [x.key]);
+  assert.equal(prepared, 1); assert.equal(verified, 3); assert.equal(x.calls.filter(p => p.endsWith("acknowledge")).length, 1); assert.equal(x.c.getSnapshot().pending, false); assert.deepEqual(x.writes, [x.key]);
 });
 test("lost registration response is read back through the existing exact claim, never registered or charged twice", async () => {
   const x = await clientFixture("lost"); await x.c.registerRetained(true); assert.equal(x.c.getSnapshot().phase, "unconfirmed"); assert.equal(x.store.get(x.key), x.stored);

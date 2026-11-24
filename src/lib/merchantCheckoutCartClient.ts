@@ -227,6 +227,11 @@ export function createCartCheckoutController(options: { siteId: string; accountI
         if (!valid(run) || state.phase !== "confirmed" || !state.original || nonce !== ref || cartClientOriginalKey(state.original) !== op
           || state.original.kind === "cart" && state.original.result.reviewRequired) return;
         if (options.intentEnabled && (!intent || intent.reviewRequired || intent.reviewHash !== displayedHash)) { publish({ error: "checkout_intent_changed" }); return; }
+        // Check the PRE-EXISTING draft too. Preparation may legitimately
+        // create a first-visit draft, but must not fabricate an empty proof
+        // for a missing original cart (including an original on a new device).
+        if (verifyDraft) { verifyRetainedDraft(verifyDraft, lease);
+          if (!valid(run) || read() !== ref) throw new CheckoutClientError("checkout_other_tab"); }
         // An embedding cart must durably preserve/consume its own draft BEFORE
         // the shared nonce is released. A failed callback retains the original.
         if (beforeRelease && (!options.intentEnabled || preparedOperation !== op)) { await beforeRelease(structuredClone(state.original), { createdHere: createdOperation === op, lease });
