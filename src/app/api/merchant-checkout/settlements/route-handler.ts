@@ -8,10 +8,12 @@ import { readCheckoutReporting, readMixedCheckoutReporting, readCartCheckoutRepo
 import { isMemberCheckoutCartPilotEnabled, isMemberCheckoutCartCollectionEnabled } from "@/lib/merchantCheckoutCartPilot.server";
 import { isMemberCheckoutOnSitePilotEnabled, isMemberCheckoutOnSiteCollectionEnabled } from "@/lib/merchantCheckoutOnSitePilot.server";
 import { isTrustedCheckoutReadRequest } from "@/lib/merchantCheckoutReadRequest";
+import { isMemberCheckoutHistoryReadEnabled } from "@/lib/merchantCheckoutHistoryPilot.server";
+import { checkoutHistoryReadBudget } from "@/lib/merchantCheckoutHistoryRead.server";
 
 const defaults = { ...checkoutOwnerDependencies, enabled: isMemberCheckoutPilotEnabled, read: readCheckoutReporting,
   mixedEnabled: isMemberCheckoutOnSitePilotEnabled, readMixed: readMixedCheckoutReporting, collectionEnabled: isMemberCheckoutOnSiteCollectionEnabled };
-const cartDefaults = { cartEnabled: (siteId: string) => isMemberCheckoutCartPilotEnabled(siteId, "points"), readCart: readCartCheckoutReporting, cartCollectionEnabled: isMemberCheckoutCartCollectionEnabled };
+const cartDefaults = { cartEnabled: (siteId: string) => isMemberCheckoutCartPilotEnabled(siteId, "points"), readCart: readCartCheckoutReporting, cartCollectionEnabled: isMemberCheckoutCartCollectionEnabled, historyEnabled: isMemberCheckoutHistoryReadEnabled };
 export type CheckoutReportingDependencies = typeof defaults & Partial<typeof cartDefaults>;
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: {
   "cache-control": "private, no-store", pragma: "no-cache", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "cross-origin-resource-policy": "same-origin", vary: "Cookie, Authorization",
@@ -34,6 +36,15 @@ async function body(request: Request) {
   } finally { reader.releaseLock(); }
 }
 
+// Only the new explicit history scope uses these bounded READ ports. The
+// shared owner authority and every mutation keep their original purchase gate.
+function historyOwnerPorts(request: Request, deps: typeof defaults & typeof cartDefaults, siteId: string, purchase: boolean) {
+  const budget = checkoutHistoryReadBudget(request);
+  return { ...deps, enabled: (id: string) => { budget.guard(); return id === siteId && deps.enabled(id) === purchase && deps.historyEnabled(id); },
+    actor: (...args: Parameters<typeof deps.actor>) => budget.run(() => deps.actor(...args)),
+    site: (...args: Parameters<typeof deps.site>) => budget.run(() => deps.site(...args)), budget };
+}
+
 
 /** UI discovery only, never an authorization token. No ledger/profile read.
  * The existing report still checks the actual owner before and after its read. */
@@ -43,10 +54,12 @@ export async function handleCheckoutReportingAccess(request: Request, overrides:
   if (!isTrustedCheckoutReadRequest(request)) return json({ error: "forbidden_origin" }, 403);
   const params = new URL(request.url).searchParams, siteId = params.get("siteId") ?? "";
   if ([...params.keys()].some(k => k !== "siteId") || params.getAll("siteId").length !== 1 || !/^\d{8}$/.test(siteId)) return json({ error: "checkout_reporting_invalid" }, 400);
-  if (!deps.enabled(siteId)) return json({ ok: true, access: null });
+  const purchase = deps.enabled(siteId), history = deps.historyEnabled(siteId);
+  if (!purchase && !history) return json({ ok: true, access: null });
   try {
-    const access = await reportingOwner(request, siteId, deps);
+    const access = await reportingOwner(request, siteId, history ? historyOwnerPorts(request, deps, siteId, purchase) : deps);
     await access.reauthorize();
+    if (deps.enabled(siteId) !== purchase || deps.historyEnabled(siteId) !== history) throw new Error("unavailable");
     return json({ ok: true, access: { siteId, identityKey: access.identityKey } });
   } catch (error) {
     return error instanceof MerchantBusinessAccessError ? json({ error: error.code }, error.status) : json({ error: "checkout_reporting_unavailable" }, 503);
@@ -62,19 +75,22 @@ export async function handleCheckoutReporting(request: Request, overrides: Parti
   if (new URL(request.url).search || !/^application\/json(?:\s*;|$)/i.test(request.headers.get("content-type") ?? "")) return json({ error: "checkout_reporting_invalid" }, 400);
   try {
     const scope = parseCheckoutReportingRequest(await body(request));
-    if (!deps.enabled(scope.siteId)) return json({ error: "checkout_disabled" }, 503);
-    const { identityKey, reauthorize } = await reportingOwner(request, scope.siteId, deps);
+    const purchase = deps.enabled(scope.siteId), history = deps.historyEnabled(scope.siteId);
+    if (!purchase && !history) return json({ error: "checkout_disabled" }, 503);
+    const ports = history ? historyOwnerPorts(request, deps, scope.siteId, purchase) : null;
+    const { identityKey, reauthorize } = await reportingOwner(request, scope.siteId, ports ?? deps);
     const expectedIdentity = request.headers.get("x-checkout-owner-scope");
     if (expectedIdentity !== null && expectedIdentity !== identityKey) return json({ error: "permission_denied" }, 403);
     await reauthorize();
-    const cart = deps.cartEnabled(scope.siteId), mixed = deps.mixedEnabled(scope.siteId), collect = mixed && deps.collectionEnabled(scope.siteId);
-    const cartCollectGate = cart && mixed && deps.cartCollectionEnabled(scope.siteId);
-    const cartCollect = cartCollectGate && (await deps.site(scope.siteId))?.permissionConfig?.allowOrderManagement === true;
-    const report = await (cart ? deps.readCart : mixed ? deps.readMixed : deps.read)(scope);
+    const cart = deps.cartEnabled(scope.siteId), mixed = deps.mixedEnabled(scope.siteId), collect = purchase && mixed && deps.collectionEnabled(scope.siteId);
+    const cartCollectGate = purchase && cart && mixed && deps.cartCollectionEnabled(scope.siteId);
+    const cartCollect = cartCollectGate && (await (ports ? ports.site(scope.siteId) : deps.site(scope.siteId)))?.permissionConfig?.allowOrderManagement === true;
+    const read = () => (history || cart ? deps.readCart : mixed ? deps.readMixed : deps.read)(scope);
+    const report = await (ports ? ports.budget.run(read) : read());
     await reauthorize();
-    if (deps.cartEnabled(scope.siteId) !== cart || deps.mixedEnabled(scope.siteId) !== mixed || (mixed && deps.collectionEnabled(scope.siteId)) !== collect
-      || (deps.cartEnabled(scope.siteId) && deps.mixedEnabled(scope.siteId) && deps.cartCollectionEnabled(scope.siteId)) !== cartCollectGate
-      || report.version !== (cart ? 3 : mixed ? 2 : 1)) throw new Error("checkout_reporting_unavailable");
+    if (deps.enabled(scope.siteId) !== purchase || deps.historyEnabled(scope.siteId) !== history || deps.cartEnabled(scope.siteId) !== cart || deps.mixedEnabled(scope.siteId) !== mixed || (purchase && mixed && deps.collectionEnabled(scope.siteId)) !== collect
+      || (purchase && deps.cartEnabled(scope.siteId) && deps.mixedEnabled(scope.siteId) && deps.cartCollectionEnabled(scope.siteId)) !== cartCollectGate
+      || report.version !== (history || cart ? 3 : mixed ? 2 : 1)) throw new Error("checkout_reporting_unavailable");
     let snapshot;
     try { snapshot = parseCheckoutReportingSnapshot(report, scope); } catch { throw new Error("checkout_reporting_unavailable"); }
     return json({ ok: true, snapshot, ...(collect ? { canRecordOnSiteReceipt: true } : {}), ...(cartCollect ? { canRecordCartReceipt: true } : {}) });

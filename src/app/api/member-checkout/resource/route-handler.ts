@@ -8,11 +8,14 @@ import { parseCheckoutOriginalResult } from "@/lib/merchantCheckoutOriginalResul
 import { readPersonalCheckoutCartResource } from "@/lib/merchantCheckoutCartHistory.server";
 import { isMemberCheckoutCartPilotEnabled } from "@/lib/merchantCheckoutCartPilot.server";
 import { parseCartClientOriginal } from "@/lib/merchantCheckoutCartReview";
+import { isMemberCheckoutHistoryReadEnabled } from "@/lib/merchantCheckoutHistoryPilot.server";
+import { readPersonalCheckoutHistoryResource } from "@/lib/merchantCheckoutHistoryRead.server";
 const mixedDefaults = { enabled: isMemberCheckoutOnSitePilotEnabled, read: readPersonalCheckoutOriginalResource };
 const cartDefaults = { cartEnabled: (siteId: string) => isMemberCheckoutCartPilotEnabled(siteId, "points"), readCart: readPersonalCheckoutCartResource };
+const historyDefaults = { historyEnabled: isMemberCheckoutHistoryReadEnabled, readHistory: readPersonalCheckoutHistoryResource };
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { "cache-control": "private, no-store", pragma: "no-cache", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "cross-origin-resource-policy": "same-origin", vary: "Cookie, Authorization" } });
 
-export async function handlePersonalCheckoutResource(request: Request, read = readPersonalCheckoutResource, overrides: Partial<typeof mixedDefaults & typeof cartDefaults> = {}) {
+export async function handlePersonalCheckoutResource(request: Request, read = readPersonalCheckoutResource, overrides: Partial<typeof mixedDefaults & typeof cartDefaults & typeof historyDefaults> = {}) {
   if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
   if (!isTrustedCheckoutReadRequest(request)) return json({ error: "forbidden_origin" }, 403);
   if (request.headers.has("x-merchant-access-token")) return json({ error: "checkout_unauthorized" }, 401);
@@ -22,7 +25,17 @@ export async function handlePersonalCheckoutResource(request: Request, read = re
     || !/^\d{8}$/.test(siteId) || (kind !== "booking" && kind !== "order") || !/^[A-Za-z0-9:_-]{1,160}$/.test(id)
     || expectedAccountId !== undefined && !/^\d{8}$/.test(expectedAccountId)) return json({ error: "checkout_invalid_request" }, 400);
   try {
-    const mixed = { ...mixedDefaults, ...cartDefaults, ...overrides };
+    const mixed = { ...mixedDefaults, ...cartDefaults, ...historyDefaults, ...overrides };
+    if (mixed.historyEnabled(siteId)) {
+      const raw = await mixed.readHistory({ request, siteId, kind, id, expectedAccountId });
+      if (!mixed.historyEnabled(siteId)) throw new Error("unavailable");
+      const original = raw === null ? null : parseCartClientOriginal(raw, siteId);
+      const resource = original?.kind === "cart" ? original.result : original?.original.method === "on_site" ? original.original.result.terms : original?.original.result;
+      if (resource && (resource.resourceKind !== kind || resource.resourceId !== id)) throw new Error("unavailable");
+      if (original?.kind === "cart") return json({ ok: true, result: null, cart: original.result, readOnly: true });
+      return json(original?.original.method === "on_site" ? { ok: true, result: null, onSite: original.original.result, readOnly: true }
+        : { ok: true, result: original?.original.result ?? null, readOnly: true });
+    }
     if (mixed.cartEnabled(siteId)) {
       const raw = await mixed.readCart({ request, siteId, kind, id, expectedAccountId });
       if (!mixed.cartEnabled(siteId)) throw new Error("unavailable");

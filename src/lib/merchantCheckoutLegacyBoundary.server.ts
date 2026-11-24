@@ -21,6 +21,7 @@ import { checkoutOwnerDependencies } from "./merchantCheckoutOwnerAccess.server"
 import { MerchantCheckoutError } from "./merchantCheckoutQuote.server";
 import { commitLegacyOrderWithCheckoutIntent } from "./merchantCheckoutLegacyCreateBoundary.server";
 import { retainedCheckoutOrderCues, verifyRetainedCheckoutOrders, type CheckoutOrderSourceRows } from "./merchantCheckoutRetainedOrders.server";
+import { isMemberCheckoutHistoryReadEnabled } from "./merchantCheckoutHistoryPilot.server";
 
 const id = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9:_-]{1,160}$/.test(v);
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
@@ -97,11 +98,13 @@ function personalPrincipal(session: Awaited<ReturnType<typeof defaults.session>>
 
 /** A visibility hint only: no ledger read and no payment/ownership assertion.
  * Old personal lists remain byte-for-byte shaped as before when disabled. */
-export function personalCheckoutEntryHint(records: Array<{ siteId: string }>, session: Awaited<ReturnType<typeof defaults.session>>, enabled = isMemberCheckoutPilotEnabled) {
+export function personalCheckoutEntryHint(records: Array<{ siteId: string }>, session: Awaited<ReturnType<typeof defaults.session>>, enabled = (siteId: string) => isMemberCheckoutPilotEnabled(siteId) || isMemberCheckoutHistoryReadEnabled(siteId)) {
   try {
     if (!personalPrincipal(session)) return undefined;
     const siteIds = [...new Set(records.map(r => r.siteId).filter(siteId => enabled(siteId)))];
-    return siteIds.length ? { accountId: session!.accountId, siteIds } : undefined;
+    // Two independent, at-most-50 server allowlists. This is visibility only;
+    // actual resource lookup still verifies the exact current principal.
+    return siteIds.length && siteIds.length <= 100 ? { accountId: session!.accountId, siteIds } : undefined;
   } catch { return undefined; }
 }
 
