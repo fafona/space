@@ -50,6 +50,8 @@ function parseEnvelope(raw: string | null, scope: AccountCartScope) {
  * the same site/account Web Lock as financial nonce/ack operations. */
 export function createAccountCartDraft(scope: AccountCartScope, ports: {
   storage?: Pick<Storage, "getItem" | "setItem">; exclusive?: CheckoutClientExclusive; legacyHandoff?: LegacyCartHandoff;
+  /** Local isolation only, never financial review/ack or a nonce release. */
+  retainFinancialNonceOnHandoff?: boolean;
 } = {}) {
   const ownedScope = { ...scope }, storageKey = accountCartStorageKey(ownedScope), lockKey = checkoutClientStorageKey(scope.siteId, scope.accountId);
   const legacyKey = `merchant-space:product-cart:v1:${scope.siteId}:${scope.blockId}`;
@@ -114,7 +116,16 @@ export function createAccountCartDraft(scope: AccountCartScope, ports: {
       const expected = state.raw; emit({ busy: true });
       try { await locked(run, async lease => {
         const legacy = storage().getItem(legacyKey); if (legacy === null) throw new Error("checkout_cart_changed");
-        const guard = () => { valid(run); if (storage().getItem(lockKey) !== null) throw new Error("checkout_other_tab");
+        const financial = storage().getItem(lockKey);
+        if (financial !== null) {
+          if (ports.retainFinancialNonceOnHandoff !== true || expected === null || new TextEncoder().encode(financial).length > 256) throw new Error("checkout_other_tab");
+          const ref: unknown = JSON.parse(financial);
+          if (!object(ref) || !exact(ref, ["version", "nonce"]) || ref.version !== 1 || typeof ref.nonce !== "string"
+            || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(ref.nonce)) throw new Error("checkout_other_tab");
+        }
+        // Both references and both carts remain byte-identical. Isolating the
+        // old ordinary cart does not resolve, replace or release finance.
+        const guard = () => { valid(run); if (storage().getItem(lockKey) !== financial) throw new Error("checkout_other_tab");
           if (storage().getItem(legacyKey) !== legacy || storage().getItem(storageKey) !== expected) throw new Error("checkout_cart_changed"); };
         guard(); await ports.legacyHandoff!.confirm(legacy, review, confirmed, guard, lease); guard();
         const current = read(run); if (current.legacyPending) throw new Error("checkout_legacy_original_pending"); emit({ ...current, ready: true, error: "" });

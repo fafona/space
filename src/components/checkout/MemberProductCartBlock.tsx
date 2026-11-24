@@ -37,6 +37,7 @@ export default function MemberProductCartBlock(props: ProductBlockProps) {
   const owned = useMemo(() => loaded?.scope === scope && loaded.owned && loaded.access
     ? createAccountCartDraft({ siteId: query.siteId, blockId: query.blockId, accountId: loaded.access.accountId }, loaded.handoff ? {
       legacyHandoff: createLegacyCartHandoff({ siteId: query.siteId, blockId: query.blockId, accountId: loaded.access.accountId }),
+      retainFinancialNonceOnHandoff: loaded.intent === true,
     } : {}) : null, [loaded, query, scope]);
   const ownedRef = useRef<AccountCartDraft | null>(null); ownedRef.current = owned;
   const ownedState = useSyncExternalStore(owned?.subscribe ?? noSubscribe, owned?.getSnapshot ?? noSnapshot, noSnapshot);
@@ -109,7 +110,8 @@ export default function MemberProductCartBlock(props: ProductBlockProps) {
   return <ProductBlock key={loaded?.scope === scope ? owned?.storageKey ?? `legacy:${access?.accountId ?? "guest"}` : "unresolved"} {...props} runtimeCheckoutAdapter={adapter}
     runtimeCheckoutRecoveryEntry={loaded?.scope === scope ? <>
       {loaded.recoveryEnabled && <MemberCheckoutRecoveryLink siteId={query.siteId} locale={locale}/>}
-      {loaded.legacy && access && <MemberCheckoutLegacyReview siteId={query.siteId} blockId={query.blockId} accountId={access.accountId} locale={locale}
-        onIsolate={loaded.handoff && owned && ownedState?.ready && ownedState.legacyPending && !lock.current ? (review, confirmed) => owned.confirmLegacyHandoff(review, confirmed) : undefined}/>}
+      {loaded.handoff && ownedState?.legacyPending && lock.current && <p data-dual-original-handoff className="shrink-0 border-t border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-5 text-slate-600">{locale.startsWith("zh") ? "先核对并隔离旧普通订单，结算原编号仍保留，之后需单独核对结算原单。这里不会新建、取消或确认付款。" : locale.startsWith("es") ? "Revisa y separa el pedido normal anterior. Se conserva la referencia de pago, que se revisará por separado. No crea, cancela ni confirma pagos." : "Review and isolate the old regular order first. The checkout reference stays and must be reviewed separately. No order is created, cancelled or marked paid here."}</p>}
+      {loaded.legacy && access && !active && <MemberCheckoutLegacyReview siteId={query.siteId} blockId={query.blockId} accountId={access.accountId} locale={locale}
+        onIsolate={loaded.handoff && owned && ownedState?.ready && ownedState.legacyPending && !active && (!lock.current || ownedState.raw !== null) ? (review, confirmed) => owned.confirmLegacyHandoff(review, confirmed) : undefined}/>}
     </> : undefined}/>;
 }

@@ -5,6 +5,8 @@ import{mkdir}from'node:fs/promises';import path from'node:path';
 import{build}from'esbuild';import postcss from'postcss';import tailwind from'@tailwindcss/postcss';import{chromium}from'playwright';
 import entryHttp from'../src/app/api/member-checkout/cart/entry/route-handler.ts';import reviewHttp from'../src/lib/merchantCheckoutLegacyReview.server.ts';
 import handoffHttp from'../src/lib/merchantCheckoutLegacyHandoff.server.ts';
+import resumeFixtures from'./fixtures/member-checkout-resume.ts';import recoveryIdentity from'../src/lib/merchantCheckoutSubmissionPlan.server.ts';
+import cartHttp from'../src/lib/merchantCheckoutCartHttp.server.ts';import intentHttp from'../src/lib/merchantCheckoutIntentHttp.server.ts';
 const origin='https://legacy-review-browser.synthetic.invalid',siteId='10909994',accountId='58000001',userId='legacy-browser-synthetic';
 const query={siteId,blockId:'products',requestId:'ordinary-browser-request'},order={id:'O-old-synthetic',status:'pending',createdAt:'2026-11-24T10:00:00.000Z',updatedAt:'2026-11-24T10:00:00.001Z'};
 const title={zh:'旧普通订单核对',en:'Review old regular order',es:'Revisar pedido normal antiguo'},read={zh:'核对旧普通订单',en:'Check old regular order',es:'Consultar pedido normal antiguo'};
@@ -14,7 +16,7 @@ async function assets(){
   b.onLoad({filter:/.*/,namespace:'synthetic'},({path:p})=>({loader:'jsx',resolveDir:process.cwd(),contents:p==='i18n'?'export const useI18n=()=>({locale:window.__locale});':p==='traffic'?'export const usePublicTraffic=()=>null;export const usePublicTrafficExposure=()=>{};':p==='session'?'export const resolveFrontendAuthPayload=async()=>null;':p==='next/link'?'import React from "react";export default({prefetch,...props})=><a {...props}/>;':'export default function Image(){return null;}'}));
  }}]}),postcss([tailwind()]).process('@import "tailwindcss" source(none); @source "./src/components/checkout"; @source "./src/components/blocks/ProductBlock.tsx";',{from:path.resolve('legacy-review-browser.css')})]);return{js:js.outputFiles[0].text,css:css.css};
 }
-async function fixture(browser,a,{width=390,height=680,locale='zh',status='pending',mode='owned',handoff=false,retainNonce=true}={}){
+async function fixture(browser,a,{width=390,height=680,locale='zh',status='pending',mode='owned',handoff=false,retainNonce=true,financial=null}={}){
  const context=await browser.newContext({viewport:{width,height}}),page=await context.newPage();
  const legacyKey=`merchant-space:product-cart:v1:${siteId}:products`,ownedKey=`merchant-space:product-cart:v2:${siteId}:products:${accountId}`,nonceKey=`faolla-member-checkout-v2:${siteId}:${accountId}`;
  const product={id:'kept',code:'KEPT',name:'Kept account product',description:'',price:'5',imageUrl:'',thumbnailUrl:'',tag:''},item={productId:product.id,product,quantity:2,checked:true,unitPrice:5,unitPriceText:'€5'};
@@ -22,7 +24,11 @@ async function fixture(browser,a,{width=390,height=680,locale='zh',status='pendi
   [ownedKey]:JSON.stringify({version:1,scope:{siteId,accountId,blockId:'products'},revision:3,data:{items:[item],customer:{name:'Owned contact',email:'owned@example.invalid',phone:'123',note:'Keep note'},clientRequestId:''}}),[nonceKey]:JSON.stringify({version:1,nonce:'11111111-1111-4111-8111-111111111111'})};
  if(!retainNonce)delete initial[nonceKey];
  await context.addInitScript(({initial,product,locale,expectedOrigin})=>{if(location.origin!==expectedOrigin)return;window.__products=[product];window.__locale=locale;if(!localStorage.getItem('synthetic-legacy-seeded')){for(const[k,v]of Object.entries(initial))localStorage.setItem(k,v);localStorage.setItem('synthetic-legacy-seeded','1');}window.__writes=[];const set=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){window.__writes.push(k);return set.call(this,k,v);};},{initial,product,locale,expectedOrigin:origin});
- let authenticated=mode!=='forgedGuest',enabled=true,handoffEnabled=true,release,handoffRelease;const rpc=[],calls=[],handoffCalls=[],errors=[],unexpected=[];page.on('pageerror',e=>errors.push(e.message));
+ let authenticated=mode!=='forgedGuest',enabled=true,handoffEnabled=true,release,handoffRelease,acknowledged=false;const rpc=[],calls=[],handoffCalls=[],financeCalls=[],errors=[],unexpected=[];page.on('pageerror',e=>errors.push(e.message));
+ const identity=recoveryIdentity.checkoutSubmissionRecoveryIdentity({siteId,nonce:'11111111-1111-4111-8111-111111111111'},{accountId,userId});
+ const original=financial&&financial!=='unknown'?structuredClone((await resumeFixtures.checkoutResumeFixture(financial)).original):null;
+ if(original){const r=original.kind==='cart'?original.result:original.original.result;r.operationKey=identity.operationKey;}
+ const financialReview=()=>({operationKey:identity.operationKey,generation:1,reviewHash:'a'.repeat(64),reviewRequired:false,original,acknowledged});
  const session=()=>authenticated?{accountId,userId,servicePaused:false,user:{email_confirmed_at:'2026-11-24T00:00:00Z'}}:null;
  const reply=async(route,response)=>route.fulfill({status:response.status,headers:Object.fromEntries(response.headers),body:await response.text()});
  await context.route('**/*',async route=>{
@@ -45,13 +51,25 @@ async function fixture(browser,a,{width=390,height=680,locale='zh',status='pendi
    handoffCalls.push(req.postData());assert.ok(!req.postData().includes('PRIVATE'));assert.deepEqual(JSON.parse(req.postData()),query);
    const response=await handoffHttp.handleCheckoutLegacyHandoffReview(request(),{enabled:()=>handoff&&handoffEnabled,session:async()=>session(),call:async(name,args)=>{
     rpc.push(name);assert.equal(name,'faolla_member_checkout_legacy_review_v1');assert.equal(args.p_principal_key,`account:${accountId}:${userId}`);
-    if(mode==='handoffLate'||mode==='handoffIdentity'||mode==='handoffStorage')await new Promise(r=>{handoffRelease=r;});
+    if(mode==='handoffLate'||mode==='handoffIdentity'||mode==='handoffStorage'||mode==='handoffNonceChanged')await new Promise(r=>{handoffRelease=r;});
     if(mode==='handoffFailure')throw Error('PRIVATE handoff');return{data:{version:1,...query,order:mode==='handoffForeign'?null:{...order,status,...(mode==='handoffChanged'?{updatedAt:'2026-11-24T10:02:00.000Z'}:{})}},error:null};
    }});return reply(route,response);
   }
+  if(financial&&/\/api\/member-checkout\/(cart\/recover|intent\/(review|pending|acknowledge))$/.test(url.pathname)){
+   const deps={enabled:()=>true,intentEnabled:()=>true,session:async()=>session(),call:async(name,args)=>{
+    assert.equal(args.p_principal_key,identity.principalKey);if(args.p_operation_key)assert.equal(args.p_operation_key,identity.operationKey);financeCalls.push({name,args});
+    if(name==='faolla_member_checkout_cart_result_v1')return{data:original?.kind==='cart'?original.result:null,error:null};
+    if(name==='faolla_member_checkout_original_result_v1')return{data:original?.kind==='single'?original.original:null,error:null};
+    if(name==='faolla_member_checkout_intent_review_v1')return{data:{version:1,siteId,review:original?financialReview():null},error:null};
+    if(name==='faolla_member_checkout_pending_intent_v1')return{data:{version:1,siteId,pending:original&&!acknowledged?financialReview():null},error:null};
+    assert.equal(name,'faolla_member_checkout_acknowledge_intent_v1');assert.ok(original);assert.equal(args.p_generation,1);assert.equal(args.p_review_hash,'a'.repeat(64));acknowledged=true;
+    return{data:{version:1,siteId,operationKey:identity.operationKey,generation:1,acknowledged:true,replayed:false},error:null};
+   }};
+   const response=url.pathname.endsWith('cart/recover')?await cartHttp.handleCartCheckout('recover',request(),deps):await intentHttp.handleCheckoutIntent(url.pathname.endsWith('acknowledge')?'acknowledge':url.pathname.endsWith('pending')?'pending':'review',request(),deps);return reply(route,response);
+  }
   unexpected.push(`${req.method()} ${url.pathname}`);return route.abort();
  });
- return{page,context,initial,legacyKey,ownedKey,nonceKey,rpc,calls,handoffCalls,errors,unexpected,release:()=>release?.(),releaseHandoff:()=>handoffRelease?.(),revoke:()=>{enabled=false;},revokeHandoff:()=>{handoffEnabled=false;},signOut:()=>{authenticated=false;},async bytes(){return page.evaluate(keys=>Object.fromEntries(keys.map(k=>[k,localStorage.getItem(k)])),Object.keys(initial));},async check(){assert.deepEqual(await this.bytes(),initial);assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);}};
+ return{page,context,initial,legacyKey,ownedKey,nonceKey,rpc,calls,handoffCalls,financeCalls,errors,unexpected,release:()=>release?.(),releaseHandoff:()=>handoffRelease?.(),revoke:()=>{enabled=false;},revokeHandoff:()=>{handoffEnabled=false;},signOut:()=>{authenticated=false;},async bytes(){return page.evaluate(keys=>Object.fromEntries(keys.map(k=>[k,localStorage.getItem(k)])),Object.keys(initial));},async check(){assert.deepEqual(await this.bytes(),initial);assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);}};
 }
 async function open(f){await f.page.goto(origin);await f.page.getByRole('button',{name:'打开购物车',exact:true}).click();}
 test('manual old-order record review keeps shared cart, owned draft and financial reference unchanged across states/languages/sizes',{timeout:120000},async t=>{
@@ -99,7 +117,7 @@ test('explicit handoff never bypasses financial originals, failed rechecks, othe
   const f=await fixture(browser,a,{mode,handoff:true,retainNonce:mode==='nonce'});try{
    if(['closed','noDraft','forgedGuest'].includes(mode)){await open(f);await f.page.waitForFunction(()=>!document.body.textContent.includes('正在核验会员结算入口'));assert.equal(await f.page.locator('[data-legacy-handoff]').count(),0);assert.equal(f.handoffCalls.length,0);return;}
    const panel=await reviewed(f),decision=panel.locator('[data-legacy-handoff]');
-   if(mode==='nonce'){assert.equal(await decision.count(),0);assert.equal(f.handoffCalls.length,0);await f.check();return;}
+   if(mode==='nonce'){assert.equal(await decision.count(),1);assert.equal(f.handoffCalls.length,0);await decision.getByRole('checkbox').check();await decision.getByRole('button',{name:handoffButton.zh,exact:true}).click();await decision.waitFor({state:'detached'});assert.equal(f.handoffCalls.length,1);assert.equal(f.financeCalls.length,0);assert.equal(await f.page.locator('[data-member-cart-checkout]').count(),0);await f.check();return;}
    await decision.getByRole('checkbox').check();if(mode==='revokedHandoff')f.revokeHandoff();
    if(mode==='lock'){await f.page.evaluate(k=>{void navigator.locks.request(k,async()=>{window.__lockHeld=true;await new Promise(r=>{window.__releaseLock=r;});});},f.nonceKey);await f.page.waitForFunction(()=>window.__lockHeld);}
    const button=decision.getByRole('button',{name:handoffButton.zh,exact:true});if(mode==='double')await button.evaluate(b=>{b.click();b.click();});else await button.click();
@@ -142,4 +160,46 @@ test('old-order record review cannot grant authority through public hints, failu
    }else await f.check();assert.ok(!(await f.page.locator('body').textContent()).includes('PRIVATE'));
   }catch(error){await f.page.screenshot({path:path.join(evidence,`failure-${mode}.png`),fullPage:true});throw error;}finally{await f.context.close();}
  });}finally{console.log(`LEGACY_REVIEW_BOUNDARY_BROWSER_EVIDENCE=${evidence}`);await browser.close();}
+});
+
+const acknowledgeText={zh:'已核对原单，开始另一单',en:'Reviewed — start another',es:'Revisado — empezar otro'},entryRetry={zh:'重新核验',en:'Recheck',es:'Verificar'},beginText={zh:'核对会员积分与券',en:'Review member points & coupons',es:'Revisar puntos y cupones'};
+async function isolateDual(f,locale='zh'){
+ const panel=await reviewed(f,locale),decision=panel.locator('[data-legacy-handoff]');await decision.waitFor();await f.page.locator('[data-dual-original-handoff]').waitFor();
+ await decision.getByRole('checkbox').check();await decision.getByRole('button',{name:handoffButton[locale],exact:true}).click();await decision.waitFor({state:'detached'});
+ assert.equal(f.handoffCalls.length,1);assert.equal(f.financeCalls.length,0);await f.check();assert.ok(await f.page.evaluate(k=>localStorage.getItem(k),markerKey));
+ await f.page.locator('[data-cart-member-entry]').getByRole('button',{name:entryRetry[locale],exact:true}).click();const financial=f.page.locator('[data-member-cart-checkout]');await financial.waitFor();assert.equal(await f.page.locator('[data-checkout-legacy-review]').count(),0);return financial;
+}
+test('dual ordinary/financial references resolve in order through actual host, draft guards, HTTP and explicit acknowledgement',{timeout:120000},async t=>{
+ const a=await assets(),browser=await chromium.launch({headless:true}),evidence=path.resolve('output',`dual-reference-handoff-browser-${Date.now()}`);await mkdir(evidence,{recursive:true});
+ try{for(const financial of ['cart_points','cart_on_site','single_points','single_on_site'])for(const width of [390,1280])for(const locale of ['zh','en','es'])await t.test(`${financial} ${width} ${locale}`,async()=>{
+  const f=await fixture(browser,a,{width,locale,handoff:true,financial});try{
+   const panel=await isolateDual(f,locale),ack=panel.getByRole('button',{name:acknowledgeText[locale],exact:true});await ack.waitFor();
+   assert.equal(f.financeCalls.some(c=>c.name.includes('acknowledge')),false);await f.check();await ack.scrollIntoViewIfNeeded();
+   if((financial==='cart_on_site'&&locale==='es')||(financial==='single_points'&&locale==='zh'))await f.page.screenshot({path:path.join(evidence,`${financial}-${width}-${locale}.png`),fullPage:true});
+   await ack.click();await f.page.waitForFunction(k=>localStorage.getItem(k)===null,f.nonceKey);
+   const after=await f.bytes(),old=JSON.parse(f.initial[f.ownedKey]),owned=JSON.parse(after[f.ownedKey]);assert.equal(after[f.legacyKey],f.initial[f.legacyKey]);assert.deepEqual(owned.data,old.data);assert.equal(owned.revision,old.revision+1);
+   const next=f.page.locator('[data-cart-member-entry]').getByRole('button',{name:beginText[locale],exact:true});await next.waitFor();assert.equal(await next.isEnabled(),true);
+   assert.equal(f.financeCalls.filter(c=>c.name==='faolla_member_checkout_acknowledge_intent_v1').length,1);assert.equal(f.handoffCalls.length,1);assert.ok(await f.page.evaluate(k=>localStorage.getItem(k),markerKey));
+   assert.equal(f.calls.some(p=>/\/(submit|cancel|register-retained|preview)$/.test(p)),false);assert.deepEqual(f.errors,[]);assert.deepEqual(f.unexpected,[]);assert.equal(await f.page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+  }catch(error){await f.page.screenshot({path:path.join(evidence,`failed-${financial}-${width}-${locale}.png`),fullPage:true}).catch(()=>{});throw error;}finally{await f.context.close();}
+ });}finally{console.log(`DUAL_REFERENCE_HANDOFF_BROWSER_EVIDENCE=${evidence}`);await browser.close();}
+});
+test('dual isolation cannot release unknown finance or accept changed nonce/draft/marker while rechecking',{timeout:90000},async t=>{
+ const a=await assets(),browser=await chromium.launch({headless:true});try{for(const mode of ['unknown','nonceChanged','ownedChanged','markerRemoved','invalidNonce','missingOwned'])await t.test(mode,async()=>{
+  const f=await fixture(browser,a,{handoff:true,financial:mode==='unknown'?'unknown':'cart_points',mode:mode==='nonceChanged'?'handoffNonceChanged':'owned'});try{
+   if(['invalidNonce','missingOwned'].includes(mode)){const review=await reviewed(f),decision=review.locator('[data-legacy-handoff]');
+    await f.page.evaluate(({nonce,owned,mode})=>{if(mode==='invalidNonce')localStorage.setItem(nonce,'malformed-retained-finance');else localStorage.removeItem(owned);},{nonce:f.nonceKey,owned:f.ownedKey,mode});
+    await decision.getByRole('checkbox').check();await decision.getByRole('button',{name:handoffButton.zh,exact:true}).click();await review.getByRole('alert').waitFor();assert.equal(f.handoffCalls.length,0);assert.equal(f.financeCalls.length,0);assert.equal(await f.page.evaluate(k=>localStorage.getItem(k),markerKey),null);
+    assert.equal(await f.page.evaluate(k=>localStorage.getItem(k),f.nonceKey),mode==='invalidNonce'?'malformed-retained-finance':f.initial[f.nonceKey]);assert.equal(await f.page.evaluate(k=>localStorage.getItem(k),f.ownedKey),mode==='missingOwned'?null:f.initial[f.ownedKey]);
+   }else if(mode==='nonceChanged'){const review=await reviewed(f),decision=review.locator('[data-legacy-handoff]');await decision.getByRole('checkbox').check();await decision.getByRole('button',{name:handoffButton.zh,exact:true}).click();
+    await f.page.waitForFunction(()=>document.querySelector('[data-legacy-handoff] button')?.disabled);const until=Date.now()+3000;while(f.handoffCalls.length<1&&Date.now()<until)await new Promise(r=>setTimeout(r,10));assert.equal(f.handoffCalls.length,1);
+    const next=JSON.stringify({version:1,nonce:'22222222-2222-4222-8222-222222222222'});await f.page.evaluate(({k,v})=>localStorage.setItem(k,v),{k:f.nonceKey,v:next});f.releaseHandoff();await review.getByRole('alert').waitFor();assert.equal(await f.page.evaluate(k=>localStorage.getItem(k),markerKey),null);assert.equal(await f.page.evaluate(k=>localStorage.getItem(k),f.nonceKey),next);
+   }else{const panel=await isolateDual(f);if(mode==='unknown'){await panel.getByRole('button',{name:'读取原单',exact:true}).waitFor();assert.equal(await panel.getByRole('button',{name:acknowledgeText.zh,exact:true}).count(),0);await f.check();}
+    else{const ack=panel.getByRole('button',{name:acknowledgeText.zh,exact:true});await ack.waitFor();await f.page.evaluate(({owned,marker,mode})=>{if(mode==='markerRemoved')localStorage.removeItem(marker);else{const v=JSON.parse(localStorage.getItem(owned));v.revision++;v.data.customer.note='Changed elsewhere';localStorage.setItem(owned,JSON.stringify(v));}},{owned:f.ownedKey,marker:markerKey,mode});
+     const before=await f.bytes();await ack.click();await panel.getByRole('alert').waitFor();assert.deepEqual(await f.bytes(),before);}
+    assert.equal(f.financeCalls.some(c=>c.name.includes('acknowledge')),false);
+   }
+   assert.equal(await f.page.evaluate(k=>localStorage.getItem(k),f.legacyKey),f.initial[f.legacyKey]);assert.equal(f.calls.some(p=>/\/(submit|cancel|register-retained|preview)$/.test(p)),false);assert.deepEqual(f.errors,[]);assert.deepEqual(f.unexpected,[]);
+  }finally{f.releaseHandoff();await f.context.close();}
+ });}finally{await browser.close();}
 });

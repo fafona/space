@@ -4,6 +4,8 @@
 import assert from 'node:assert/strict';
 import http from '../src/lib/merchantCheckoutLegacyReview.server.ts';
 import handoffHttp from '../src/lib/merchantCheckoutLegacyHandoff.server.ts';
+import drafts from '../src/lib/merchantCheckoutAccountDraft.ts';import handoffs from '../src/lib/merchantCheckoutLegacyHandoff.ts';
+import checkoutClient from '../src/lib/merchantCheckoutClient.ts';
 export async function legacyReviewCases(t,{admin,a,b,seed,submit,state,site,one,ordinary,rows,records}){
  const origin='https://legacy-review-pg.synthetic.invalid',sql='select public.faolla_member_checkout_legacy_review_v1($1,$2,$3,$4,$5) result';
  const identity={accountId:'58889999',userId:'legacy-review-isolated-user'},sandbox='10909990',block='products',requestId='legacy-review-request';
@@ -30,6 +32,21 @@ export async function legacyReviewCases(t,{admin,a,b,seed,submit,state,site,one,
   const f=await seed(),x=await ordinary(f),order=await x.create(),q={siteId:site,blockId:x.input.blockId,requestId:x.input.clientRequestId},before=await state();
   const response=await invoke(q,f.principal,a,true);assert.equal(response.status,200);const value=await response.json();assert.equal(value.readOnly,true);assert.equal(value.review.order.id,order.id);
   assert.deepEqual(Object.keys(value.review.order).sort(),['createdAt','id','status','updatedAt']);assert.deepEqual(await(await invoke(q,{...f.principal,userId:'different-handoff-user'},a,true)).json(),empty(q));assert.deepEqual(await state(),before);
+ });
+ await t.test('actual ordinary and financial originals coexist: explicit local isolation rechecks SQL while preserving both originals, exact nonce, carts and every database table',async()=>{
+  for(const method of ['points','on_site']){const f=await seed(method),x=await ordinary(f),order=await x.create(),result=(await submit(f)).result,q={siteId:site,blockId:x.input.blockId,requestId:x.input.clientRequestId};
+   const response=await invoke(q,f.principal);assert.equal(response.status,200);const review=(await response.json()).review;assert.equal(review.order.id,order.id);
+   const scope={siteId:site,blockId:q.blockId,accountId:f.principal.accountId},ownedKey=drafts.accountCartStorageKey(scope),nonceKey=checkoutClient.checkoutClientStorageKey(site,f.principal.accountId),legacyKey=`merchant-space:product-cart:v1:${site}:${q.blockId}`;
+   const data={items:[],customer:{name:'Owned contact',email:'owned@example.invalid',phone:'123',note:'Keep note'},clientRequestId:''},values=new Map([[ownedKey,JSON.stringify({version:1,scope,revision:3,data})],[nonceKey,JSON.stringify({version:1,nonce:f.request.nonce})],[legacyKey,JSON.stringify({clientRequestId:q.requestId,customer:{name:'PRIVATE unowned'},items:[]})]]),initial=new Map(values),writes=[],before=await state();let reads=0;
+   const storage={getItem:k=>values.get(k)??null,setItem:(k,v)=>{writes.push(k);values.set(k,v);}},handoff=handoffs.createLegacyCartHandoff(scope,{storage,request:async(path,body,signal)=>{
+    assert.equal(path,'/api/member-checkout/legacy/handoff-review');assert.deepEqual(body,q);assert.ok(signal instanceof AbortSignal);reads++;const reply=await invoke(body,f.principal,a,true);assert.equal(reply.status,200);return reply.json();
+   }}),c=drafts.createAccountCartDraft(scope,{storage,exclusive:async(key,run)=>{assert.equal(key,nonceKey);await run();return true;},legacyHandoff:handoff,retainFinancialNonceOnHandoff:true});
+   try{await c.activate();assert.equal(c.getSnapshot().legacyPending,true);await c.confirmLegacyHandoff(review,true);assert.equal(c.getSnapshot().legacyPending,false);assert.equal(reads,1);assert.deepEqual(writes,[handoff.storageKey]);
+    for(const[k,v]of initial)assert.equal(values.get(k),v);assert.deepEqual(c.getSnapshot().data,data);assert.deepEqual(await state(),before);
+    const pending=(await one(a,'select public.faolla_member_checkout_pending_intent_v1($1,$2) result',[site,`account:${f.principal.accountId}:${f.principal.userId}`])).result.pending;
+    assert.equal(pending.operationKey,result.operationKey);assert.deepEqual(await state(),before);assert.equal(values.get(nonceKey),initial.get(nonceKey));
+   }finally{c.deactivate();}
+  }
  });
  await t.test('legacy read: canonical chunks override roots; strict raw identities, duplicate requests/IDs and financial marker cannot invent ownership',async()=>{
   await save([base]);let before=await state();const found=await(await invoke()).json();assert.deepEqual(found.review.order,{id:base.id,status:'pending',createdAt:'2026-11-24T10:00:00.000Z',updatedAt:'2026-11-24T10:00:00.123Z'});assert.ok(!JSON.stringify(found).includes('PRIVATE'));assert.deepEqual(await state(),before);

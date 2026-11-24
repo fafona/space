@@ -17,7 +17,7 @@ test("root gap: old reference review alone cannot provide an explicit isolated-a
 
 const scope = { siteId: "10909994", blockId: "products", accountId: "58000001" }, q = { siteId: scope.siteId, blockId: scope.blockId, requestId: "old-request" };
 const order = { id: "O-synthetic-old", status: "pending", createdAt: "2026-11-24T10:00:00.000Z", updatedAt: "2026-11-24T10:00:00.000Z" }, review = { version: 1 as const, ...q, order: { ...order, status: "pending" as const } };
-async function fixture() {
+async function fixture(retainFinancialNonce = false) {
   const values = new Map<string, string>(), writes: string[] = [], calls: string[] = []; let held = false;
   const storage = { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => { writes.push(k); values.set(k, v); } };
   const exclusive = async (_k: string, run: () => Promise<void>) => { if (held) return false; held = true; try { await run(); return true; } finally { held = false; } };
@@ -29,7 +29,7 @@ async function fixture() {
     if (!response.ok) throw Error("unavailable"); return response.json(); };
   const initial = createAccountCartDraft(scope, { storage, exclusive }); await initial.activate(); await initial.edit(d => ({ ...d, customer: { name: "Owned name", phone: "123", email: "owned@synthetic.invalid", note: "Owned note" } }));
   const legacy = JSON.stringify({ clientRequestId: q.requestId, customer: { name: "PRIVATE unowned", email: "private@synthetic.invalid" }, items: [{ productId: "PRIVATE", quantity: 99 }] }); values.set(initial.legacyKey, legacy); initial.deactivate(); writes.length = 0;
-  const handoff = createLegacyCartHandoff(scope, { storage, request }), create = () => createAccountCartDraft(scope, { storage, exclusive, legacyHandoff: handoff }), c = create();
+  const handoff = createLegacyCartHandoff(scope, { storage, request }), create = () => createAccountCartDraft(scope, { storage, exclusive, legacyHandoff: handoff, ...(retainFinancialNonce ? { retainFinancialNonceOnHandoff: true } : {}) }), c = create();
   await c.activate();
   return { values, writes, calls, storage, exclusive, handoff, c, create, legacy, session, req, request, key: legacyHandoffStorageKey(scope), nonceKey: checkoutClientStorageKey(scope.siteId, scope.accountId),
     data: (v: unknown) => { data = v; }, revoke: () => { enabled = false; } };
@@ -50,6 +50,42 @@ test("explicit confirmation rechecks actual HTTP and writes ONLY the scoped deci
   for (const [k, v] of before) assert.equal(x.values.get(k), v); assert.equal(x.values.get(x.nonceKey), undefined);
   const marker = JSON.parse(x.values.get(x.key)!); assert.deepEqual(Object.keys(marker).sort(), ["confirmedAt", "legacyHash", "review", "scope", "version"]); assert.match(marker.legacyHash, /^[a-f0-9]{64}$/); assert.equal(JSON.stringify(marker).includes("PRIVATE"), false); assert.equal(JSON.stringify(marker).includes("Owned name"), false);
   await x.c.edit(d => ({ ...d, customer: { ...d.customer, note: "New own note" } })); assert.equal(x.c.getSnapshot().data.customer.name, "Owned name"); assert.equal(x.c.getSnapshot().data.customer.note, "New own note"); assert.equal(x.values.get(x.c.legacyKey), x.legacy); assert.equal(x.values.get(x.key), JSON.stringify(marker));
+});
+
+test("dual pending references: explicit isolated-cart decision preserves the exact financial nonce and all cart bytes; financial edit remains blocked", async () => {
+  const x = await fixture(true), nonce = JSON.stringify({ version: 1, nonce: "11111111-1111-4111-8111-111111111111" }); x.values.set(x.nonceKey, nonce);
+  const before = new Map(x.values), raw = x.c.getSnapshot().raw;
+  await x.c.confirmLegacyHandoff(review, true);
+  assert.equal(x.c.getSnapshot().legacyPending, false); assert.equal(x.c.getSnapshot().raw, raw); assert.deepEqual(x.writes, [x.key]); assert.equal(x.calls.length, 1);
+  for (const [k, v] of before) assert.equal(x.values.get(k), v); assert.equal(x.values.get(x.nonceKey), nonce);
+  await x.c.edit(d => ({ ...d, customer: { ...d.customer, note: "MUST NOT EDIT" } }));
+  assert.equal(x.c.getSnapshot().ready, false); assert.equal(x.values.get(x.c.storageKey), raw); assert.equal(x.values.get(x.nonceKey), nonce); assert.deepEqual(x.writes, [x.key]);
+});
+
+test("dual-reference opt-in never accepts malformed financial storage or a missing durable owned cart", async () => {
+  for (const mode of ["invalid", "extra", "upper", "oversize", "missing-owned"]) {
+    const x = await fixture(true), value = { version: 1, nonce: "11111111-1111-4111-8111-111111111111" };
+    const raw = mode === "invalid" ? "unknown" : mode === "extra" ? JSON.stringify({ ...value, customer: "PRIVATE" }) : mode === "upper" ? JSON.stringify({ ...value, nonce: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA" }) : mode === "oversize" ? JSON.stringify(value) + " ".repeat(300) : JSON.stringify(value);
+    x.values.set(x.nonceKey, raw); if (mode === "missing-owned") { x.values.delete(x.c.storageKey); await x.c.refresh(); }
+    const before = new Map(x.values); await assert.rejects(x.c.confirmLegacyHandoff(review, true)); assert.deepEqual(x.values, before); assert.deepEqual(x.writes, []); assert.equal(x.calls.length, 0);
+  }
+});
+
+test("default handoff still refuses even a valid retained financial nonce; a separate opt-in is required", async () => {
+  const x = await fixture(), raw = JSON.stringify({ version: 1, nonce: "11111111-1111-4111-8111-111111111111" }); x.values.set(x.nonceKey, raw);
+  const before = new Map(x.values); await assert.rejects(x.c.confirmLegacyHandoff(review, true)); assert.deepEqual(x.values, before); assert.deepEqual(x.writes, []); assert.equal(x.calls.length, 0);
+});
+
+test("dual-reference guard checks exact nonce bytes before and after a held recheck, never clearing or replacing them", async () => {
+  for (const mode of ["replace", "remove", "whitespace"]) {
+    const x = await fixture(true), raw = JSON.stringify({ version: 1, nonce: "11111111-1111-4111-8111-111111111111" }); x.values.set(x.nonceKey, raw);
+    let release!: (v: unknown) => void, began!: () => void; const started = new Promise<void>(r => { began = r; });
+    const h = createLegacyCartHandoff(scope, { storage: x.storage, request: async () => { began(); return new Promise(r => { release = r; }); } });
+    const c = createAccountCartDraft(scope, { storage: x.storage, exclusive: x.exclusive, legacyHandoff: h, ...{ retainFinancialNonceOnHandoff: true } }); await c.activate();
+    const work = c.confirmLegacyHandoff(review, true); work.catch(() => {}); await started;
+    if (mode === "remove") x.values.delete(x.nonceKey); else x.values.set(x.nonceKey, mode === "whitespace" ? raw + " " : JSON.stringify({ version: 1, nonce: "22222222-2222-4222-8222-222222222222" }));
+    const before = new Map(x.values); release({ ok: true, readOnly: true, review }); await assert.rejects(work); assert.deepEqual(x.values, before); assert.deepEqual(x.writes, []); c.deactivate();
+  }
 });
 
 test("all four ordinary business states can be explicitly reviewed without cancellation, financial completion or payment assertions", async () => {
