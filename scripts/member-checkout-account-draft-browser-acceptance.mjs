@@ -29,9 +29,10 @@ test('owned actual cart isolates identity and serializes every draft writer with
  en:{begin:'Review member points & coupons',retry:'Recheck',review:'Review cart & coupons',confirm:'Confirm cart checkout',agreed:'I reviewed every item, points or amount, and each cancellation policy',done:'Original cart checkout',ack:'Reviewed — start another',kept:'Original checked. Contacts and unsubmitted products remain in the cart.'},
  es:{begin:'Revisar puntos y cupones',retry:'Verificar',review:'Revisar carrito y cupones',confirm:'Confirmar pedido completo',agreed:'He revisado todos los artículos, puntos o importe y las reglas de cancelación',done:'Pedido original del carrito',ack:'Revisado — empezar otro',kept:'Original verificado. Se conservan los contactos y productos no enviados.'}};
  const browser=await chromium.launch({headless:true});
- try{for(const width of [390,1280])for(const locale of ['zh','en','es'])for(const mode of locale==='zh'?['fresh','accounts','crossTab','storage','legacyOriginal','wrongOwner','ackLost','staleDraft','retainedNonce']:['fresh'])await t.test(`${width} ${locale} ${mode}`,async()=>{
-  const x=await cartReviewFixture(),text=copy[locale],context=await browser.newContext({viewport:{width,height:900}}),page=await context.newPage();
-  let account=x.f.principal.accountId,original=null,acknowledged=false;const requests=[],acks=[],errors=[],foreign=[];
+ try{for(const width of [390,1280])for(const locale of ['zh','en','es'])for(const mode of locale==='zh'?['fresh','accounts','crossTab','storage','legacyOriginal','wrongOwner','ackLost','staleDraft','retainedNonce','ackDraftChanged','ackDraftLost','ackDraftUnreadable','ackLostDraftChanged','ackLostSamePage']:['fresh','ackDraftChanged'])await t.test(`${width} ${locale} ${mode}`,async()=>{
+  const method=width===1280&&mode.startsWith('ack')&&mode!=='ackLost'?'on_site':'points';
+  const x=await cartReviewFixture(method),text=copy[locale],context=await browser.newContext({viewport:{width,height:900}}),page=await context.newPage();
+  let account=x.f.principal.accountId,original=null,acknowledged=false,changedDraft=null,savedDraft=null;const requests=[],acks=[],errors=[],foreign=[];
   const products=x.result.lines.map(l=>({id:l.productId,name:l.title,code:l.productId,price:'10',description:'Synthetic',imageUrl:'',thumbnailUrl:'',tag:''}));products.push({id:'keep',name:'Unselected product',code:'keep',price:'5',description:'',imageUrl:'',thumbnailUrl:'',tag:''});
   const scope={siteId:x.f.siteId,blockId:'products',accountId:account},key=`merchant-space:product-cart:v2:${x.f.siteId}:products:${account}`,legacyKey=`merchant-space:product-cart:v1:${x.f.siteId}:products`,nonceKey=`faolla-member-checkout-v2:${x.f.siteId}:${account}`;
   const items=products.map((p,i)=>({productId:p.id,product:p,quantity:1,checked:i<2,unitPrice:Number(p.price),unitPriceText:`€${p.price}`})),customer={name:'Owned synthetic contact',phone:x.customer.phone,email:x.customer.email,note:x.customer.note};
@@ -45,14 +46,17 @@ test('owned actual cart isolates identity and serializes every draft writer with
   const snapshotFor=body=>{const s=x.snapshotFor(body);s.quoteSnapshot.databaseNow=new Date().toISOString();return s;};
   await context.route('**/*',async route=>{const request=route.request(),url=new URL(request.url());
    if(url.pathname==='/')return route.fulfill({status:200,contentType:'text/html',body:'<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div>'});
-   if(url.pathname==='/api/member-checkout/cart/entry')return route.fulfill({status:200,json:{ok:true,intent:true,ownedDraft:true,entry:{siteId:x.f.siteId,accountId:account,query:request.postDataJSON(),offers:x.result.lines.map(l=>({offerId:l.offerId,offerRevision:l.offerRevision,title:l.title,maxQuantity:99,source:{kind:'order',productId:l.productId}}))}}});
+   if(url.pathname==='/api/member-checkout/cart/entry')return route.fulfill({status:200,json:{ok:true,intent:true,ownedDraft:true,entry:{siteId:x.f.siteId,accountId:account,query:request.postDataJSON(),offers:x.result.lines.map(l=>({offerId:l.offerId,offerRevision:l.offerRevision,title:l.title,maxQuantity:99,...(method==='on_site'?{onSiteOnly:true}:{}),source:{kind:'order',productId:l.productId}}))}}});
    if(!/^\/api\/member-checkout\/(cart|intent)\//.test(url.pathname)){foreign.push(url.pathname);return route.abort();}
    assert.equal(request.headers()['x-checkout-account-scope'],account);const body=request.postDataJSON();
    if(url.pathname.endsWith('intent/pending'))return route.fulfill({status:200,json:{ok:true,snapshot:{version:1,siteId:x.f.siteId,pending:original&&!acknowledged?reviewed():null}}});
    if(url.pathname.endsWith('intent/review'))return route.fulfill({status:200,json:{ok:true,review:original?reviewed():null}});
    if(url.pathname.endsWith('intent/acknowledge')){acks.push(body);acknowledged=true;assert.equal(acks.length,1);
-    const saved=JSON.parse(await page.evaluate(k=>localStorage.getItem(k),key));assert.equal(saved.data.items.length,1,'owned draft durable before server ack');
-    return route.fulfill(mode==='ackLost'?{status:503,json:{error:'checkout_intent_unconfirmed'}}:{status:200,json:{ok:true,acknowledgement:{version:1,siteId:x.f.siteId,operationKey:original.operationKey,generation:1,acknowledged:true,replayed:false}}});}
+    savedDraft=await page.evaluate(k=>localStorage.getItem(k),key);const saved=JSON.parse(savedDraft);assert.equal(saved.data.items.length,1,'owned draft durable before server ack');
+    if(mode==='ackDraftChanged')changedDraft=await page.evaluate(k=>{const value=JSON.parse(localStorage.getItem(k));value.revision++;value.data.customer.name='Newer local contact';const raw=JSON.stringify(value);localStorage.setItem(k,raw);return raw;},key);
+    if(mode==='ackDraftLost')await page.evaluate(k=>localStorage.removeItem(k),key);
+    if(mode==='ackDraftUnreadable')await page.evaluate(k=>{const get=Storage.prototype.getItem;window.__draftGet=get;Storage.prototype.getItem=function(name){if(name===k)throw new DOMException('synthetic read refusal');return get.call(this,name);};},key);
+    return route.fulfill(['ackLost','ackLostDraftChanged','ackLostSamePage'].includes(mode)?{status:503,json:{error:'checkout_intent_unconfirmed'}}:{status:200,json:{ok:true,acknowledgement:{version:1,siteId:x.f.siteId,operationKey:original.operationKey,generation:1,acknowledged:true,replayed:false}}});}
    if(url.pathname.endsWith('/preview'))return route.fulfill({status:200,json:{ok:true,...await previewCartSubmission({request:body,principal:x.f.principal,authorize:async()=>x.f.principal,enabled:()=>true},async()=>({data:{replayed:false,snapshot:snapshotFor(body)},error:null}))}});
    if(url.pathname.endsWith('/submit')){requests.push(body);assert.equal(original,null);const id=cartSubmissionIdentity(body,x.f.principal),p=(await planCartSubmission(snapshotFor(body),id,x.f.principal)).plan;
     const saved=JSON.parse(await page.evaluate(k=>localStorage.getItem(k),key));assert.equal(saved.data.customer.email,body.customer.email);
@@ -97,7 +101,24 @@ test('owned actual cart isolates identity and serializes every draft writer with
    if(mode==='staleDraft'){intervening=await page.evaluate(k=>{const value=JSON.parse(localStorage.getItem(k));value.revision++;value.data.customer.name='Newer local contact';const raw=JSON.stringify(value);localStorage.setItem(k,raw);return raw;},key);}
    await page.getByRole('checkbox',{name:text.agreed,exact:true}).check();await page.getByRole('button',{name:text.confirm,exact:true}).evaluate(b=>{b.click();b.click();});
    if(mode==='storage'||mode==='staleDraft'){await page.getByRole('alert').waitFor();assert.equal(requests.length,0);assert.equal(await page.evaluate(k=>localStorage.getItem(k),nonceKey),null);assert.equal(await page.evaluate(k=>localStorage.getItem(k),key),intervening??envelope);return;}
-   await page.getByRole('heading',{name:text.done,exact:true}).waitFor();assert.equal(requests.length,1);await page.getByRole('button',{name:text.ack,exact:true}).evaluate(b=>{b.click();b.click();});
+   await page.getByRole('heading',{name:text.done,exact:true}).waitFor();assert.equal(requests.length,1);assert.equal(original.method,method);
+   if(method==='on_site')assert.equal(original.capturedMinor,0,'draft acknowledgement is never cash collection');
+   await page.getByRole('button',{name:text.ack,exact:true}).evaluate(b=>{b.click();b.click();});
+   if(['ackLostDraftChanged','ackLostSamePage'].includes(mode)){
+    await page.getByRole('alert').waitFor();assert.notEqual(await page.evaluate(k=>localStorage.getItem(k),nonceKey),null);
+    if(mode==='ackLostDraftChanged')changedDraft=await page.evaluate(k=>{const value=JSON.parse(localStorage.getItem(k));value.revision++;value.data.customer.note='Keep newer note';const raw=JSON.stringify(value);localStorage.setItem(k,raw);return raw;},key);
+    await page.getByRole('button',{name:'读取原单',exact:true}).click();await page.getByRole('heading',{name:text.done,exact:true}).waitFor();
+    await page.getByRole('button',{name:text.ack,exact:true}).click();
+   }
+   if(['ackDraftChanged','ackDraftLost','ackDraftUnreadable','ackLostDraftChanged'].includes(mode)){
+    await page.waitForFunction(()=>!document.querySelector('[data-member-cart-checkout]')||document.querySelector('[data-member-cart-checkout] [role="alert"]'));
+    assert.notEqual(await page.evaluate(k=>localStorage.getItem(k),nonceKey),null,'a changed retained draft must not release the original reference');
+    await page.getByRole('alert').filter({hasText:locale==='zh'?'购物车草稿已变化':locale==='es'?'El carrito guardado cambió':'The saved cart changed'}).waitFor();
+    assert.equal(await page.getByRole('button',{name:text.confirm,exact:true}).count(),0);assert.equal(await page.locator('[data-cart-payment-status]').count(),0);
+    if(mode==='ackDraftUnreadable'){await page.evaluate(()=>{Storage.prototype.getItem=window.__draftGet;});changedDraft=savedDraft;}
+    assert.equal(await page.evaluate(k=>localStorage.getItem(k),key),changedDraft);assert.equal(acks.length,1);assert.equal(requests.length,1);
+    await page.screenshot({path:path.join(evidence,`${width}-${locale}-${mode}-retained.png`),fullPage:true,animations:'disabled'});return;
+   }
    if(mode==='ackLost'){await page.getByRole('alert').waitFor();assert.notEqual(await page.evaluate(k=>localStorage.getItem(k),nonceKey),null);await page.reload();await page.addStyleTag({content:css});await page.addScriptTag({content:bundle.outputFiles[0].text});await open(page);await page.getByRole('button',{name:text.retry,exact:true}).click();await page.getByRole('heading',{name:text.done,exact:true}).waitFor();await page.getByRole('button',{name:text.ack,exact:true}).click();}
    await page.getByText(text.kept,{exact:true}).waitFor();assert.equal(acks.length,1);assert.equal(await page.evaluate(k=>localStorage.getItem(k),nonceKey),null);
    const saved=JSON.parse(await page.evaluate(k=>localStorage.getItem(k),key));assert.equal(saved.data.items.length,1);assert.equal(saved.data.customer.email,x.customer.email);assert.equal(saved.revision,mode==='ackLost'?4:3,'same-frame clicks must not repeat draft preparation or cleanup');

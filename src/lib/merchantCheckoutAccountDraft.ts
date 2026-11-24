@@ -99,6 +99,15 @@ export function createAccountCartDraft(scope: AccountCartScope, ports: {
       await locked(run, async lease => { if (storage().getItem(lockKey) !== null) throw new Error("checkout_other_tab");
         raw = await controller.persist(expected, data, lease); }); return raw;
     },
+    /** Exact saved bytes, scope and legacy barrier, under the caller's live
+     * financial lock. A read check never adopts, repairs or rewrites a draft. */
+    verify(expected: string | null, lease: CheckoutDraftLease): undefined {
+      const run = epoch; valid(run); assertCheckoutDraftLease(lease, lockKey);
+      const current = read(run);
+      if (expected === null || current.raw !== expected) throw new Error("checkout_cart_changed");
+      if (current.legacyPending) throw new Error("checkout_legacy_original_pending");
+      valid(run); return undefined;
+    },
     async persist(expected: string | null, next: AccountCartData, lease?: CheckoutDraftLease): Promise<string> {
       const run = epoch; valid(run); assertCheckoutDraftLease(lease, lockKey);
       const current = read(run); if (current.raw !== expected) { emit({ ...current }); throw new Error("checkout_cart_changed"); }

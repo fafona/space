@@ -95,3 +95,52 @@ test("revision exhaustion cannot create an envelope that later fails its own par
   const x = fixture(), c = x.create(), raw = JSON.stringify({ version: 1, scope, revision: Number.MAX_SAFE_INTEGER - 1, data: { items: [], customer: { name: "", phone: "", email: "", note: "" }, clientRequestId: "" } });
   x.values.set(c.storageKey, raw); await c.activate(); await c.edit(d => ({ ...d, items: [item] })); assert.equal(c.getSnapshot().ready, false); assert.equal(x.values.get(c.storageKey), raw); assert.equal(x.events.length, 0);
 });
+
+test("release verification reads exact durable owned bytes under the live shared lease without writing", async () => {
+  const x = fixture(), c = x.create(); await c.activate(); await c.edit(d => ({ ...d, items: [item], customer: { name: "Kept", phone: "1", email: "kept@synthetic.invalid", note: "Keep note" } }));
+  const raw = c.getSnapshot().raw!, state = c.getSnapshot(), before = new Map(x.values), writes = [...x.events];
+  await x.exclusive(c.lockKey, () => withCheckoutDraftLease(c.lockKey, async lease => {
+    assert.equal(c.verify(raw, lease), undefined); assert.equal(c.verify(raw, lease), undefined);
+  }));
+  assert.deepEqual(x.values, before); assert.deepEqual(x.events, writes); assert.equal(c.getSnapshot(), state);
+});
+
+test("release verification rejects missing, changed, corrupt or wrong-owner data without adopting or repairing it", async () => {
+  for (const mode of ["absent", "changed", "corrupt", "owner"] as const) {
+    const x = fixture(), c = x.create(); await c.activate(); await c.edit(d => ({ ...d, items: [item] }));
+    const raw = c.getSnapshot().raw!, state = c.getSnapshot(), writes = [...x.events];
+    if (mode === "absent") x.values.delete(c.storageKey);
+    else if (mode === "corrupt") x.values.set(c.storageKey, "broken-json");
+    else { const next = JSON.parse(raw); if (mode === "changed") { next.revision++; next.data.customer.note = "newer"; } else next.scope.accountId = "59999999"; x.values.set(c.storageKey, JSON.stringify(next)); }
+    const before = new Map(x.values);
+    await withCheckoutDraftLease(c.lockKey, async lease => { assert.throws(() => c.verify(raw, lease)); });
+    assert.deepEqual(x.values, before); assert.deepEqual(x.events, writes); assert.equal(c.getSnapshot(), state);
+  }
+});
+
+test("release verification cannot treat an absent draft or a newly pending legacy original as saved", async () => {
+  const x = fixture(), c = x.create(); await c.activate();
+  await withCheckoutDraftLease(c.lockKey, async lease => { assert.throws(() => c.verify(null, lease)); });
+  await c.edit(d => ({ ...d, items: [item] })); const raw = c.getSnapshot().raw!;
+  x.values.set(c.legacyKey, JSON.stringify({ clientRequestId: "ordinary-original" })); const before = new Map(x.values), writes = [...x.events];
+  await withCheckoutDraftLease(c.lockKey, async lease => { assert.throws(() => c.verify(raw, lease), /checkout_legacy_original_pending/); });
+  assert.deepEqual(x.values, before); assert.deepEqual(x.events, writes);
+});
+
+test("release verification refuses forged, foreign, expired leases and an inactive owner", async () => {
+  const x = fixture(), c = x.create(); await c.activate(); await c.edit(d => ({ ...d, items: [item] })); const raw = c.getSnapshot().raw!, before = new Map(x.values), writes = [...x.events];
+  assert.throws(() => c.verify(raw, { key: c.lockKey }));
+  await withCheckoutDraftLease("another", async lease => { assert.throws(() => c.verify(raw, lease)); });
+  let expired!: CheckoutDraftLease;
+  await withCheckoutDraftLease(c.lockKey, async lease => { expired = lease; }); assert.throws(() => c.verify(raw, expired));
+  c.deactivate(); await withCheckoutDraftLease(c.lockKey, async lease => { assert.throws(() => c.verify(raw, lease), /checkout_draft_inactive/); });
+  assert.deepEqual(x.values, before); assert.deepEqual(x.events, writes);
+});
+
+test("release verification fails closed when storage becomes unreadable after a successful save", async () => {
+  const x = fixture(); let blocked = false;
+  const c = createAccountCartDraft(scope, { exclusive: x.exclusive, storage: { ...x.storage, getItem: k => { if (blocked && k === accountCartStorageKey(scope)) throw new Error("denied"); return x.storage.getItem(k); } } });
+  await c.activate(); await c.edit(d => ({ ...d, items: [item] })); const raw = c.getSnapshot().raw!, before = new Map(x.values), writes = [...x.events]; blocked = true;
+  await withCheckoutDraftLease(c.lockKey, async lease => { assert.throws(() => c.verify(raw, lease), /denied/); });
+  assert.deepEqual(x.values, before); assert.deepEqual(x.events, writes);
+});

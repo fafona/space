@@ -8,7 +8,7 @@ import { checkoutCouponClaimKey } from "@/lib/merchantCheckoutCoupons";
 import { merchantSettlementLanguage, formatSettlementMoney } from "@/lib/merchantSettlement";
 import { SERVICE_IDENTITY_CHANGED } from "@/components/service-center/serviceCenterClient";
 import { MerchantCheckoutCouponPicker } from "./MerchantCheckoutCouponPicker";
-import type { CheckoutDraftLease } from "@/lib/merchantCheckoutDraftLease";
+import type { CheckoutDraftLease, CheckoutDraftReleaseCheck } from "@/lib/merchantCheckoutDraftLease";
 
 const copy = {
   zh: { title: "购物车 · 会员结算", intro: "一次核对并提交全部所选商品。积分与现金分开计算；此处不在线扣款。", name: "姓名", email: "联系邮箱", phone: "联系电话", note: "备注", points: "积分兑换", cash: "到店付款", method: "结算方式", item: "商品", quantity: "数量", review: "核对整车与优惠券", confirm: "确认整车结算", agreed: "已核对全部商品、积分或金额及逐项取消规则", working: "正在核对…", unknown: "正在确认原单结果。请读取原单，不要重复提交。", recover: "读取原单", done: "整车原单", closed: "原单已取消", unpaid: "待到店付款 · 尚未收款", redeemed: "积分／券已兑换", covered: "优惠券已抵扣应付金额 · 未收取现金", policy: "取消规则", returnPoints: "按原单退积分", keepPoints: "不退积分", returnCoupons: "退回原券，原有效期不变", keepCoupons: "不退券", coupons: "券只分配给一个商品；需更换商品时先取消原选择。", clear: "清除全部所选券", total: "整车合计", balance: "当前可用积分", insufficient: "整车所需积分超过可用积分，不能提交。", acknowledged: "已核对原单，开始另一单", cancel: "取消整车原单", cancelConfirm: "确认取消整车（不能只取消其中一个商品）", reviewRequired: "原单资料需人工核对，请勿重复提交。", single: "找到原有的单项目结算，请先查看原单。", detail: "查看原单", login: "请登录本人账号后使用会员结算。", loginButton: "用户登录", invalid: "请填写姓名、有效邮箱及电话；姓名最多40字节，备注最多100字节。", failed: "暂时无法完成，请重新核对商品、会员或优惠券。", storage: "无法可靠保存原单编号，已暂停提交。请保留本页。", changed: "身份已变化，请重新打开购物车核对。", noReceipt: "提交不是在线付款；到店金额以商户核实收款为准。" },
@@ -19,10 +19,16 @@ const blank = (): CheckoutCustomerDraft => ({ name: "", title: "", email: "", ph
 const input = "min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900";
 const button = "min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold disabled:opacity-50";
 const primaryButton = "min-h-11 w-full rounded-xl bg-teal-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50";
+const retainedDraftCopy = {
+  zh: "购物车草稿已变化或暂时无法读取，原编号已保留。请保留本页并核对购物车；不要重新提交原单。",
+  en: "The saved cart changed or cannot be read. The original reference is kept. Keep this page and check the cart; do not resubmit the original.",
+  es: "El carrito guardado cambió o no se puede leer. Se conserva la referencia original. Conserva esta página y revisa el carrito; no reenvíes el original.",
+};
 type Props = { siteId: string; accountId: string | null; initialSelection: CartClientSelection; initialCustomer?: CheckoutCustomerDraft;
   locale?: string; controllerFactory?: typeof createCartCheckoutController; allowNewCheckout?: boolean; intentEnabled?: boolean;
   prepareInsideLock?: boolean; beforeSubmit?: (customer: CheckoutCustomerDraft, lease?: CheckoutDraftLease) => void | Promise<void>;
-  beforeRelease?: (original: CartClientOriginal, context: { createdHere: boolean; lease: CheckoutDraftLease }) => void | Promise<void>; onReleased?: () => void; onReturnToCart?: () => void };
+  beforeRelease?: (original: CartClientOriginal, context: { createdHere: boolean; lease: CheckoutDraftLease }) => void | Promise<void>;
+  verifyBeforeRelease?: CheckoutDraftReleaseCheck; onReleased?: () => void; onReturnToCart?: () => void };
 /** Shared review for standalone tests and the independently gated real cart.
  * Host callbacks own durable draft preservation; no implicit cart cleanup,
  * member change, cash collection or online payment happens here. */
@@ -32,7 +38,7 @@ export function MemberCartCheckoutPanel(props: Props) {
   return <Active key={JSON.stringify([props.siteId, props.accountId, props.initialSelection])} {...props} accountId={props.accountId}/>;
 }
 function Active({ siteId, accountId, initialSelection, initialCustomer, locale = "zh-CN", controllerFactory = createCartCheckoutController,
-  allowNewCheckout = true, intentEnabled = false, prepareInsideLock = false, beforeSubmit, beforeRelease, onReleased, onReturnToCart }: Props & { accountId: string }) {
+  allowNewCheckout = true, intentEnabled = false, prepareInsideLock = false, beforeSubmit, beforeRelease, verifyBeforeRelease, onReleased, onReturnToCart }: Props & { accountId: string }) {
   const t = copy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId, intentEnabled }), [siteId, accountId, intentEnabled, controllerFactory]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [selection, setSelection] = useState(() => structuredClone(initialSelection)), [customer, setCustomer] = useState(() => initialCustomer ? structuredClone(initialCustomer) : blank());
@@ -60,7 +66,7 @@ function Active({ siteId, accountId, initialSelection, initialCustomer, locale =
     try { if (prepareInsideLock) await controller.submit(lease => beforeSubmit?.(structuredClone(customer), lease));
       else { await beforeSubmit?.(structuredClone(customer)); await controller.submit(); } } catch { setDraftFailed(true); } finally { draftBusyRef.current = false; setDraftBusy(false); } };
   const acknowledge = async () => { if (draftBusyRef.current) return; draftBusyRef.current = true; setDraftBusy(true); setDraftFailed(false);
-    try { await controller.startAnother(beforeRelease); const next = controller.getSnapshot(); if (!next.pending && next.phase === "idle") onReleased?.(); }
+    try { await controller.startAnother(beforeRelease, verifyBeforeRelease); const next = controller.getSnapshot(); if (!next.pending && next.phase === "idle") onReleased?.(); }
     catch { setDraftFailed(true); } finally { draftBusyRef.current = false; setDraftBusy(false); } };
   const returnToCart = async () => { if (draftBusyRef.current || busy || state.pending || !onReturnToCart) return; draftBusyRef.current = true; setDraftBusy(true); setDraftFailed(false);
     try { await beforeSubmit?.(structuredClone(customer)); if (!controller.getSnapshot().pending) onReturnToCart(); }
@@ -68,7 +74,8 @@ function Active({ siteId, accountId, initialSelection, initialCustomer, locale =
   const field = (key: "name" | "email" | "phone" | "note", type = "text") => <label className="min-w-0 space-y-1 text-sm"><span>{t[key]}</span>{key === "note"
     ? <textarea className={input} rows={2} aria-label={t[key]} value={customer[key]} onChange={e => editField(key, e.target.value)}/>
     : <input className={input} aria-label={t[key]} type={type} value={customer[key]} onChange={e => editField(key, e.target.value)}/>}</label>;
-  const error = state.error === "checkout_invalid_customer" ? t.invalid : state.error === "checkout_storage_unavailable" ? t.storage : state.error ? state.pending ? t.unknown : t.failed : "";
+  const error = state.error === "checkout_draft_unconfirmed" ? retainedDraftCopy[merchantSettlementLanguage(locale)]
+    : state.error === "checkout_invalid_customer" ? t.invalid : state.error === "checkout_storage_unavailable" ? t.storage : state.error ? state.pending ? t.unknown : t.failed : "";
   return <section data-member-cart-checkout className="mx-auto max-w-4xl space-y-5 p-4 text-slate-900 sm:p-7">
     <header><p className="text-xs font-semibold tracking-widest text-teal-700">FAOLLA · MEMBER CHECKOUT</p><h1 className="mt-2 text-2xl font-bold">{t.title}</h1><p className="mt-2 text-sm leading-6 text-slate-600">{t.intro}</p></header>
     {error && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">{error}</p>}

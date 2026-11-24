@@ -4,7 +4,7 @@ import { cartReviewFixture } from "../../scripts/fixtures/member-checkout-cart-r
 import { createCartCheckoutController } from "./merchantCheckoutCartClient";
 import { CheckoutClientError, checkoutClientStorageKey, type CheckoutClientRequest } from "./merchantCheckoutClient";
 import { checkoutIntentTransport } from "./merchantCheckoutIntentTransport";
-import { assertCheckoutDraftLease } from "./merchantCheckoutDraftLease";
+import { assertCheckoutDraftLease, type CheckoutDraftReleaseCheck } from "./merchantCheckoutDraftLease";
 const nonce = "33333333-3333-4333-8333-333333333333";
 async function fixture(existing = false) {
   const x = await cartReviewFixture(), store = new Map<string, string>(), calls: string[] = [], events: string[] = [];
@@ -62,6 +62,50 @@ test("same-instance ack recovery does not repeat a successful draft cleanup afte
   const x = await fixture(), c = x.create({ request: async (p, b, s) => { const result = await x.request(p, b, s); if (p.endsWith("acknowledge")) throw new Error("lost"); return result; } });
   await c.activate(); await c.preview(x.f.request, x.customer); await c.submit(); let saved = 0; await c.startAnother(() => { saved++; });
   await c.recover(); await c.startAnother(() => { saved++; }); assert.equal(saved, 1); assert.equal(x.store.size, 0); assert.equal(x.events.filter(e => e === "ack").length, 1);
+});
+test("a retained draft must still be verifiable before acknowledgement dispatch", async () => {
+  const x = await fixture(), c = x.create(); await c.activate(); await c.preview(x.f.request, x.customer); await c.submit();
+  let prepared = 0;
+  await c.startAnother(() => { prepared++; }, () => { throw new Error("draft no longer available"); });
+  assert.equal(prepared, 1); assert.ok(x.store.has(x.key)); assert.equal(c.getSnapshot().phase, "unconfirmed");
+  assert.equal(c.getSnapshot().error, "checkout_draft_unconfirmed");
+  assert.equal(x.events.filter(e => e === "ack" || e === "release").length, 0);
+});
+test("draft proof is rechecked after ack and on retry without repeating cleanup or acknowledgement", async () => {
+  const x = await fixture(); let intact = true, checks = 0, prepared = 0;
+  const c = x.create({ request: async (p, b, s) => { const result = await x.request(p, b, s); if (p.endsWith("acknowledge")) intact = false; return result; } });
+  const verify = () => { checks++; if (!intact) throw new Error("draft changed while ack was in flight"); return undefined; };
+  await c.activate(); await c.preview(x.f.request, x.customer); await c.submit();
+  await c.startAnother(() => { prepared++; }, verify);
+  assert.equal(checks, 2); assert.equal(prepared, 1); assert.ok(x.store.has(x.key)); assert.equal(c.getSnapshot().phase, "unconfirmed");
+  assert.equal(c.getSnapshot().error, "checkout_draft_unconfirmed");
+  await c.recover(); await c.startAnother(() => { prepared++; }, verify);
+  assert.equal(prepared, 1); assert.equal(checks, 3); assert.ok(x.store.has(x.key));
+  intact = true; await c.recover(); await c.startAnother(() => { prepared++; }, verify);
+  assert.equal(prepared, 1); assert.equal(checks, 5); assert.equal(c.getSnapshot().pending, false);
+  assert.deepEqual(x.events, ["ack", "release"]);
+});
+test("lost ack response cannot bypass a new draft check on same-instance recovery", async () => {
+  const x = await fixture(); let intact = true, prepared = 0, checked = 0;
+  const c = x.create({ request: async (p, b, s) => { const result = await x.request(p, b, s); if (p.endsWith("acknowledge")) throw new Error("lost ack"); return result; } });
+  const verify = () => { checked++; if (!intact) throw new Error("changed"); return undefined; };
+  await c.activate(); await c.preview(x.f.request, x.customer); await c.submit(); await c.startAnother(() => { prepared++; }, verify);
+  intact = false; await c.recover(); await c.startAnother(() => { prepared++; }, verify);
+  assert.equal(prepared, 1); assert.equal(checked, 2); assert.ok(x.store.has(x.key)); assert.equal(c.getSnapshot().phase, "unconfirmed");
+  intact = true; await c.recover(); await c.startAnother(() => { prepared++; }, verify);
+  assert.equal(prepared, 1); assert.equal(checked, 4); assert.equal(c.getSnapshot().pending, false);
+  assert.deepEqual(x.events, ["ack", "release"]);
+});
+test("a draft verification callback receives a live matching lease and identity invalidation cannot continue ack or release", async () => {
+  const x = await fixture(), c = x.create(); await c.activate(); await c.preview(x.f.request, x.customer); await c.submit();
+  let checked = 0;
+  await c.startAnother(() => {}, lease => { assertCheckoutDraftLease(lease, x.key); checked++; c.deactivate(); return undefined; });
+  assert.equal(checked, 1); assert.ok(x.store.has(x.key)); assert.deepEqual(x.events, []); assert.equal(c.getSnapshot().original, null);
+});
+test("an accidental asynchronous draft verifier is not accepted as synchronous release proof", async () => {
+  const x = await fixture(), c = x.create(); await c.activate(); await c.preview(x.f.request, x.customer); await c.submit();
+  await c.startAnother(() => {}, (async () => {}) as unknown as CheckoutDraftReleaseCheck);
+  assert.ok(x.store.has(x.key)); assert.deepEqual(x.events, []); assert.equal(c.getSnapshot().phase, "unconfirmed");
 });
 test("changed original view requires another explicit review and no draft/ack runs on the first stale click", async () => {
   const x = await fixture(true), c = x.create(); await c.activate(); x.change({ hash: "b".repeat(64) });

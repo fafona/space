@@ -2,6 +2,9 @@
  * Lock. It is neither an auth token nor serializable/reusable after release.
  * Production callers must acquire the native account/site lock first. */
 export type CheckoutDraftLease = { readonly key: string };
+/** Synchronous local durability check, not server authority. It must neither
+ * rewrite a draft nor yield between the final check and nonce release. */
+export type CheckoutDraftReleaseCheck = (lease: CheckoutDraftLease) => undefined;
 const live = new WeakSet<object>();
 export async function withCheckoutDraftLease<T>(key: string, run: (lease: CheckoutDraftLease) => Promise<T>): Promise<T> {
   const lease = Object.freeze({ key }); live.add(lease);

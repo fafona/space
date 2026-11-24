@@ -91,6 +91,7 @@ export default function MemberProductCartBlock(props: ProductBlockProps) {
             intentEnabled={loaded?.intent} prepareInsideLock={!!owned} allowNewCheckout={captured.fresh && captured.selection.lines.length > 0}
             beforeSubmit={async (customer, lease) => { captured.raw = await captured.host.persist(captured.raw, customer, undefined, lease); captured.customer = customer; }}
             beforeRelease={async (original, context) => { captured.raw = await captured.host.persist(captured.raw, captured.customer, { selection: captured.selection, original, fresh: captured.fresh && (!loaded?.intent || context.createdHere) }, context.lease); }}
+            verifyBeforeRelease={owned ? lease => owned.verify(captured.raw, lease) : undefined}
             onReturnToCart={() => { if (window.localStorage.getItem(checkoutClientStorageKey(query.siteId, access.accountId)) !== null) throw new Error("checkout_cart_changed");
               capture.current = null; setActive(false); setLocked(false); }}
             onReleased={() => { capture.current = null; setActive(false); setLocked(false); setNotice(true); }}/>}

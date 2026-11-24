@@ -3,7 +3,7 @@ import { cartClientOriginalKey, parseCartClientOriginal, parseCartClientReview, 
   type CartClientOriginal, type CartClientReview, type CartClientSelection } from "./merchantCheckoutCartReview";
 import { checkoutIntentTransport } from "./merchantCheckoutIntentTransport";
 import { parsePendingCheckoutSnapshot, parseCheckoutIntentReview, parseCheckoutIntentAckResult, type CheckoutIntentReview } from "./merchantCheckoutPendingIntent";
-import { withCheckoutDraftLease, type CheckoutDraftLease } from "./merchantCheckoutDraftLease";
+import { withCheckoutDraftLease, type CheckoutDraftLease, type CheckoutDraftReleaseCheck } from "./merchantCheckoutDraftLease";
 
 export type CartClientState = { phase: "idle" | "quoting" | "ready" | "submitting" | "recovering" | "unconfirmed" | "confirmed" | "cancelling" | "acknowledging" | "error";
   pending: boolean; review: CartClientReview | null; original: CartClientOriginal | null; error: string; intentReviewRequired?: boolean };
@@ -11,6 +11,10 @@ const empty = (): CartClientState => ({ phase: "idle", pending: false, review: n
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const nonceValid = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(v);
 function need(v: unknown): asserts v { if (!v) throw new CheckoutClientError("checkout_invalid_response"); }
+function verifyRetainedDraft(check: CheckoutDraftReleaseCheck, lease: CheckoutDraftLease) {
+  try { need(check(lease) === undefined); }
+  catch { throw new CheckoutClientError("checkout_draft_unconfirmed"); }
+}
 function originalFinancialKey(o: CartClientOriginal) {
   if (o.kind === "cart") { const r = o.result; return JSON.stringify([o.kind, r.siteId, r.operationKey, r.resourceId, r.method, r.currency, r.totalPoints, r.grossMinor, r.discountMinor, r.dueMinor, r.couponCount, r.lines]); }
   if (o.original.method === "points") { const r = o.original.result; return JSON.stringify([o.kind, "points", r.siteId, r.operationKey, r.resourceKind, r.resourceId, r.totalPoints, r.couponCount, r.cancellationPolicy]); }
@@ -178,7 +182,7 @@ export function createCartCheckoutController(options: { siteId: string; accountI
       }); if (valid(run) && !locked) throw new CheckoutClientError("checkout_other_tab");
       } catch (error) { if (valid(run)) failed(error); } finally { if (valid(run)) busy = false; }
     },
-    async startAnother(beforeRelease?: (original: CartClientOriginal, context: { createdHere: boolean; lease: CheckoutDraftLease }) => void | Promise<void>) {
+    async startAnother(beforeRelease?: (original: CartClientOriginal, context: { createdHere: boolean; lease: CheckoutDraftLease }) => void | Promise<void>, verifyDraft?: CheckoutDraftReleaseCheck) {
       if (!active || busy || !nonce && !intent || state.phase !== "confirmed" || !state.original || intent?.reviewRequired || state.original.kind === "cart" && state.original.result.reviewRequired) return;
       const ref = nonce, op = cartClientOriginalKey(state.original), displayedHash = intent?.reviewHash, run = epoch; busy = true;
       try { const locked = await exclusive(key, () => withCheckoutDraftLease(key, async lease => {
@@ -191,6 +195,10 @@ export function createCartCheckoutController(options: { siteId: string; accountI
         if (beforeRelease && (!options.intentEnabled || preparedOperation !== op)) { await beforeRelease(structuredClone(state.original), { createdHere: createdOperation === op, lease });
           if (options.intentEnabled) preparedOperation = op; }
         if (!valid(run) || read() !== ref) throw new CheckoutClientError("checkout_other_tab");
+        // Preparation is intentionally not repeated after a lost ack. Its
+        // retained bytes must nevertheless be checked on EVERY attempt.
+        if (verifyDraft) { verifyRetainedDraft(verifyDraft, lease);
+          if (!valid(run) || read() !== ref) throw new CheckoutClientError("checkout_other_tab"); }
         if (options.intentEnabled) {
           need(intent && intent.operationKey === op);
           if (!intent!.acknowledged) { const coordinates = { siteId: options.siteId, operationKey: op, generation: intent!.generation, reviewHash: intent!.reviewHash };
@@ -199,6 +207,10 @@ export function createCartCheckoutController(options: { siteId: string; accountI
           }
           if (!valid(run) || read() !== ref) throw new CheckoutClientError("checkout_other_tab");
         }
+        // Ack is not proof that browser storage survived the asynchronous
+        // request. Do not release if the host draft changed or became unreadable.
+        if (verifyDraft) { verifyRetainedDraft(verifyDraft, lease);
+          if (!valid(run) || read() !== ref) throw new CheckoutClientError("checkout_other_tab"); }
         if (ref) write(null, ref); nonce = null; intent = null; intentReady = true; createdOperation = null; preparedOperation = null; selection = null; person = null; publish(empty());
         if (options.intentEnabled) await recover(run);
       })); if (valid(run) && !locked) throw new CheckoutClientError("checkout_other_tab");
