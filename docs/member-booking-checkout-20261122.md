@@ -19,7 +19,7 @@ Stripe 对接延后到其他业务功能接近完成时再做，不作为当前�
 
 ## 状态与边界
 
-目前推进到**第五十六阶段：服务端专用 transport 与真实本地 PostgREST 联测（仅本地、未上线）**。新结算 RPC 默认调用器已改为专用服务端凭据＋固定入口，原只读来源和普通预约／订单写入路径保留；原 37 份 SQL、函数与权限守卫未改。独立 owned TEMP 验证真实 HTTP／JWT／角色切换、积分预约幂等和到店付款取消，但用户身份仍为合成注入，没有启动 Next／真实登录会话或真机验收。运行角色原型仍不是正式迁移，原兼容检查继续拒绝未经批准的额外入口；不能直接部署或打开正式开关。下一步需收口真实 Next／会话、网关凭据交付与生命周期、结构／迁移登记及兼容部署验收；Stripe 仍最后接入。
+目前推进到**第五十七阶段的隔离 Next／Cookie 会话联测通过**。已获用户批准，仅将 `src/instrumentation.ts` 原有 `nodejs && production` 条件显式包住动态导入及原启动调用；不修改后台任务逻辑或开关。6 项编译／启动回归通过，新增用例由既有本地／CI 自动发现器收录，无需修改工作流。实际 HTTPS Next 路由接收 Secure／HttpOnly Cookie，经原会话解析器、合成 Auth HTTP 和真实 PostgREST／SQL 的完整合并运行 **154 项通过、0 跳过**。所有工作仅本地，未上线；原 SQL、角色和正式数据均未改，Stripe 仍最后接入。真实身份服务、生产构建、迁移／权限登记及部署兼容验收仍未完成。
 第四十七阶段预约原单的提交、恢复与取消验收保留。早期 SQL 验收已覆盖预约提交／取消，近期 intent 金融样本主要为商品订单；独立 owned TEMP PostgreSQL 使用实际预约配置、发布源、控制器、HTTP、可信规划器与原预约写入器验证积分／金额券及原政策取消。它不替代运行 Next.js／PostgREST 或真机验收。
 第四十六阶段旧完成赠分保护保留。已复现旧赠分准备器／旧 CAS 可对关联原单额外赠分；独立数据库触发器提案只拒绝账本关联商品原单的旧赠分／撤销赠分标记变化。它不替换旧函数，不给 API 角色私有权限，不按订单“完成”生成收款凭证，也不修改既有普通赠分政策。提案仍未安装或部署，不代表任意旧版本可安全回退。
 第四十五阶段缺失原车的顺序保护保留。已复现“页面重新打开时账号车缺失，宿主先保存空车、随后校验新字节”的顺序漏洞；原单确认现在先核对已存在的准确草稿，再执行宿主保存，并保留保存后／服务器确认后的原复核。缺失、损坏、归属错误、变化或不可读时不运行宿主准备、不 ack、不释放编号；没有本机 nonce 的跨设备原单也受相同限制。首次新车保存及不带草稿校验端口的旧路径保留。只读入口不因此获得恢复未提交内容或放行新单的能力，未自动重建草稿。
@@ -2066,3 +2066,33 @@ git diff --check
 ### 下一步及不能误称完成的部分
 
 本地默认 transport 可达已被实际验证，但原型仍未成为可安装的生产能力。还需真实 Next 与账号会话链路、实际网关凭据安全交付／轮换／撤销、正式环境角色权限可行性、完整表结构／迁移登记、停用与兼容回滚／无维护发布演练。只有另行获得正式权限／数据变更和发布授权后才能实施生产步骤；本轮不打开开关。现金及部分退款等前阶段待办仍保留，Stripe 按用户要求最后接入；整体计划尚未全部完成。
+
+## 第五十七阶段：真实 Next 路由与 Cookie 会话隔离验证（2026-11-25）
+
+- 初稿阶段新增本地 opt-in 验收：完整复制应用源文件／配置并核对指纹，不复制 `.env`；Next 仅在 owned TEMP 运行，数据库和 PostgREST 仍为独立新建实例。浏览器拟使用 HttpOnly Cookie，经原会话解析器与 Supabase SDK、固定运行端口到真实 SQL；身份服务本身是明确的合成 HTTP 夹具，不是 GoTrue／真实注册账号。最初运行尚未执行到这些会话断言，不能称为已经验证；最终结果单独记录于下文。
+- 原完整 SQL 生命周期仍独立注册，120 秒上限不变。本轮已完整重跑原 **122 项**，通过证据 `C:/Users/User/AppData/Local/Temp/faolla-checkout-booking-intent-test-EfPszg`，约 89 秒且已停止。新增 Next 套件有自己的新集群／120 秒预算，不用它代替原生命周期。后续按测试名称运行的定位只属诊断，不能作为完整通过证据。
+- 第一处夹具问题：干净工作树没有自动生成的 `next-env.d.ts`，拷贝步骤错误地要求存在。仅让 Next 在临时副本自动生成；不在原树创建。失败部分副本 `.../faolla-checkout-next-3xh8tv` 与父库 `.../faolla-checkout-booking-intent-test-PYXG9e` 保留，父库已停止，没有启动 Next 进程。
+- 第二处夹具问题：C 盘 TEMP 通过 junction 使用 D 盘 Next 包，框架生成无效 `./D:/...` 开发入口。仅在副本复制现有锁定的 Next 包到同盘，其他依赖仍引用现有安装，不安装／更新依赖。新文件、副本和失败日志保留；不修改生产 Next 配置。
+- 在排除跨盘入口问题后，真实整应用开发编译仍返回 500，日志准确指向 `src/instrumentation.ts -> merchantBookingAutomationRuntime -> webPush -> firebaseCloudMessaging -> firebase-admin -> agent-base/http`。原入口使用提前 return，并未阻止 Edge 编译器收集其后的 Node 专用动态依赖。该源文件与 HEAD 完全一致（SHA-256 `a3372e02b73c6c9dfd323b5ec880c1672f39aa1284b9874428512f8449a10488`），并非本轮新增结算代码。
+- A/B 仅改 `C:/Users/User/AppData/Local/Temp/faolla-checkout-next-Iijw9U/app/src/instrumentation.ts`：将原两项运行条件包住 import／启动调用，保留 `nodejs && production` 的相同条件。其余应用源不变，GET 实际结算路由由 500 恢复为预期 405；`next-startup.log`、`next-startup-conditional.log` 均保留。**这只是根因诊断，不是未修改应用的会话验收通过**。参考 [Next 运行时专用条件导入](https://nextjs.org/docs/app/guides/instrumentation#importing-runtime-specific-code)。
+- 开发框架会尝试一次 npm registry 版本查询，夹具网络守卫始终拒绝，没有放行对外请求；已记录固定 origin。初版 cleanup 将这一预期阻断计数断言为 0，掩盖了实际 500；定位后保留计数与 origin，不修改应用网络策略。Next 均已通过 IPC 确认退出，PostgREST 与 PostgreSQL 亦已停止，文件／失败日志不删除。
+- 上一轮截至请求批准时：现有 15 项兼容／入口契约通过；新启动及会话套件仍未通过，仓库 `src`、应用指纹、SQL、依赖、CI、发布工具及真实数据未改。以上为失败及根因定位的历史记录，不是会话验证通过。随后用户批准仅调整启动条件结构、补对应回归及人工候选 pin；不能为通过测试删掉 instrumentation、禁用原任务、跳过原测试或降低生产守卫。
+
+### 本轮获批修正及夹具收敛
+
+- 仅调整启动条件的结构，仍只在 `nodejs/production` 导入并启动原预约任务。直接编译实际入口的 6 项测试覆盖 Edge、开发／测试、不明 runtime 和生产分支；生产仅调用一次，原启动失败照常抛出，不重试。测试不导入真实 worker、不启动计时器或后台作业。
+- 按已获批准的源文件变更人工核对候选：基础提交 `8a94beaf56e2becf2b5516de4b17d4d90a286b99`，应用 2971 文件 SHA-256 `7aaecb5c7bf82f5e43c21c408dbb4fd9b12404525abe49cadcb00d57a0a72f26`。37 份 SQL、79 函数、23 表、26 守卫指纹不变；仍非生产安装／发布授权。
+- 正式 Cookie 的 `__Host-`／Secure 要求不能在 HTTP 测试中满足，因此改用临时自签证书的 loopback HTTPS；证书和密钥仅保存在 owned TEMP，不加入系统信任。浏览器只在该独立测试 context 接受测试证书，原 Cookie 继续 Secure／HttpOnly；原生 HTTPS 异源测试明确指定该证书作 CA，保留正常证书校验。HTTP Cookie 失败证据 `.../faolla-checkout-next-jqMhj0`／`.../faolla-checkout-booking-intent-test-Oxkia2` 已保留、进程已停。
+- HTTPS 诊断已得到实际结算 200，但合成 Auth 缺少原解析器实际使用的管理员分页回退查询，导致夹具错误及未验证账号断言失败；证据 `.../faolla-checkout-next-ymyHQx`／`.../faolla-checkout-booking-intent-test-mv2XCA` 保留。只补精确分页参数、服务凭证核对及合成用户响应，不改应用认证实现，不用分页查询失败冒充已验证的新鲜资料。现有 `loadFreshAuthUser` 脱离 SDK 实例调用 `getUserById` 会进入分页回退；该旧实现本轮不改，后续可独立优化。
+- 测试 launcher 改为 ESM 以符合既有 lint，未放宽 lint；整理入口格式时的一次尚在准备中的诊断引用了旧 `.cjs` 路径，退出失败，证据 `.../faolla-checkout-next-yq3TAi`／`.../faolla-checkout-booking-intent-test-GRQde2` 保留、父库已停。后续从固定的 `.mjs` 入口全新执行，不接续旧失败进程。
+- 所有身份均是新生成 UUID／合成账号，认证 HTTP 仅供临时 Next 使用；真实 PostgREST 验证运行凭证，实际 SQL 执行事务。浏览器未拦截／替换 session、RPC、handler，也没有使用真实用户口令。这仍不是 GoTrue 登录／刷新、生产构建、真实设备或上线验收。
+
+### 最终本地验收
+
+- 固定入口 `node --import tsx --test scripts/member-checkout-next-session-acceptance.mjs`，显式开启本地 HTTP／Next 验收并指定原有已核对的 TEMP PostgreSQL／PostgREST 依赖；**不加 test-name-pattern、不跳过原测试**。完整运行约 158 秒，两个外层套件分别约 92／65 秒，各自保留 120 秒上限；**154 项通过，0 失败／取消／跳过**，包括原 122 项及新独立套件 32 项（均含外层计数）。
+- 原套件证据 `C:/Users/User/AppData/Local/Temp/faolla-checkout-booking-intent-test-f3FJ79`。新套件父库 `.../faolla-checkout-booking-intent-test-wKAVDJ`，真实 Next 证据 `.../faolla-checkout-next-Vl1UGX`，保留 `next.log` 与不含凭证的 `synthetic-request-audit.json`。Next 经 IPC 确认关闭，PostgREST／PostgreSQL 均正常停止；失败目录和日志不清理。
+- 浏览器同源 POST 实际路由：读取 HttpOnly 登录 Cookie；每次原会话授权通过后只走固定 runtime 入口，首次预约扣 80 积分及核销原券，余额 1000→920；原单重放不再扣减，完整财务状态逐表不变。响应不泄露 runtime 凭证，保留 no-store。页面脚本读取不到 Cookie。
+- 无 Cookie、撤销／过期 Cookie、未验证邮箱、暂停服务、伪造账号提示、异源、业务 token 请求头、缺失账号提示，均拒绝且财务 RPC 调用为 0／表状态不变；未验证／暂停／伪造账号用例明确验证已执行管理员新鲜资料查询，不因夹具漏接口误判成功。
+- 在快照后更换账号资料不会继续提交；提交已发生后暂停账号返回 `checkout_unconfirmed`，不伪造失败回滚或重复补扣。恢复原账号后重放同一原单，仍只有一笔扣减。浏览器与 Node 的测试请求不使用真实顾客资料。
+- 本轮最终选定源代码／HTTP／预约单测 **796 项通过、0 跳过**（含 6 项 instrumentation）；较早范围更广的选定回归 **889 项通过**，两者重叠，不相加。原后台启动／原子准备专项 18 项通过；兼容／固定入口／默认接线契约 15 项通过；全仓 TypeScript、相关文件 ESLint、严格乱码及空白检查通过。既有 37 项组件浏览器结果保留为前一阶段证据，本轮未把它们算作重新完成的手机 UI 验收。
+- 未改 package／lock、SQL 提案、正式迁移、角色或数据；无 push、远程 CI、生产构建或部署，Stripe／邮件／后台任务均未启用。下一步仍需独立验证真实身份服务（含刷新／撤销）和生产构建／最小权限安装及回滚可行性；现有原型兼容检查仍不能自动授权上线。

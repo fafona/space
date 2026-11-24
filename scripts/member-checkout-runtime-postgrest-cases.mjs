@@ -16,8 +16,9 @@ import single from '../src/app/api/member-checkout/single/route-handler.ts';
 import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
 import onSite from '../src/lib/merchantCheckoutOnSiteHttp.server.ts';
 import booking from '../src/lib/merchantBookingAtomicRuntime.server.ts';
+import { checkoutNextSessionCases } from './member-checkout-next-session-cases.mjs';
 
-export async function checkoutRuntimePostgrestCases(t, { db, connection, binaries, evidence, seed, state, page, site, requestFor, sessionFor, decode }) {
+export async function checkoutRuntimePostgrestCases(t, { db, connection, binaries, evidence, seed, state, page, site, requestFor, sessionFor, decode, nextAcceptance = false }) {
   assert.equal(process.env.FAOLLA_CHECKOUT_HTTP_ACCEPTANCE, '1');
   const directory = await realpath(process.env.FAOLLA_CHECKOUT_POSTGREST_TEST_DIR ?? '.missing-postgrest');
   const relative = path.relative(tmpdir(), directory);
@@ -31,6 +32,8 @@ export async function checkoutRuntimePostgrestCases(t, { db, connection, binarie
   // Only this fresh cluster receives a noninheriting authenticator membership.
   await db.query(`create role checkout_local_gateway login noinherit nosuperuser nocreatedb nocreaterole nobypassrls;
     grant faolla_checkout_runtime,anon,authenticated,service_role to checkout_local_gateway`);
+  if (nextAcceptance) await db.query(`create table public.merchant_enterprise_employees(id text primary key,auth_user_id text not null);
+    grant select on public.merchant_enterprise_employees to service_role`);
   const secret = randomBytes(48).toString('base64url'), audience = 'checkout-owned-local-only';
   const token = (patch = {}, signingKey = secret) => {
     const parts = [{ alg: 'HS256', typ: 'JWT' }, { role: 'faolla_checkout_runtime', aud: audience, exp: Math.floor(Date.now() / 1000) + 300, ...patch }]
@@ -150,6 +153,7 @@ export async function checkoutRuntimePostgrestCases(t, { db, connection, binarie
       assert.equal((await page(`__merchant_memberships__:${site}`)).blocks.find(member => member.id === f.member.id).pointBalance, 1000);
       assert.equal((await page(`__merchant_coupons__:${site}`)).blocks.find(coupon => coupon.id === f.coupon.id).redeemEvents.length, 1);
     });
+    if (nextAcceptance) await checkoutNextSessionCases(t, { seed, state, page, site, gatewayPort: port, token });
   } finally {
     keys.forEach((key, i) => { if (before[i] === undefined) delete process.env[key]; else process.env[key] = before[i]; });
     proxy.closeAllConnections(); if (proxy.listening) await new Promise(resolve => proxy.close(resolve));

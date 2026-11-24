@@ -38,7 +38,7 @@ import { unusedReferenceCases } from './member-checkout-unused-reference-postgre
 import { boundCheckoutCases } from './member-checkout-bound-postgres-cases.mjs';
 import { originalServiceCases } from './member-checkout-original-service-postgres-cases.mjs';
 
-test('owned booking intent lifecycle preserves coupons, points, slots and exact originals', { timeout: 120000 }, async t => {
+export async function runOwnedCheckoutAcceptance(t, { nextAcceptance = false } = {}) {
   const runtime = path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR || '.missing-test-runtime');
   const relative = path.relative(tmpdir(), runtime);
   assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative) && path.basename(runtime).startsWith('faolla-booking-pg-'));
@@ -118,8 +118,8 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
       return value;
     };
     let index = 0;
-    const seed = async (method, returns) => {
-      const at = new Date().toISOString(), principal = { accountId: String(57000000 + (++index)), userId: `booking-intent-synthetic-${index}` };
+    const seed = async (method, returns, identity = {}) => {
+      const at = new Date().toISOString(), principal = { accountId: String(57000000 + (++index)), userId: identity.userId ?? `booking-intent-synthetic-${index}` };
       const blockId = `booking-${randomUUID()}`, appointmentAt = `${bookingTime.bookingWallTimeAt(new Date(Date.now() + 3 * 86400000), 'Europe/Madrid').slice(0, 10)}T12:00`;
       const blocks = [{ id: blockId, type: 'booking', props: { bookingStoreOptions: [`Synthetic ${index}`], bookingItemOptions: ['Play'], bookingTitleOptions: ['Mx'], bookingTimeSlotRules: [{ timeRange: '10:00-18:00', maxBookings: 1 }] } }];
       const source = sources.buildCheckoutSourceChoices({ siteId: site, siteName: 'Synthetic', blocks, catalog: null, allowBooking: true, allowOrder: false })[0]; assert.ok(source);
@@ -180,7 +180,10 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
     const sessionFor = f => async () => ({ ...f.principal, servicePaused: false, user: { email_confirmed_at: '2026-01-01T00:00:00.000Z' } });
     const decode = async response => { const value = await response.json(); assert.equal(response.status, 200, JSON.stringify(value)); return value; };
 
-    if (process.env.FAOLLA_CHECKOUT_HTTP_ACCEPTANCE === '1') await checkoutRuntimePostgrestCases(t, { db, connection, binaries, evidence, seed, state, page, site, requestFor, sessionFor, decode });
+    if (nextAcceptance || process.env.FAOLLA_CHECKOUT_HTTP_ACCEPTANCE === '1') await checkoutRuntimePostgrestCases(t, { db, connection, binaries, evidence, seed, state, page, site, requestFor, sessionFor, decode, nextAcceptance });
+    // An independent Next acceptance gets its OWN cluster and 120-second budget.
+    // The original full lifecycle test below always remains separately registered.
+    if (nextAcceptance) return;
 
     for (const method of ['points', 'on_site']) for (const returns of [true, false]) {
       await t.test(`${method}: booking/coupon original survives lost acknowledgement and reopen; frozen return=${returns}`, async () => {
@@ -290,4 +293,5 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
     }
     console.log(`BOOKING_INTENT_CLUSTER_STOPPED=${evidence}`);
   }
-});
+}
+test('owned booking intent lifecycle preserves coupons, points, slots and exact originals', { timeout: 120000 }, t => runOwnedCheckoutAcceptance(t));
