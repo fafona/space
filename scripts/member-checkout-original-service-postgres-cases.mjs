@@ -12,6 +12,7 @@ import cartFixtures from './fixtures/member-checkout-cart-quote.ts';
 import cartService from '../src/lib/merchantCheckoutCartSubmission.server.ts';
 import boundHttp from '../src/lib/merchantCheckoutBoundSubmit.server.ts';
 import { partialGateOrderCases } from './member-checkout-partial-gate-postgres-cases.mjs';
+import { partialGateBookingCases } from './member-checkout-partial-booking-postgres-cases.mjs';
 
 export async function originalServiceCases(t, { db, peer, one, site, seed, state, rpc, requestFor, sessionFor, decode }) {
   assert.equal((await one(db, 'select count(*)::int n from faolla_checkout_design.original_service_pilots where enabled')).n, 0);
@@ -38,8 +39,10 @@ export async function originalServiceCases(t, { db, peer, one, site, seed, state
     expectedUpdatedAt: (review.original.kind === 'cart' ? review.original.result : review.original.original.result).resource.updatedAt });
   const serviceArgs = (f, review) => ({ p_site_id: f.siteId, p_operation_key: f.operationKey, p_principal_key: `account:${f.principal.accountId}:${f.principal.userId}`,
     p_review_hash: review.reviewHash, p_expected_updated_at: bodyFor(review).expectedUpdatedAt, p_not_after: new Date(Date.now() + 10_000).toISOString() });
-  for (const method of ['points', 'on_site']) for (const returns of [true, false]) await t.test(`${method}: purchases stopped, original cancellation/lost reply/replay follows frozen return=${returns}`, async () => {
-    const f = await prepare(method, returns); await enable(site); const restore = await stopPurchases(site); const savedOriginal = await one(db, 'select to_jsonb(r) original from faolla_checkout_design.bundle_results r where site_id=$1 and operation_key=$2', [site, f.operationKey]);
+  for (const method of ['points', 'on_site']) for (const returns of [true, false]) await t.test(`${method}: purchases stopped, original cancellation/lost reply/replay follows frozen return=${returns}`, async bookingTest => {
+    const f = await prepare(method, returns);
+    if (returns) await partialGateBookingCases(bookingTest, { db, one, state, original: f });
+    await enable(site); const restore = await stopPurchases(site); const savedOriginal = await one(db, 'select to_jsonb(r) original from faolla_checkout_design.bundle_results r where site_id=$1 and operation_key=$2', [site, f.operationKey]);
     const before = await state(); let cancels = 0, firstLost = true;
     const c = serviceClient.createOriginalServiceController({ siteId: site, operationKey: f.operationKey, accountId: f.principal.accountId, request: async (path, body) => {
       const cancel = path.endsWith('/cancel'), r = await invoke(f, cancel, body), v = await r.json(); if (!r.ok) throw new common.CheckoutClientError(v.error, r.status);

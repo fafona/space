@@ -161,6 +161,12 @@ function isOrderBusinessOnlyMutation(input: BoundaryInput) {
       : input.status === undefined && ["confirm", "complete", "uncomplete", "touch", "print"].includes(input.action));
 }
 
+function isRetainedBookingStatusMutation(input: BoundaryInput) {
+  return input.mode === "merchant" && input.kind === "booking" && !!input.actor && input.actor.siteId === input.siteId
+    && input.action === undefined && ["active", "confirmed", "completed", "no_show"].includes(input.status ?? "")
+    && input.items === undefined && input.updates === undefined && input.bookingBlockId === undefined && input.bookingViewport === undefined;
+}
+
 /** Compatibility bridge: null means use the UNCHANGED legacy path. Only an
  * original-ledger cancellation is intercepted. Never impersonate a customer
  * for merchant actions; the private SQL command audits the actual owner. */
@@ -194,8 +200,25 @@ export async function bridgeLegacyCheckoutMutation(input: BoundaryInput, overrid
       if (cart.linked) return cart.value;
     } catch (error) { if (error instanceof MerchantCheckoutError) throw new CheckoutLegacyBoundaryError(error.code, error.status); throw error; }
   }
-  const callRpc = deps.rpc(), initialSession = scope.mode === "personal" ? await deps.session(scope.request) : null;
-  const mixed = scope.siteId ? deps.cashEnabled(scope.siteId) : deps.anyCashEnabled();
+  const originalRpc = deps.rpc(), initialSession = scope.mode === "personal" ? await deps.session(scope.request) : null;
+  // Stopping new venue payments must not reinterpret an existing venue booking
+  // as a points checkout. This exception is only a read before an existing
+  // permission-checked status writer, never a grant to cancel, edit or collect.
+  const retainedBookingStatus = !!scope.siteId && !deps.cashEnabled(scope.siteId) && isRetainedBookingStatusMutation(scope);
+  const mixed = retainedBookingStatus || (scope.siteId ? deps.cashEnabled(scope.siteId) : deps.anyCashEnabled());
+  const callRpc: MemberCheckoutResultRpc = retainedBookingStatus ? async (name, args) => {
+    if (!["faolla_checkout_resource_link_v2", "faolla_member_checkout_reporting_v2"].includes(name)) throw new CheckoutLegacyBoundaryError("checkout_unavailable", 503);
+    return originalRpc(name, args);
+  } : originalRpc;
+  const reauthorizeRetainedBooking = async () => {
+    if (!retainedBookingStatus) return;
+    await scope.assertAuthorizationCurrent?.();
+    const current = await deps.actor(scope.request, { siteId: scope.siteId! });
+    if (!deps.enabled(scope.siteId!) || current.siteId !== scope.siteId
+      || JSON.stringify([current.type, current.siteId, current.principalKey, current.authUserId, current.authorizationVersion]) !== ownerIdentity) {
+      throw new CheckoutLegacyBoundaryError("checkout_unauthorized", 401);
+    }
+  };
   let principal: string | null = null;
   if (scope.mode === "personal") {
     if (!initialSession) throw new CheckoutLegacyBoundaryError("checkout_unauthorized", 401);
@@ -214,17 +237,18 @@ export async function bridgeLegacyCheckoutMutation(input: BoundaryInput, overrid
   if (scope.batch || scope.ids.length > 1) {
     const linked = await linkedCheckoutOrderOrBookingIds(scope.siteId!, scope.kind, eligibleIds, callRpc, mixed);
     if (linked.size && (scope.action === "cancel" || scope.status === "cancelled" || scope.action === "restore" || scope.action === "uncomplete" || scope.items !== undefined || scope.updates !== undefined)) throw new CheckoutLegacyBoundaryError("checkout_batch_requires_single");
+    await reauthorizeRetainedBooking();
     return null; // final-state constraint still checks all original writers.
   }
   const lookup = { siteId: scope.siteId ?? null, kind: scope.kind, id: scope.ids[0], principal };
   const link = await readLink(callRpc, lookup, mixed);
-  if (!link) return null;
+  if (!link) { await reauthorizeRetainedBooking(); return null; }
   if (scope.mode === "personal" && personalPrincipal(initialSession) !== principal) throw new CheckoutLegacyBoundaryError("checkout_unauthorized", 401);
   if (!deps.enabled(link.siteId)) throw new CheckoutLegacyBoundaryError("checkout_resource_locked");
-  if (link.method === "on_site" && !deps.cashEnabled(link.siteId)) throw new CheckoutLegacyBoundaryError("checkout_resource_locked");
+  if (link.method === "on_site" && !deps.cashEnabled(link.siteId) && !retainedBookingStatus) throw new CheckoutLegacyBoundaryError("checkout_resource_locked");
   assertNoUnsupportedChange(link, scope);
   const cancelling = scope.action === "cancel" || scope.status === "cancelled";
-  if (!cancelling) return null;
+  if (!cancelling) { await reauthorizeRetainedBooking(); return null; }
   await reauthorize();
   if (link.method === "on_site" && !deps.cashEnabled(link.siteId)) throw new CheckoutLegacyBoundaryError("checkout_resource_locked");
   if (scope.expectedUpdatedAt !== undefined && scope.expectedUpdatedAt !== link.result.resource!.updatedAt && !link.result.closed) throw new CheckoutLegacyBoundaryError("checkout_conflict");

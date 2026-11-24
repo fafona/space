@@ -7,6 +7,7 @@ import type { MerchantBusinessActor } from "./merchantBusinessActor.server";
 import type { OnSiteCheckoutResult } from "./merchantCheckoutOnSiteResult";
 import { buildPlatformMerchantSnapshotSite } from "./platformMerchantSnapshot";
 import { createDefaultMerchantPermissionConfig } from "@/data/platformControlStore";
+import { withoutMerchantBookingToken } from "./merchantBookings";
 
 // Match createMerchantOrder's actual stored ISO bytes, including milliseconds.
 const siteId = "10909095", operationKey = "a".repeat(64), stamp = "2026-11-23T12:00:00.000Z";
@@ -28,6 +29,7 @@ function fixture(kind: "booking" | "order" = "booking") {
   const rpc: ReturnType<CheckoutLegacyBoundaryDependencies["rpc"]> = async (name, args) => {
     calls.push([name, args]);
     if (name === "faolla_checkout_resource_link_v1") return { data: missing ? null : structuredClone(link), error: null };
+    if (name === "faolla_checkout_resource_link_v2") return { data: missing ? null : { ...structuredClone(link), result: undefined, original: { method: "points", result: structuredClone(link.result) } }, error: null };
     if (name === "faolla_checkout_cart_resource_link_v1") return { data: null, error: null };
     // The retained-v3 read projects earlier single-point originals too. Keep
     // the old report for enabled, unmarked rows; do not change its assertions.
@@ -62,6 +64,75 @@ function cashFixture(kind: "booking" | "order" = "booking") {
   };
   return { ...f, cash: () => result };
 }
+
+for (const batch of [false, true]) for (const status of ["active", "confirmed", "completed", "no_show"]) test(`retained venue booking permits business status ${status}, batch=${batch} without reopening cash management`, async () => {
+  const f = cashFixture(); f.deps.cashEnabled = () => false;
+  assert.equal(await bridgeLegacyCheckoutMutation({ ...f.input, mode: "merchant", action: undefined, status, batch }, f.deps), null);
+  assert.deepEqual(f.calls.map(([name]) => name), [batch ? "faolla_member_checkout_reporting_v2" : "faolla_checkout_resource_link_v2"]);
+  assert.equal(writes(f).length, 0); assert.equal(f.cash().terms.paymentState, "unpaid");
+});
+
+test("retained venue booking cannot use metadata permission for personal cancellation, source edits or mixed financial commands", async () => {
+  for (const patch of [{ mode: "personal" as const }, { status: "cancelled" }, { action: "restore" }, { action: "cancel" },
+    { action: undefined, status: "completed", updates: {} }, { action: undefined, status: "completed", bookingBlockId: "other" },
+    { action: "cancel", status: "completed" }, { action: undefined, status: "completed", actor: undefined }]) {
+    const f = cashFixture(); f.deps.cashEnabled = () => false;
+    await assert.rejects(bridgeLegacyCheckoutMutation({ ...f.input, mode: "merchant", ...patch }, f.deps));
+    assert.equal(writes(f).length, 0); assert.equal(f.cash().closed, false);
+  }
+});
+
+test("retained booking metadata rechecks authorization and exact actor identity before the old writer", async () => {
+  for (const fail of ["authorization", "identity", "scope"]) {
+    const f = cashFixture(); f.deps.cashEnabled = () => false;
+    if (fail === "identity") f.deps.actor = async () => ({ ...f.actor, authUserId: "changed-synthetic-owner" });
+    if (fail === "scope") f.deps.actor = async () => ({ ...f.actor, siteId: "10909096" });
+    await assert.rejects(bridgeLegacyCheckoutMutation({ ...f.input, mode: "merchant", action: undefined, status: "confirmed",
+      assertAuthorizationCurrent: async () => { if (fail === "authorization") throw Error("authorization expired"); } }, f.deps));
+    assert.deepEqual(f.calls.map(([name]) => name), ["faolla_checkout_resource_link_v2"]);
+    assert.equal(writes(f).length, 0);
+  }
+});
+
+test("retained booking status keeps staff permission checks and does not demand owner-only financial permission", async () => {
+  const f = cashFixture(); f.deps.cashEnabled = () => false;
+  const actor: MerchantBusinessActor = { ...f.actor, type: "employee", principalKey: "employee:synthetic-staff", authorizationVersion: "staff-version", businessPermissions: ["bookings.status.manage"],
+    collaborationPermissions: [], employeeId: "synthetic-staff", roleId: "synthetic-role", employeeVersion: 1, roleVersion: 1 };
+  f.deps.actor = async () => actor; let checks = 0;
+  assert.equal(await bridgeLegacyCheckoutMutation({ ...f.input, actor, mode: "merchant", action: undefined, status: "no_show", assertAuthorizationCurrent: async () => { checks++; } }, f.deps), null);
+  assert.equal(checks, 1); assert.equal(writes(f).length, 0);
+});
+
+test("retained booking lookup failure or a cancelled original cannot reopen an old writer", async () => {
+  for (const fail of ["closed", "malformed", "read-failed"]) {
+    const f = cashFixture(); f.deps.cashEnabled = () => false;
+    if (fail === "closed") {
+      f.deps.cashEnabled = () => true; await bridgeLegacyCheckoutMutation(f.input, f.deps); f.deps.cashEnabled = () => false;
+    } else f.deps.rpc = () => async () => ({ data: fail === "malformed" ? {} : null, error: fail === "read-failed" ? { message: "private SQL error" } : null });
+    await assert.rejects(bridgeLegacyCheckoutMutation({ ...f.input, mode: "merchant", action: undefined, status: "active" }, f.deps), new RegExp(fail === "closed" ? "checkout_original_cancellation_required" : "checkout_unavailable"));
+    assert.equal(writes(f).length, fail === "closed" ? 1 : 0);
+  }
+});
+
+test("all legacy booking public projections omit only the internal checkout binding and preserve stored originals", () => {
+  const f = fixture(), stored = { ...f.link().record, status: "active" as const, checkoutOperationKey: operationKey }, before = structuredClone(stored);
+  for (const includeAutomationState of [false, true]) for (const includeCustomerEmailLogs of [false, true]) for (const includeTimeline of [false, true]) {
+    const publicRecord = withoutMerchantBookingToken(stored, { includeAutomationState, includeCustomerEmailLogs, includeTimeline });
+    assert.equal(Object.hasOwn(publicRecord, "checkoutOperationKey"), false); assert.equal(Object.hasOwn(publicRecord, "editToken"), false);
+    assert.equal(publicRecord.customerAccountId, stored.customerAccountId); assert.equal(publicRecord.appointmentAt, stored.appointmentAt); assert.equal(publicRecord.item, stored.item);
+  }
+  assert.deepEqual(stored, before);
+  const { checkoutOperationKey: _binding, ...ordinary } = stored; void _binding;
+  assert.deepEqual(withoutMerchantBookingToken(stored), withoutMerchantBookingToken(ordinary));
+});
+
+test("retained booking protocol still projects old points and lets an unlinked ordinary record use its old writer", async () => {
+  for (const missing of [false, true]) {
+    const f = fixture(); if (missing) f.missing();
+    assert.equal(await bridgeLegacyCheckoutMutation({ ...f.input, mode: "merchant", action: undefined, status: "confirmed" }, f.deps), null);
+    assert.deepEqual(f.calls.map(([name]) => name), ["faolla_checkout_resource_link_v2"]); assert.equal(writes(f).length, 0);
+  }
+});
 
 test("cash legacy cancellation uses its own original customer/owner command and never the points or legacy write", async () => {
   for (const kind of ["booking", "order"] as const) for (const mode of ["personal", "merchant"] as const) {

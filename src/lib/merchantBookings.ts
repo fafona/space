@@ -173,6 +173,8 @@ export type MerchantBookingConfirmationEmailStatus = "sent" | "failed";
 
 export type MerchantBookingStoredRecord = MerchantBookingRecord & {
   editToken: string;
+  /** Internal original-ledger binding; never sent in legacy public records. */
+  checkoutOperationKey?: string;
   confirmationEmailLastAttemptAt?: string;
   confirmationEmailStatus?: MerchantBookingConfirmationEmailStatus;
   confirmationEmailSentAt?: string;
@@ -626,6 +628,7 @@ export function withoutMerchantBookingToken(
 ): MerchantBookingRecord {
   const {
     editToken,
+    checkoutOperationKey,
     confirmationEmailLastAttemptAt,
     confirmationEmailStatus,
     confirmationEmailSentAt,
@@ -640,6 +643,7 @@ export function withoutMerchantBookingToken(
     ...publicRecord
   } = record;
   void editToken;
+  void checkoutOperationKey;
   void confirmationEmailLastAttemptAt;
   void confirmationEmailStatus;
   void confirmationEmailSentAt;
