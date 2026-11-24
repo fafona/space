@@ -3,12 +3,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import ProductBlock, { type ProductBlockProps } from "../blocks/ProductBlock";
 import { useI18n } from "../I18nProvider";
 import { SERVICE_IDENTITY_CHANGED } from "../service-center/serviceCenterClient";
-import { parseCheckoutEntryAccess, type CheckoutEntryAccess } from "@/lib/merchantCheckoutEntry";
+import { parseCheckoutEntryDiscovery, type CheckoutEntryAccess } from "@/lib/merchantCheckoutEntry";
 import { checkoutClientStorageKey } from "@/lib/merchantCheckoutClient";
 import { productCartCheckoutSelection } from "@/lib/merchantCheckoutProductCart";
 import type { ProductCartCheckoutAdapter, ProductCartCheckoutHost } from "./ProductCartCheckoutAdapter";
 import { MemberCartCheckoutPanel } from "./MemberCartCheckoutPanel";
 import { createAccountCartDraft, type AccountCartDraft } from "@/lib/merchantCheckoutAccountDraft";
+import { MemberCheckoutRecoveryLink } from "./MemberCheckoutRecoveryLink";
 const noSubscribe = () => () => {};
 const noSnapshot = () => null;
 const ownedCopy = {
@@ -26,7 +27,7 @@ const texts = {
 export default function MemberProductCartBlock(props: ProductBlockProps) {
   const { locale } = useI18n(), t = texts[locale.startsWith("zh") ? "zh" : locale.startsWith("es") ? "es" : "en"];
   const query = useMemo(() => ({ siteId: props.runtimeSiteId ?? "", kind: "order" as const, blockId: props.runtimeBlockId ?? "", viewport: props.runtimeCatalogViewport === "mobile" ? "mobile" as const : "desktop" as const }), [props.runtimeSiteId, props.runtimeBlockId, props.runtimeCatalogViewport]);
-  const scope = JSON.stringify(query), [loaded, setLoaded] = useState<{ scope: string; access: CheckoutEntryAccess | null; intent: boolean; owned: boolean } | null>(null), [failed, setFailed] = useState(false);
+  const scope = JSON.stringify(query), [loaded, setLoaded] = useState<{ scope: string; access: CheckoutEntryAccess | null; recoveryEnabled: boolean; intent: boolean; owned: boolean } | null>(null), [failed, setFailed] = useState(false);
   const [active, setActive] = useState(false), [notice, setNotice] = useState(false), [revision, setRevision] = useState(0);
   const lock = useRef(true), generation = useRef(0), capture = useRef<{ host: ProductCartCheckoutHost; customer: ProductCartCheckoutHost["customer"]; raw: string | null; fresh: boolean; selection: ReturnType<typeof productCartCheckoutSelection> } | null>(null);
   const setLocked = useCallback((value: boolean) => { lock.current = value; }, []);
@@ -43,13 +44,13 @@ export default function MemberProductCartBlock(props: ProductBlockProps) {
       const run = generation.current, owned = new AbortController(); abort = owned;
       const timeout = setTimeout(() => owned.abort(), 13_000);
       try { const response = await fetch("/api/member-checkout/cart/entry", { method: "POST", credentials: "same-origin", cache: "no-store", headers: { "content-type": "application/json" }, body: scope, signal: owned.signal });
-        if (!response.ok) throw new Error("unavailable"); const body = await response.json(), access = parseCheckoutEntryAccess(body, query);
+        if (!response.ok) throw new Error("unavailable"); const body = await response.json(), discovery = parseCheckoutEntryDiscovery(body, query), access = discovery.access;
         if (disposed || owned.signal.aborted || run !== generation.current) return;
         // A retained nonce keeps all existing cart data frozen even before the
         // original read completes. Malformed/blocked storage never means clear.
         const pending = access ? window.localStorage.getItem(checkoutClientStorageKey(query.siteId, access.accountId)) !== null : false;
         if (body.ownedDraft === true && body.intent !== true) throw new Error("unavailable");
-        setLocked(pending); setLoaded({ scope, access, intent: body.intent === true, owned: body.ownedDraft === true });
+        setLocked(pending); setLoaded({ scope, access, recoveryEnabled: discovery.recoveryEnabled, intent: body.intent === true, owned: body.ownedDraft === true });
       } catch { if (!disposed && run === generation.current) { setFailed(true); setLocked(true); } }
       finally { clearTimeout(timeout); }
     };
@@ -98,5 +99,6 @@ export default function MemberProductCartBlock(props: ProductBlockProps) {
       </div>;
     },
   };
-  return <ProductBlock key={loaded?.scope === scope ? owned?.storageKey ?? `legacy:${access?.accountId ?? "guest"}` : "unresolved"} {...props} runtimeCheckoutAdapter={adapter}/>;
+  return <ProductBlock key={loaded?.scope === scope ? owned?.storageKey ?? `legacy:${access?.accountId ?? "guest"}` : "unresolved"} {...props} runtimeCheckoutAdapter={adapter}
+    runtimeCheckoutRecoveryEntry={loaded?.scope === scope && loaded.recoveryEnabled ? <MemberCheckoutRecoveryLink siteId={query.siteId} locale={locale}/> : undefined}/>;
 }

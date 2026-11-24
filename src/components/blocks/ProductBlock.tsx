@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, FocusEvent } from "react";
+import type { CSSProperties, FocusEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { usePublicTraffic, usePublicTrafficExposure } from "@/components/PublicTrafficProvider";
 import Image from "next/image";
@@ -120,6 +120,7 @@ export type ProductBlockProps = BackgroundEditableProps &
     runtimeUseOperatingCatalog?: boolean;
     runtimeOrderManagementEnabled?: boolean;
     runtimeCheckoutAdapter?: ProductCartCheckoutAdapter;
+    runtimeCheckoutRecoveryEntry?: ReactNode;
     runtimeInteractiveOverlayWithinBlock?: boolean;
     runtimeDisableCartPortal?: boolean;
     runtimeOpenedView?: boolean;
@@ -2423,6 +2424,7 @@ export default function ProductBlock(props: ProductBlockProps) {
                   </div>
                 )}
               </div>
+              {props.runtimeCheckoutRecoveryEntry}
               {props.runtimeCheckoutAdapter ? props.runtimeCheckoutAdapter.render({
                 items: cartItems, customer: { ...normalizeCartCustomer(cartCustomer), title: "" } as { name: string; title: string; email: string; phone: string; note: string },
                 clientRequestId: cartClientRequestId, storageKey: cartStorageKey,
