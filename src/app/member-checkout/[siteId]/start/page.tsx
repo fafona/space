@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { isCanonicalPortalRequest, resolveCanonicalPortalOrigin } from "@/lib/canonicalPortalRequest";
 import { isMemberCheckoutIntentPilotEnabled } from "@/lib/merchantCheckoutCartPilot.server";
+import { isMemberCheckoutSingleRetainedIntentEnabled } from "@/lib/merchantCheckoutSingleRetainedPilot.server";
 import { isMemberCheckoutPilotEnabled } from "@/lib/merchantMemberCheckoutPilot.server";
 import { isMemberCheckoutOnSitePilotEnabled } from "@/lib/merchantCheckoutOnSitePilot.server";
 import { buildCheckoutStartHref, parseCheckoutStartQuery, type CheckoutClientSelection } from "@/lib/merchantCheckoutClient";
@@ -21,5 +22,5 @@ export default async function MemberCheckoutStartPage({ params, searchParams }: 
   const intentEnabled = isMemberCheckoutIntentPilotEnabled(siteId);
   if (intentEnabled && !isCanonicalPortalRequest(new Request("https://invalid.invalid", { headers: await headers() })))
     redirect(new URL(buildCheckoutStartHref(selection, query.uiLocale as string | undefined), resolveCanonicalPortalOrigin()).toString());
-  return <CheckoutStartClient siteId={siteId} initialSelection={selection} showOnSiteChoice={isMemberCheckoutOnSitePilotEnabled(siteId)} intentEnabled={intentEnabled}/>;
+  return <CheckoutStartClient siteId={siteId} initialSelection={selection} showOnSiteChoice={isMemberCheckoutOnSitePilotEnabled(siteId)} intentEnabled={intentEnabled} retainedIntentEnabled={isMemberCheckoutSingleRetainedIntentEnabled(siteId)}/>;
 }

@@ -21,19 +21,19 @@ const policyCopy = {
 };
 const inputClass = "min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900";
 const buttonClass = "min-h-12 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold disabled:opacity-50";
-export function MemberCheckoutStartPanel({ siteId, accountId, initialSelection, locale = "zh-CN", loginHref = "/login", controllerFactory = createCheckoutClientController, intentEnabled = false }: {
+export function MemberCheckoutStartPanel({ siteId, accountId, initialSelection, locale = "zh-CN", loginHref = "/login", controllerFactory = createCheckoutClientController, intentEnabled = false, retainedIntentEnabled = false }: {
   siteId: string; accountId: string | null; initialSelection: Omit<CheckoutClientSelection, "siteId" | "couponClaims">; locale?: string; loginHref?: string;
-  controllerFactory?: typeof createCheckoutClientController; intentEnabled?: boolean;
+  controllerFactory?: typeof createCheckoutClientController; intentEnabled?: boolean; retainedIntentEnabled?: boolean;
 }) {
   const text = copy[merchantSettlementLanguage(locale)];
   if (!accountId) return <section className="mx-auto max-w-3xl space-y-4 p-5"><h1 className="text-2xl font-bold">{text.heading}</h1><p>{text.login}</p><a href={loginHref} className={buttonClass + " inline-block"}>{text.loginButton}</a></section>;
   return <ActivePanel key={JSON.stringify([siteId, accountId, initialSelection.offerId, initialSelection.offerRevision, initialSelection.quantity, initialSelection.appointmentAt ?? null])}
-    siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} controllerFactory={intentEnabled ? createIntentPointsCheckoutController : controllerFactory}/>;
+    siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} retainedIntentEnabled={intentEnabled && retainedIntentEnabled} controllerFactory={intentEnabled ? createIntentPointsCheckoutController : controllerFactory}/>;
 }
-function ActivePanel({ siteId, accountId, initialSelection, locale, controllerFactory }: {
-  siteId: string; accountId: string; initialSelection: Omit<CheckoutClientSelection, "siteId" | "couponClaims">; locale: string; controllerFactory: typeof createCheckoutClientController;
+function ActivePanel({ siteId, accountId, initialSelection, locale, controllerFactory, retainedIntentEnabled }: {
+  siteId: string; accountId: string; initialSelection: Omit<CheckoutClientSelection, "siteId" | "couponClaims">; locale: string; controllerFactory: typeof createCheckoutClientController; retainedIntentEnabled: boolean;
 }) {
-  const text = copy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId }), [siteId, accountId, controllerFactory]);
+  const text = copy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId, ...(retainedIntentEnabled ? { retainedIntentEnabled: true } : {}) }), [siteId, accountId, controllerFactory, retainedIntentEnabled]);
   const policy = policyCopy[merchantSettlementLanguage(locale)];
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [customer, setCustomer] = useState(blankCustomer), [invalid, setInvalid] = useState(false);
@@ -64,6 +64,7 @@ function ActivePanel({ siteId, accountId, initialSelection, locale, controllerFa
     {busy && <p role="status" className="text-sm text-slate-600">{state.phase === "submitting" ? text.submit : text.working}</p>}
     {state.pending && !result && !state.originalReview && <button type="button" className={buttonClass} disabled={busy} onClick={() => void controller.recover()}>{text.recover}</button>}
     {state.originalReview ? <SingleCheckoutOriginalReview siteId={siteId} original={state.originalReview} reviewRequired={state.intentReviewRequired === true} busy={busy} locale={locale} onRead={() => void controller.recover()}
+      registrationRequired={state.retainedRegistrationRequired === true} onRegister={() => { if ("registerRetained" in controller && typeof controller.registerRetained === "function") void controller.registerRetained(true); }}
       onAnother={() => void controller.startAnother().then(() => { if (controller.getSnapshot().phase === "idle") { setCustomer(blankCustomer()); setDraft({ ...initialSelection, siteId, couponClaims: [] }); } })}/>
       : result ? <article className="space-y-4 rounded-3xl border border-teal-100 bg-white p-5 shadow-sm"><h2 className="text-xl font-semibold">{text.done}</h2>
       <p className="break-all text-sm text-slate-600">{result.resourceId}</p><MerchantSettlementBadge locale={locale} showDetails snapshot={{ version: 1, method: "points", closed: result.closed, totalPoints: result.totalPoints, debitedPoints: result.totalPoints,

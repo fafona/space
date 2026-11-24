@@ -10,7 +10,7 @@ export type OnSiteClientQuote = { title: string; kind: "booking" | "order"; quan
   bookingForm: { store: string; item: string; titles: string[]; timeZone: string } | null };
 export type OnSiteClientState = { phase: "idle" | "quoting" | "ready" | "submitting" | "recovering" | "unconfirmed" | "confirmed" | "error";
   quote: OnSiteClientQuote | null; original: CheckoutOriginalResult | null; pending: boolean; error: string;
-  originalReview?: import("./merchantCheckoutCartReview").CartClientOriginal; intentReviewRequired?: boolean };
+  originalReview?: import("./merchantCheckoutCartReview").CartClientOriginal; intentReviewRequired?: boolean; retainedRegistrationRequired?: boolean };
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const number = (v: unknown, max = 99_999_999): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v <= max;
 const nonceValid = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(v);

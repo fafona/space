@@ -16,15 +16,15 @@ const copy = {
 const blank = (): CheckoutCustomerDraft => ({ name: "", title: "", email: "", phone: "", note: "" });
 const input = "min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900";
 const button = "min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold disabled:opacity-50";
-export function MemberOnSiteStartPanel({ siteId, accountId, initialSelection, locale = "zh-CN", loginHref = "/login", controllerFactory = createOnSiteCheckoutController, intentEnabled = false }: {
-  siteId: string; accountId: string | null; initialSelection: Omit<CheckoutClientSelection, "siteId" | "couponClaims">; locale?: string; loginHref?: string; controllerFactory?: typeof createOnSiteCheckoutController; intentEnabled?: boolean;
+export function MemberOnSiteStartPanel({ siteId, accountId, initialSelection, locale = "zh-CN", loginHref = "/login", controllerFactory = createOnSiteCheckoutController, intentEnabled = false, retainedIntentEnabled = false }: {
+  siteId: string; accountId: string | null; initialSelection: Omit<CheckoutClientSelection, "siteId" | "couponClaims">; locale?: string; loginHref?: string; controllerFactory?: typeof createOnSiteCheckoutController; intentEnabled?: boolean; retainedIntentEnabled?: boolean;
 }) {
   const t = copy[merchantSettlementLanguage(locale)];
   if (!accountId) return <section className="mx-auto max-w-3xl space-y-4 p-5"><h1 className="text-2xl font-bold">{t.heading}</h1><p>{t.login}</p><a className={button + " inline-block"} href={loginHref}>{t.loginButton}</a></section>;
-  return <Active key={JSON.stringify([siteId, accountId, initialSelection])} siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} controllerFactory={intentEnabled ? createIntentOnSiteCheckoutController : controllerFactory}/>;
+  return <Active key={JSON.stringify([siteId, accountId, initialSelection])} siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} retainedIntentEnabled={intentEnabled && retainedIntentEnabled} controllerFactory={intentEnabled ? createIntentOnSiteCheckoutController : controllerFactory}/>;
 }
-function Active({ siteId, accountId, initialSelection, locale, controllerFactory }: { siteId: string; accountId: string; initialSelection: Omit<CheckoutClientSelection, "siteId" | "couponClaims">; locale: string; controllerFactory: typeof createOnSiteCheckoutController }) {
-  const t = copy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId }), [siteId, accountId, controllerFactory]);
+function Active({ siteId, accountId, initialSelection, locale, controllerFactory, retainedIntentEnabled }: { siteId: string; accountId: string; initialSelection: Omit<CheckoutClientSelection, "siteId" | "couponClaims">; locale: string; controllerFactory: typeof createOnSiteCheckoutController; retainedIntentEnabled: boolean }) {
+  const t = copy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId, ...(retainedIntentEnabled ? { retainedIntentEnabled: true } : {}) }), [siteId, accountId, controllerFactory, retainedIntentEnabled]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot), [customer, setCustomer] = useState(blank), [invalid, setInvalid] = useState(false);
   const [draft, setDraft] = useState<CheckoutClientSelection>({ ...initialSelection, siteId, couponClaims: [] });
   const busy = ["quoting", "submitting", "recovering"].includes(state.phase), frozen = busy || state.pending, quote = state.quote, original = state.original;
@@ -43,6 +43,7 @@ function Active({ siteId, accountId, initialSelection, locale, controllerFactory
     {message && <p role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">{message}</p>}{busy && <p role="status">{state.phase === "submitting" ? t.submitting : t.working}</p>}
     {state.pending && !original && !state.originalReview && <button className={button} disabled={busy} onClick={() => void controller.recover()}>{t.recover}</button>}
     {state.originalReview ? <SingleCheckoutOriginalReview siteId={siteId} original={state.originalReview} reviewRequired={state.intentReviewRequired === true} busy={busy} locale={locale} onRead={() => void controller.recover()}
+      registrationRequired={state.retainedRegistrationRequired === true} onRegister={() => { if ("registerRetained" in controller && typeof controller.registerRetained === "function") void controller.registerRetained(true); }}
       onAnother={() => void controller.startAnother().then(() => { if (controller.getSnapshot().phase === "idle") { setCustomer(blank()); setDraft({ ...initialSelection, siteId, couponClaims: [] }); } })}/>
       : original ? <article className="space-y-4 rounded-3xl border border-teal-200 bg-white p-5"><h2 className="text-xl font-semibold">{t.done}</h2>
       {original.method === "on_site" ? <OnSiteCheckoutSummary result={original.result} locale={locale}/> : <p className="text-sm leading-6">{t.pointsOriginal}</p>}

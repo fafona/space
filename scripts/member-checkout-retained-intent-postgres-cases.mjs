@@ -3,6 +3,13 @@
 import assert from 'node:assert/strict';import{randomUUID}from'node:crypto';
 import service from'../src/lib/merchantCheckoutCartSubmission.server.ts';
 import http from'../src/lib/merchantCheckoutRetainedIntent.server.ts';
+import pointsPlan from'../src/lib/merchantCheckoutSubmissionPlan.server.ts';
+import pointsService from'../src/lib/merchantCheckoutSubmission.server.ts';
+import cashService from'../src/lib/merchantCheckoutOnSiteSubmission.server.ts';
+import singleClient from'../src/lib/merchantCheckoutSingleIntentClient.ts';
+import cartHttp from'../src/lib/merchantCheckoutCartHttp.server.ts';
+import intentHttp from'../src/lib/merchantCheckoutIntentHttp.server.ts';
+import commonClient from'../src/lib/merchantCheckoutClient.ts';
 export async function retainedIntentCases(t,{admin,a,b,seed,state,site,one,dispatch}){
  const principal=f=>`account:${f.principal.accountId}:${f.principal.userId}`;
  const untracked=async(method='points',count=1)=>{
@@ -25,6 +32,36 @@ export async function retainedIntentCases(t,{admin,a,b,seed,state,site,one,dispa
  const proposal=async(f,o,c=a)=>{const response=await invoke(f,o.nonce,undefined,c);assert.equal(response.status,200);const body=await response.json();assert.equal(body.readOnly,true);return body.proposal;};
  const unchanged=(before,after,except=[])=>{for(const k of Object.keys(before))if(!except.includes(k))assert.deepEqual(after[k],before[k],k);};
  const mutable=['faolla_checkout_design.intent_claims','faolla_checkout_design.retained_intent_registrations'];
+ await t.test('actual single points/venue commit, controller, HTTP registration and explicit acknowledgement preserve all original financial and host facts',async()=>{
+  for(const method of ['points','on_site']){
+   let f;await admin.query('update faolla_checkout_design.intent_pilots set enabled=false where site_id=$1',[site]);
+   const sqlRpc=async(name,args)=>{const keys={faolla_member_checkout_submission_snapshot_v2:['p_site_id','p_operation_key','p_principal_key','p_request_hash','p_offer_id'],faolla_member_checkout_on_site_snapshot_v1:['p_site_id','p_operation_key','p_principal_key','p_request_hash','p_offer_id'],
+    faolla_member_checkout_submission_commit_v2:['p_site_id','p_operation_key','p_principal_key','p_request_hash','p_snapshot','p_plan','p_not_after'],faolla_member_checkout_on_site_commit_v1:['p_site_id','p_operation_key','p_principal_key','p_request_hash','p_snapshot','p_plan','p_not_after'],
+    faolla_member_checkout_cart_result_v1:['p_site_id','p_operation_key','p_principal_key'],faolla_member_checkout_original_result_v1:['p_site_id','p_operation_key','p_principal_key'],faolla_member_checkout_intent_review_v1:['p_site_id','p_operation_key','p_principal_key'],
+    faolla_member_checkout_pending_intent_v1:['p_site_id','p_principal_key'],faolla_member_checkout_acknowledge_intent_v1:['p_site_id','p_operation_key','p_principal_key','p_generation','p_review_hash','p_not_after'],
+    faolla_member_checkout_retained_intent_review_v1:['p_site_id','p_operation_key','p_principal_key'],faolla_member_checkout_register_retained_intent_v1:['p_site_id','p_operation_key','p_principal_key','p_review_hash','p_not_after']}[name];assert.ok(keys,`unexpected private RPC ${name}`);
+    try{return{data:(await one(a,`select public.${name}(${keys.map((_,i)=>'$'+(i+1)).join(',')}) result`,keys.map(k=>args[k]))).result,error:null};}catch(error){return{data:null,error:{message:error.message}};}
+   };
+   try{f=await seed(method);const offer=f.offers[0],request={siteId:site,offerId:offer.id,offerRevision:offer.revision,quantity:1,couponClaims:[],method,nonce:randomUUID(),confirmationHash:'0'.repeat(64),customer:f.request.customer},input={request,principal:f.principal,authorize:async()=>f.principal};
+    if(method==='points'){const identity=pointsPlan.checkoutSubmissionIdentity(request,f.principal),read=await sqlRpc('faolla_member_checkout_submission_snapshot_v2',{p_site_id:site,p_operation_key:identity.operationKey,p_principal_key:identity.principalKey,p_request_hash:identity.requestHash,p_offer_id:offer.id});assert.equal(read.error,null);
+     const quoted=await pointsPlan.quoteCheckoutSubmissionSnapshot(pointsPlan.parseCheckoutSubmissionSnapshot(read.data.snapshot,identity),identity,f.principal);request.confirmationHash=quoted.confirmationHash;await pointsService.submitMemberCheckout(input,sqlRpc);
+    }else{const quoted=await cashService.previewOnSiteCheckout(input,sqlRpc);request.confirmationHash=quoted.quote.confirmationHash;await cashService.submitOnSiteCheckout(input,sqlRpc);}
+    f.request=request;
+   }finally{await admin.query('update faolla_checkout_design.intent_pilots set enabled=true where site_id=$1',[site]);}
+   const origin='https://single-real-pg.synthetic.invalid',session={...f.principal,servicePaused:false,user:{email_confirmed_at:new Date().toISOString()}},deps={enabled:()=>true,intentEnabled:()=>true,session:async()=>session,call:sqlRpc},paths=[];
+   const key=commonClient.checkoutClientStorageKey(site,f.principal.accountId),store=new Map([[key,JSON.stringify({version:1,nonce:f.request.nonce})],['native-form','KEEP booking/member/contact'],['native-cart','KEEP products and note']]),initial=new Map(store),before=await state();
+   const request=async(path,body,signal)=>{paths.push(path);const r=new Request(origin+path,{method:'POST',headers:{origin,'content-type':'application/json','x-checkout-account-scope':f.principal.accountId},body:JSON.stringify(body),signal});
+    const response=path.endsWith('cart/recover')?await cartHttp.handleCartCheckout('recover',r,deps):path.endsWith('intent/retained-review')?await http.handleRetainedCheckoutIntent(false,r,deps):path.endsWith('intent/register-retained')?await http.handleRetainedCheckoutIntent(true,r,deps):await intentHttp.handleCheckoutIntent(path.endsWith('pending')?'pending':path.endsWith('acknowledge')?'acknowledge':'review',r,deps);
+    const value=await response.json();if(!response.ok)throw new commonClient.CheckoutClientError(value.error,response.status);return value;
+   };
+   const c=(method==='points'?singleClient.createIntentPointsCheckoutController:singleClient.createIntentOnSiteCheckoutController)({siteId:site,accountId:f.principal.accountId,retainedIntentEnabled:true,request,storage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,v),removeItem:k=>store.delete(k)},exclusive:async(_key,run)=>{await run();return true;}});
+   try{await c.activate();assert.equal(c.getSnapshot().originalReview.kind,'single');assert.equal(c.getSnapshot().retainedRegistrationRequired,true);assert.deepEqual(await state(),before);
+    await c.registerRetained(false);assert.deepEqual(await state(),before);await c.registerRetained(true);assert.equal(c.getSnapshot().retainedRegistrationRequired,false);assert.equal(c.getSnapshot().pending,true);assert.deepEqual(store,initial);unchanged(before,await state(),mutable);
+    await c.startAnother();assert.equal(c.getSnapshot().pending,false);assert.equal(store.has(key),false);for(const[k,v]of initial)if(k!==key)assert.equal(store.get(k),v);
+    unchanged(before,await state(),[...mutable,'faolla_checkout_design.intent_acknowledgements']);assert.equal(paths.filter(p=>p.endsWith('register-retained')).length,1);assert.equal(paths.filter(p=>p.endsWith('acknowledge')).length,1);assert.equal(paths.some(p=>/\/(preview|submit|cancel)$/.test(p)),false);
+   }finally{c.deactivate();}
+  }
+ });
  await t.test('explicit registration reads exact existing points/venue originals and only appends a claim plus immutable audit; acknowledgement remains separate',async()=>{
   for(const method of ['points','on_site']){const{f,originals:[o]}=await untracked(method),before=await state(),p=await proposal(f,o);assert.equal(p.original.result.operationKey,o.result.operationKey);assert.equal(p.reviewRequired,false);assert.deepEqual(await state(),before);
    const response=await invoke(f,o.nonce,p.reviewHash);assert.equal(response.status,200);const body=await response.json();assert.equal(body.registration.replayed,false);assert.equal(body.registration.review.acknowledged,false);assert.equal(body.registration.review.original.result.method,method);

@@ -13,7 +13,7 @@ export type CheckoutClientQuote = {
 };
 export type CheckoutClientState = { phase: "idle" | "quoting" | "ready" | "submitting" | "recovering" | "unconfirmed" | "confirmed" | "error";
   quote: CheckoutClientQuote | null; result: MemberCheckoutResult | null; pending: boolean; error: string;
-  originalReview?: import("./merchantCheckoutCartReview").CartClientOriginal; intentReviewRequired?: boolean };
+  originalReview?: import("./merchantCheckoutCartReview").CartClientOriginal; intentReviewRequired?: boolean; retainedRegistrationRequired?: boolean };
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 export type CheckoutClientRequest = (path: string, body: unknown, signal: AbortSignal) => Promise<unknown>;
 export type CheckoutClientExclusive = (key: string, run: () => Promise<void>) => Promise<boolean>;

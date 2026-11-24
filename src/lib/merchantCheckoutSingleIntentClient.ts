@@ -4,9 +4,9 @@ import { createCartCheckoutController } from "./merchantCheckoutCartClient";
 import { checkoutIntentTransport } from "./merchantCheckoutIntentTransport";
 import { cartClientOriginalKey, type CartClientOriginal } from "./merchantCheckoutCartReview";
 
-type Options = Parameters<typeof createCheckoutClientController>[0];
+type Options = Parameters<typeof createCheckoutClientController>[0] & { retainedIntentEnabled?: boolean };
 type State = CheckoutClientState | OnSiteClientState;
-export type SingleIntentView = { originalReview?: CartClientOriginal; intentReviewRequired?: boolean };
+export type SingleIntentView = { originalReview?: CartClientOriginal; intentReviewRequired?: boolean; retainedRegistrationRequired?: boolean };
 type Base<Args extends unknown[], S extends State> = {
   storageKey: string; getSnapshot(): S; subscribe(fn: () => void): () => void; activate(): Promise<void>; deactivate(): void;
   recover(): Promise<void>; edit(): void; preview(...args: Args): Promise<void>; submit(customer: CheckoutCustomerDraft): Promise<void>;
@@ -64,7 +64,8 @@ function coordinate<Args extends unknown[], S extends State>(options: Options, m
   const publish = () => {
     const own = base.getSnapshot(), shared = reader.getSnapshot();
     state = shared.pending ? { ...own, phase: shared.phase === "acknowledging" ? "recovering" : shared.phase === "cancelling" ? "recovering" : shared.phase,
-      quote: null, result: null, original: null, pending: true, error: shared.error, ...(shared.original ? { originalReview: shared.original } : {}), intentReviewRequired: shared.intentReviewRequired === true }
+      quote: null, result: null, original: null, pending: true, error: shared.error, ...(shared.original ? { originalReview: shared.original } : {}), intentReviewRequired: shared.intentReviewRequired === true,
+      ...(options.retainedIntentEnabled ? { retainedRegistrationRequired: shared.retainedRegistrationRequired === true && shared.original?.kind === "single" } : {}) }
       : { ...own };
     listeners.forEach(fn => fn());
   };
@@ -103,9 +104,17 @@ function coordinate<Args extends unknown[], S extends State>(options: Options, m
         if (valid(run)) publish();
       } finally { if (valid(run)) busy = false; }
     },
+    async registerRetained(confirmed: boolean) {
+      const shared = reader.getSnapshot();
+      if (confirmed !== true || !active || busy || !options.retainedIntentEnabled || shared.phase !== "confirmed"
+        || shared.original?.kind !== "single" || !shared.retainedRegistrationRequired || shared.intentReviewRequired) return;
+      busy = true; const run = epoch;
+      try { await reader.registerRetained(true); if (valid(run)) publish(); }
+      finally { if (valid(run)) busy = false; }
+    },
     async startAnother() {
       const shared = reader.getSnapshot(), original = shared.original;
-      if (!active || busy || shared.phase !== "confirmed" || original?.kind !== "single" || shared.intentReviewRequired) return;
+      if (!active || busy || shared.phase !== "confirmed" || original?.kind !== "single" || shared.intentReviewRequired || shared.retainedRegistrationRequired) return;
       busy = true; const run = epoch, operationKey = cartClientOriginalKey(original);
       try {
         await reader.startAnother(current => {
