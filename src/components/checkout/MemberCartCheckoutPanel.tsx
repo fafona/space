@@ -2,6 +2,8 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { createCartCheckoutController } from "@/lib/merchantCheckoutCartClient";
+import { createBoundCartCheckoutController } from "@/lib/merchantCheckoutBoundClient";
+import { MemberCheckoutUnusedReference } from "./MemberCheckoutUnusedReference";
 import type { CartClientOriginal, CartClientSelection } from "@/lib/merchantCheckoutCartReview";
 import type { CheckoutCustomerDraft } from "@/lib/merchantCheckoutClient";
 import { checkoutCouponClaimKey } from "@/lib/merchantCheckoutCoupons";
@@ -37,10 +39,10 @@ const receiptCopy = {
   es: { title: "Cobro registrado por el comercio", note: "Es un cobro en el local registrado por el comercio, no un justificante bancario ni de pago en línea." },
 };
 type Props = { siteId: string; accountId: string | null; initialSelection: CartClientSelection; initialCustomer?: CheckoutCustomerDraft;
-  locale?: string; controllerFactory?: typeof createCartCheckoutController; allowNewCheckout?: boolean; intentEnabled?: boolean; retainedIntentEnabled?: boolean;
+  locale?: string; controllerFactory?: typeof createCartCheckoutController; allowNewCheckout?: boolean; intentEnabled?: boolean; retainedIntentEnabled?: boolean; unusedReferenceEnabled?: boolean;
   prepareInsideLock?: boolean; beforeSubmit?: (customer: CheckoutCustomerDraft, lease?: CheckoutDraftLease) => void | Promise<void>;
   beforeRelease?: (original: CartClientOriginal, context: { createdHere: boolean; lease: CheckoutDraftLease }) => void | Promise<void>;
-  verifyBeforeRelease?: CheckoutDraftReleaseCheck; onReleased?: () => void; onReturnToCart?: () => void };
+  verifyBeforeRelease?: CheckoutDraftReleaseCheck; onReleased?: () => void; onUnusedReleased?: () => void; onReturnToCart?: () => void };
 /** Shared review for standalone tests and the independently gated real cart.
  * Host callbacks own durable draft preservation; no implicit cart cleanup,
  * member change, cash collection or online payment happens here. */
@@ -50,8 +52,8 @@ export function MemberCartCheckoutPanel(props: Props) {
   return <Active key={JSON.stringify([props.siteId, props.accountId, props.initialSelection])} {...props} accountId={props.accountId}/>;
 }
 function Active({ siteId, accountId, initialSelection, initialCustomer, locale = "zh-CN", controllerFactory = createCartCheckoutController,
-  allowNewCheckout = true, intentEnabled = false, retainedIntentEnabled = false, prepareInsideLock = false, beforeSubmit, beforeRelease, verifyBeforeRelease, onReleased, onReturnToCart }: Props & { accountId: string }) {
-  const t = copy[merchantSettlementLanguage(locale)], rt = registrationCopy[merchantSettlementLanguage(locale)], receipt = receiptCopy[merchantSettlementLanguage(locale)], controller = useMemo(() => controllerFactory({ siteId, accountId, intentEnabled, retainedIntentEnabled }), [siteId, accountId, intentEnabled, retainedIntentEnabled, controllerFactory]);
+  allowNewCheckout = true, intentEnabled = false, retainedIntentEnabled = false, unusedReferenceEnabled = false, prepareInsideLock = false, beforeSubmit, beforeRelease, verifyBeforeRelease, onReleased, onUnusedReleased, onReturnToCart }: Props & { accountId: string }) {
+  const t = copy[merchantSettlementLanguage(locale)], rt = registrationCopy[merchantSettlementLanguage(locale)], receipt = receiptCopy[merchantSettlementLanguage(locale)], controller = useMemo(() => (intentEnabled && unusedReferenceEnabled ? createBoundCartCheckoutController : controllerFactory)({ siteId, accountId, intentEnabled, retainedIntentEnabled }), [siteId, accountId, intentEnabled, retainedIntentEnabled, unusedReferenceEnabled, controllerFactory]);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [selection, setSelection] = useState(() => structuredClone(initialSelection)), [customer, setCustomer] = useState(() => initialCustomer ? structuredClone(initialCustomer) : blank());
   const [agreed, setAgreed] = useState(false), [cancelConfirm, setCancelConfirm] = useState(false), [blocked, setBlocked] = useState(false);
@@ -98,6 +100,7 @@ function Active({ siteId, accountId, initialSelection, initialCustomer, locale =
     {busy && <p role="status">{t.working}</p>}
     {onReturnToCart && !state.pending && <button type="button" className={button} disabled={busy || draftBusy} onClick={() => void returnToCart()}>{merchantSettlementLanguage(locale) === "zh" ? "返回购物车修改" : merchantSettlementLanguage(locale) === "es" ? "Volver al carrito" : "Back to cart"}</button>}
     {state.pending && !original && !busy && <button className={button} onClick={() => void controller.recover()}>{t.recover}</button>}
+    <MemberCheckoutUnusedReference controller={controller} locale={locale} verifyDraft={verifyBeforeRelease} onReleased={onUnusedReleased}/>
     {original ? <article className="space-y-4 rounded-2xl border border-teal-200 bg-white p-5">
       {cart ? <><h2 className="text-xl font-semibold">{t.done}</h2><p className="break-all text-xs text-slate-500">{cart.resourceId}</p>
         {cart.reviewRequired ? <p role="alert">{t.reviewRequired}</p> : <p data-cart-payment-status className="font-semibold text-teal-800">{cart.closed ? t.closed : cart.method === "points" ? t.redeemed : cart.collection ? `${receipt.title} · ${formatSettlementMoney(cart.collection.amountMinor, locale)}` : cart.dueMinor === 0 ? t.covered : t.unpaid}</p>}

@@ -7,6 +7,8 @@ import { MerchantSettlementBadge } from "./MerchantSettlementBadge";
 import BookingDateTimeInput from "@/components/booking/BookingDateTimeInput";
 import { createIntentPointsCheckoutController } from "@/lib/merchantCheckoutSingleIntentClient";
 import { SingleCheckoutOriginalReview } from "./SingleCheckoutOriginalReview";
+import { createBoundPointsCheckoutController } from "@/lib/merchantCheckoutBoundClient";
+import { MemberCheckoutUnusedReference } from "./MemberCheckoutUnusedReference";
 
 const copy = {
   zh: { heading: "会员预约与商品兑换", intro: "先核对项目、可用积分和券；确认后一次完成建单与兑换。", quantity: "数量", appointment: "预约日期与时间", timeNote: "按商户时区填写，报价后会显示商户时区；不按手机时区换算。", quote: "核对积分与券", working: "正在核对…", name: "姓名", title: "称呼", email: "联系邮箱", phone: "联系电话", note: "备注", choose: "请选择", points: "本次兑换积分", balance: "可用积分", after: "兑换后剩余", confirm: "确认兑换并提交", submit: "正在提交…", unavailable: "当前不能使用积分兑换。可检查有效会员身份、积分和所选券。", unknown: "原单结果尚未确认。请核对原单，不要重复提交；刷新后仍保留本次编号。", recover: "核对原单", done: "兑换已确认", details: "查看原单与取消规则", another: "已核对，开始另一单", other: "本设备其他页面有结算操作，请先核对原单。", storage: "浏览器暂时无法可靠保存原单编号，已暂停提交。请保留本页并检查浏览器存储设置。", unsupported: "此浏览器暂不支持安全的跨标签页提交保护，请使用更新的浏览器。", failed: "暂时无法完成，请重新核对。", changed: "项目、价格、积分、券或时段已变化，本次未扣减。请重新核对后确认。", login: "请先登录，核对本人的会员积分和券。", loginButton: "用户登录", rule: "付款／兑换不代表预约已确认或服务已完成。", return: "取消时按原单规则退回原券，有效期不延长。", keep: "本项目取消后不退券。", selected: "已选择", item: "项目", zone: "商户时区", invalid: "请填写姓名、有效邮箱、电话和预约称呼；姓名最多 40 字节，备注最多 100 字节。" },
@@ -21,14 +23,14 @@ const policyCopy = {
 };
 const inputClass = "min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900";
 const buttonClass = "min-h-12 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold disabled:opacity-50";
-export function MemberCheckoutStartPanel({ siteId, accountId, initialSelection, locale = "zh-CN", loginHref = "/login", controllerFactory = createCheckoutClientController, intentEnabled = false, retainedIntentEnabled = false }: {
+export function MemberCheckoutStartPanel({ siteId, accountId, initialSelection, locale = "zh-CN", loginHref = "/login", controllerFactory = createCheckoutClientController, intentEnabled = false, retainedIntentEnabled = false, unusedReferenceEnabled = false }: {
   siteId: string; accountId: string | null; initialSelection: Omit<CheckoutClientSelection, "siteId" | "couponClaims">; locale?: string; loginHref?: string;
-  controllerFactory?: typeof createCheckoutClientController; intentEnabled?: boolean; retainedIntentEnabled?: boolean;
+  controllerFactory?: typeof createCheckoutClientController; intentEnabled?: boolean; retainedIntentEnabled?: boolean; unusedReferenceEnabled?: boolean;
 }) {
   const text = copy[merchantSettlementLanguage(locale)];
   if (!accountId) return <section className="mx-auto max-w-3xl space-y-4 p-5"><h1 className="text-2xl font-bold">{text.heading}</h1><p>{text.login}</p><a href={loginHref} className={buttonClass + " inline-block"}>{text.loginButton}</a></section>;
   return <ActivePanel key={JSON.stringify([siteId, accountId, initialSelection.offerId, initialSelection.offerRevision, initialSelection.quantity, initialSelection.appointmentAt ?? null])}
-    siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} retainedIntentEnabled={intentEnabled && retainedIntentEnabled} controllerFactory={intentEnabled ? createIntentPointsCheckoutController : controllerFactory}/>;
+    siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} retainedIntentEnabled={intentEnabled && retainedIntentEnabled} controllerFactory={intentEnabled ? unusedReferenceEnabled ? createBoundPointsCheckoutController : createIntentPointsCheckoutController : controllerFactory}/>;
 }
 function ActivePanel({ siteId, accountId, initialSelection, locale, controllerFactory, retainedIntentEnabled }: {
   siteId: string; accountId: string; initialSelection: Omit<CheckoutClientSelection, "siteId" | "couponClaims">; locale: string; controllerFactory: typeof createCheckoutClientController; retainedIntentEnabled: boolean;
@@ -63,6 +65,7 @@ function ActivePanel({ siteId, accountId, initialSelection, locale, controllerFa
     {message && <p role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">{message}</p>}
     {busy && <p role="status" className="text-sm text-slate-600">{state.phase === "submitting" ? text.submit : text.working}</p>}
     {state.pending && !result && !state.originalReview && <button type="button" className={buttonClass} disabled={busy} onClick={() => void controller.recover()}>{text.recover}</button>}
+    <MemberCheckoutUnusedReference controller={controller} locale={locale}/>
     {state.originalReview ? <SingleCheckoutOriginalReview siteId={siteId} original={state.originalReview} reviewRequired={state.intentReviewRequired === true} busy={busy} locale={locale} onRead={() => void controller.recover()}
       registrationRequired={state.retainedRegistrationRequired === true} onRegister={() => { if ("registerRetained" in controller && typeof controller.registerRetained === "function") void controller.registerRetained(true); }}
       onAnother={() => void controller.startAnother().then(() => { if (controller.getSnapshot().phase === "idle") { setCustomer(blankCustomer()); setDraft({ ...initialSelection, siteId, couponClaims: [] }); } })}/>

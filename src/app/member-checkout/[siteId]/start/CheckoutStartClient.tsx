@@ -10,7 +10,7 @@ import { buildOnSiteCheckoutStartHref } from "@/lib/merchantCheckoutOnSiteClient
 import type { CheckoutClientSelection } from "@/lib/merchantCheckoutClient";
 import { buildServiceLoginHref } from "@/lib/merchantServiceLogin";
 
-export default function CheckoutStartClient({ siteId, initialSelection, onSite = false, showOnSiteChoice = false, intentEnabled = false, retainedIntentEnabled = false }: { siteId: string; initialSelection: CheckoutClientSelection; onSite?: boolean; showOnSiteChoice?: boolean; intentEnabled?: boolean; retainedIntentEnabled?: boolean }) {
+export default function CheckoutStartClient({ siteId, initialSelection, onSite = false, showOnSiteChoice = false, intentEnabled = false, retainedIntentEnabled = false, unusedReferenceEnabled = false }: { siteId: string; initialSelection: CheckoutClientSelection; onSite?: boolean; showOnSiteChoice?: boolean; intentEnabled?: boolean; retainedIntentEnabled?: boolean; unusedReferenceEnabled?: boolean }) {
   const { locale } = useI18n(), [accountId, setAccountId] = useState<string | null>(null), [ready, setReady] = useState(false), [failed, setFailed] = useState(false);
   const sequence = useRef(0), [loginHref, setLoginHref] = useState("/login");
   const check = useCallback(async () => {
@@ -39,7 +39,7 @@ export default function CheckoutStartClient({ siteId, initialSelection, onSite =
         { cash: true, href: buildOnSiteCheckoutStartHref(initialSelection, locale), label: locale.startsWith("zh") ? "到店付款／用券" : locale.startsWith("es") ? "Pago en local / cupón" : "Pay at venue / coupon" }].map(option =>
         <Link key={option.href} href={option.href} prefetch={false} aria-current={onSite === option.cash ? "page" : undefined} className={`min-h-11 rounded-xl border px-4 py-3 text-sm ${onSite === option.cash ? "border-teal-700 bg-teal-700 text-white" : "border-slate-200 bg-white text-slate-800"}`}>{option.label}</Link>)}
     </nav>}
-    {ready ? onSite ? <MemberOnSiteStartPanel siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} loginHref={loginHref} intentEnabled={intentEnabled} retainedIntentEnabled={retainedIntentEnabled}/> : <MemberCheckoutStartPanel siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} loginHref={loginHref} intentEnabled={intentEnabled} retainedIntentEnabled={retainedIntentEnabled}/>
+    {ready ? onSite ? <MemberOnSiteStartPanel siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} loginHref={loginHref} intentEnabled={intentEnabled} retainedIntentEnabled={retainedIntentEnabled} unusedReferenceEnabled={unusedReferenceEnabled}/> : <MemberCheckoutStartPanel siteId={siteId} accountId={accountId} initialSelection={initialSelection} locale={locale} loginHref={loginHref} intentEnabled={intentEnabled} retainedIntentEnabled={retainedIntentEnabled} unusedReferenceEnabled={unusedReferenceEnabled}/>
       : <div role="status" className="mx-auto max-w-3xl space-y-3 p-6 text-sm text-slate-600"><p>{label}</p>{failed && <button type="button" className="min-h-11 rounded-xl border bg-white px-4" onClick={() => void check()}>{locale.startsWith("zh") ? "重试" : locale.startsWith("es") ? "Reintentar" : "Retry"}</button>}</div>}
   </main>;
 }

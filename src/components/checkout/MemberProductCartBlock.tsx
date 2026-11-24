@@ -29,7 +29,7 @@ const texts = {
 export default function MemberProductCartBlock(props: ProductBlockProps) {
   const { locale } = useI18n(), t = texts[locale.startsWith("zh") ? "zh" : locale.startsWith("es") ? "es" : "en"];
   const query = useMemo(() => ({ siteId: props.runtimeSiteId ?? "", kind: "order" as const, blockId: props.runtimeBlockId ?? "", viewport: props.runtimeCatalogViewport === "mobile" ? "mobile" as const : "desktop" as const }), [props.runtimeSiteId, props.runtimeBlockId, props.runtimeCatalogViewport]);
-  const scope = JSON.stringify(query), [loaded, setLoaded] = useState<{ scope: string; access: CheckoutEntryAccess | null; recoveryEnabled: boolean; intent: boolean; owned: boolean; legacy: boolean; handoff: boolean; retained: boolean } | null>(null), [failed, setFailed] = useState(false);
+  const scope = JSON.stringify(query), [loaded, setLoaded] = useState<{ scope: string; access: CheckoutEntryAccess | null; recoveryEnabled: boolean; intent: boolean; owned: boolean; legacy: boolean; handoff: boolean; retained: boolean; unused: boolean } | null>(null), [failed, setFailed] = useState(false);
   const [active, setActive] = useState(false), [notice, setNotice] = useState(false), [revision, setRevision] = useState(0);
   const lock = useRef(true), generation = useRef(0), capture = useRef<{ host: ProductCartCheckoutHost; customer: ProductCartCheckoutHost["customer"]; raw: string | null; fresh: boolean; selection: ReturnType<typeof productCartCheckoutSelection> } | null>(null);
   const setLocked = useCallback((value: boolean) => { lock.current = value; }, []);
@@ -55,8 +55,10 @@ export default function MemberProductCartBlock(props: ProductBlockProps) {
         // original read completes. Malformed/blocked storage never means clear.
         const pending = access ? window.localStorage.getItem(checkoutClientStorageKey(query.siteId, access.accountId)) !== null : false;
         if (body.ownedDraft === true && body.intent !== true) throw new Error("unavailable");
+        if (body.unusedReference === true && (body.ownedDraft !== true || body.intent !== true)) throw new Error("unavailable");
         setLocked(pending); setLoaded({ scope, access, recoveryEnabled: discovery.recoveryEnabled, intent: body.intent === true, owned: body.ownedDraft === true,
           retained: !!access && body.intent === true && body.ownedDraft === true && body.retainedIntent === true,
+          unused: !!access && body.intent === true && body.ownedDraft === true && body.unusedReference === true,
           legacy: !!access && body.intent === true && body.ownedDraft === true && body.legacyReview === true,
           handoff: !!access && body.intent === true && body.ownedDraft === true && body.legacyReview === true && body.legacyHandoff === true });
       } catch { if (!disposed && run === generation.current) { setFailed(true); setLocked(true); } }
@@ -97,12 +99,13 @@ export default function MemberProductCartBlock(props: ProductBlockProps) {
         {!captured ? <div className="space-y-3 text-sm">{notice && <p role="status">{t.kept}</p>}{host.clientRequestId && !pending ? <p role="alert">{t.legacy}</p> : <button type="button" className={button} disabled={!!loaded?.handoff && !!ownedState?.legacyPending && !pending} onClick={begin}>{pending ? t.retry : t.begin}</button>}
           {failed && <><p role="alert">{t.missing}</p>{retry}</>}</div>
           : <MemberCartCheckoutPanel siteId={query.siteId} accountId={access.accountId} initialSelection={captured.selection} initialCustomer={captured.host.customer} locale={locale}
-            intentEnabled={loaded?.intent} retainedIntentEnabled={loaded?.retained} prepareInsideLock={!!owned} allowNewCheckout={captured.fresh && captured.selection.lines.length > 0}
+            intentEnabled={loaded?.intent} retainedIntentEnabled={loaded?.retained} unusedReferenceEnabled={loaded?.unused} prepareInsideLock={!!owned} allowNewCheckout={captured.fresh && captured.selection.lines.length > 0}
             beforeSubmit={async (customer, lease) => { captured.raw = await captured.host.persist(captured.raw, customer, undefined, lease); captured.customer = customer; }}
             beforeRelease={async (original, context) => { captured.raw = await captured.host.persist(captured.raw, captured.customer, { selection: captured.selection, original, fresh: captured.fresh && (!loaded?.intent || context.createdHere) }, context.lease); }}
             verifyBeforeRelease={owned ? lease => owned.verify(captured.raw, lease) : undefined}
             onReturnToCart={() => { if (window.localStorage.getItem(checkoutClientStorageKey(query.siteId, access.accountId)) !== null) throw new Error("checkout_cart_changed");
               capture.current = null; setActive(false); setLocked(false); }}
+            onUnusedReleased={() => { capture.current = null; setActive(false); setLocked(false); setNotice(false); }}
             onReleased={() => { capture.current = null; setActive(false); setLocked(false); setNotice(true); }}/>}
       </div>;
     },

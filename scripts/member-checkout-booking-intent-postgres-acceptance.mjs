@@ -31,6 +31,7 @@ import resultHttp from '../src/app/api/member-checkout/result/route-handler.ts';
 import resultService from '../src/lib/merchantMemberCheckoutResult.server.ts';
 import cashHttp from '../src/lib/merchantCheckoutOnSiteHttp.server.ts';
 import { unusedReferenceCases } from './member-checkout-unused-reference-postgres-cases.mjs';
+import { boundCheckoutCases } from './member-checkout-bound-postgres-cases.mjs';
 
 test('owned booking intent lifecycle preserves coupons, points, slots and exact originals', { timeout: 120000 }, async t => {
   const runtime = path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR || '.missing-test-runtime');
@@ -254,6 +255,7 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
       });
     }
     await unusedReferenceCases(t, { db, peer, one, site, seed, state, rpc, requestFor, sessionFor, decode });
+    await boundCheckoutCases(t, { db, one, site, seed, state, rpc, requestFor, sessionFor });
     await t.test('all original writers and public-role execution boundaries remain unchanged', async () => {
       assert.deepEqual(await oldDefinitions(), baseline);
       for (const role of ['anon', 'authenticated', 'service_role']) for (const signature of ['faolla_member_checkout_submission_commit_v2(text,text,text,text,jsonb,jsonb,text)', 'faolla_member_checkout_acknowledge_intent_v1(text,text,text,bigint,text,text)'])

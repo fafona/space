@@ -3,6 +3,7 @@ import test from "node:test";
 import { parseUnusedReferenceRequest, parseUnusedReferenceReview, parseClosedUnusedReference } from "./merchantCheckoutUnusedReference";
 import { handleUnusedCheckoutReference, isMemberCheckoutUnusedReferenceEnabled, type UnusedReferenceDependencies } from "./merchantCheckoutUnusedReference.server";
 import { checkoutSubmissionRecoveryIdentity } from "./merchantCheckoutSubmissionPlan.server";
+import { handleCartCheckoutEntry } from "../app/api/member-checkout/cart/entry/route-handler";
 
 function fixture() {
   const siteId = "10909992", principal = { accountId: "57000001", userId: "unused-synthetic-user" }, nonce = "12345678-1234-4234-8234-123456789abc";
@@ -26,6 +27,16 @@ test("unused-reference capability is closed unless its independent and every exi
   assert.equal(isMemberCheckoutUnusedReferenceEnabled(site, env), true);
   for (const value of ["", "*", site + ",", "invalid", new Array(51).fill(site).join(",")]) assert.equal(isMemberCheckoutUnusedReferenceEnabled(site, { ...env, MERCHANT_MEMBER_CHECKOUT_UNUSED_REFERENCE_SITES: value }), false);
   for (const key of Object.keys(env)) assert.equal(isMemberCheckoutUnusedReferenceEnabled(site, { ...env, [key]: "" }), false, key);
+});
+
+test("cart discovery advertises unused-reference UI only for a verified intent/owned-draft entry with stable gates", async () => {
+  const x = fixture(), body = { siteId: x.siteId, kind: "order", blockId: "products", viewport: "desktop" }; let unused = true;
+  const deps = { enabled: () => true, intentEnabled: () => true, draftEnabled: () => true, unusedReferenceEnabled: () => unused, session: async () => x.session, read: async () => [] };
+  assert.equal((await (await handleCartCheckoutEntry(x.req(body), deps)).json()).unusedReference, true);
+  for (const patch of [{ session: async () => null }, { draftEnabled: () => false }, { intentEnabled: () => false, draftEnabled: () => false }, { unusedReferenceEnabled: () => false }])
+    assert.equal((await (await handleCartCheckoutEntry(x.req(body), { ...deps, ...patch })).json()).unusedReference, undefined);
+  const r = await handleCartCheckoutEntry(x.req(body), { ...deps, read: async () => { unused = false; return []; } });
+  assert.equal(r.status, 503);
 });
 
 test("strict unused/original/closed projections cannot be confused with a release or payment proof", () => {
@@ -107,4 +118,11 @@ test("slow session checks cannot renew the 11-second write dispatch deadline", a
   const x = fixture(); let now = Date.now(); context.mock.method(Date, "now", () => now);
   const r = await handleUnusedCheckoutReference(true, x.req({ ...x.input, reviewHash: x.reviewHash }), { ...x.deps, session: async () => { now += 11_500; return x.session; } });
   assert.equal(r.status, 503); assert.equal(x.calls.length, 0);
+});
+test("a pinned original operation rejects a different user ID even if the eight-digit account ID is unchanged", async () => {
+  const x = fixture(), body = { ...x.input, reviewHash: x.reviewHash }, headers = { "x-checkout-operation-scope": x.operationKey };
+  const r = await handleUnusedCheckoutReference(true, x.req(body, headers), { ...x.deps, session: async () => ({ ...x.session!, userId: "changed-synthetic-user" }) });
+  assert.equal(r.status, 401); assert.equal(x.calls.length, 0);
+  assert.equal((await handleUnusedCheckoutReference(false, x.req(x.input, { "x-checkout-operation-scope": "bad" }), x.deps)).status, 401); assert.equal(x.calls.length, 0);
+  assert.equal((await handleUnusedCheckoutReference(true, x.req(body, headers), x.deps)).status, 200); assert.equal(x.calls.length, 1);
 });

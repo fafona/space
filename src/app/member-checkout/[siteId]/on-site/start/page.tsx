@@ -5,6 +5,7 @@ import { isMemberCheckoutIntentPilotEnabled } from "@/lib/merchantCheckoutCartPi
 import { isMemberCheckoutSingleRetainedIntentEnabled } from "@/lib/merchantCheckoutSingleRetainedPilot.server";
 import { buildOnSiteCheckoutStartHref } from "@/lib/merchantCheckoutOnSiteClient";
 import { isMemberCheckoutOnSitePilotEnabled } from "@/lib/merchantCheckoutOnSitePilot.server";
+import { isMemberCheckoutUnusedReferenceEnabled } from "@/lib/merchantCheckoutUnusedReference.server";
 import { parseCheckoutStartQuery, type CheckoutClientSelection } from "@/lib/merchantCheckoutClient";
 import CheckoutStartClient from "../../start/CheckoutStartClient";
 export const metadata = { robots: { index: false, follow: false }, referrer: "no-referrer" as const };
@@ -15,5 +16,5 @@ export default async function OnSiteCheckoutStartPage({ params, searchParams }: 
   const intentEnabled = isMemberCheckoutIntentPilotEnabled(siteId);
   if (intentEnabled && !isCanonicalPortalRequest(new Request("https://invalid.invalid", { headers: await headers() })))
     redirect(new URL(buildOnSiteCheckoutStartHref(selection, query.uiLocale as string | undefined), resolveCanonicalPortalOrigin()).toString());
-  return <CheckoutStartClient siteId={siteId} initialSelection={selection} onSite showOnSiteChoice intentEnabled={intentEnabled} retainedIntentEnabled={isMemberCheckoutSingleRetainedIntentEnabled(siteId)}/>;
+  return <CheckoutStartClient siteId={siteId} initialSelection={selection} onSite showOnSiteChoice intentEnabled={intentEnabled} retainedIntentEnabled={isMemberCheckoutSingleRetainedIntentEnabled(siteId)} unusedReferenceEnabled={intentEnabled && isMemberCheckoutUnusedReferenceEnabled(siteId)}/>;
 }

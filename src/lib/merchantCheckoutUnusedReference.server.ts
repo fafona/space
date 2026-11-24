@@ -20,7 +20,7 @@ const defaults = { enabled: isMemberCheckoutUnusedReferenceEnabled, session: res
   } };
 export type UnusedReferenceDependencies = typeof defaults;
 const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: { "cache-control": "private, no-store, max-age=0", pragma: "no-cache",
-  vary: "Cookie, Authorization, X-Checkout-Account-Scope", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "cross-origin-resource-policy": "same-origin" } });
+  vary: "Cookie, Authorization, X-Checkout-Account-Scope, X-Checkout-Operation-Scope", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "cross-origin-resource-policy": "same-origin" } });
 const conflicts = new Set(["checkout_unused_busy", "checkout_unused_disabled", "checkout_unused_changed", "checkout_unused_expired", "checkout_original_exists"]);
 /** READ and explicit durable close are separate. No retry, financial mutation,
  * acknowledgement, nonce clearing or draft replacement occurs in this layer. */
@@ -54,6 +54,10 @@ export async function handleUnusedCheckoutReference(close: boolean, request: Req
       return { accountId: session.accountId, userId: session.userId };
     };
     const principal = await authorize(), identity = checkoutSubmissionRecoveryIdentity({ siteId, nonce: input.nonce }, principal);
+    // A newly bound browser reference pins the original operation, including
+    // its user ID. The account hint alone cannot detect a changed dual identity.
+    const expected = request.headers.get("x-checkout-operation-scope");
+    if (expected !== null && (!/^[a-f0-9]{64}$/.test(expected) || expected !== identity.operationKey)) throw new Error("checkout_unauthorized");
     const current = await authorize(); if (checkoutPrincipalKey(current) !== identity.principalKey) throw new Error("checkout_unauthorized");
     const args = { p_site_id: siteId, p_operation_key: identity.operationKey, p_principal_key: identity.principalKey,
       ...(close ? { p_review_hash: input.reviewHash, p_not_after: new Date(notAfter).toISOString() } : {}) };
