@@ -3,15 +3,16 @@
 // DB, installed migrations, role grants, application flags or data adoption.
 import assert from 'node:assert/strict';
 import http from '../src/lib/merchantCheckoutLegacyReview.server.ts';
+import handoffHttp from '../src/lib/merchantCheckoutLegacyHandoff.server.ts';
 export async function legacyReviewCases(t,{admin,a,b,seed,submit,state,site,one,ordinary,rows,records}){
  const origin='https://legacy-review-pg.synthetic.invalid',sql='select public.faolla_member_checkout_legacy_review_v1($1,$2,$3,$4,$5) result';
  const identity={accountId:'58889999',userId:'legacy-review-isolated-user'},sandbox='10909990',block='products',requestId='legacy-review-request';
  const query={siteId:sandbox,blockId:block,requestId},base={id:'O-review-isolated',siteId:sandbox,blockId:block,clientRequestId:requestId,customerAccountId:identity.accountId,customerUserId:identity.userId,
   status:'pending',createdAt:'2026-11-24T12:00:00+02:00',updatedAt:'2026-11-24T12:00:00.123456+02:00',customer:{name:'PRIVATE',email:'private@example.invalid'},items:[{name:'PRIVATE',quantity:99}],totalAmount:999};
  const args=(q=query,p=identity)=>[q.siteId,q.blockId,q.requestId,`account:${p.accountId}:${p.userId}`,new Date(Date.now()+11000).toISOString()];
- const invoke=async(q=query,p=identity,client=a)=>{
+ const invoke=async(q=query,p=identity,client=a,handoff=false)=>{
   const session={...p,servicePaused:false,user:{email_confirmed_at:new Date().toISOString()}};
-  return http.handleCheckoutLegacyReview(new Request(origin+'/api/member-checkout/legacy/review',{method:'POST',headers:{origin,'content-type':'application/json','x-checkout-account-scope':p.accountId},body:JSON.stringify(q)}),{
+  return (handoff?handoffHttp.handleCheckoutLegacyHandoffReview:http.handleCheckoutLegacyReview)(new Request(origin+(handoff?'/api/member-checkout/legacy/handoff-review':'/api/member-checkout/legacy/review'),{method:'POST',headers:{origin,'content-type':'application/json','x-checkout-account-scope':p.accountId},body:JSON.stringify(q)}),{
    enabled:()=>true,session:async()=>session,call:async(name,v)=>{assert.equal(name,'faolla_member_checkout_legacy_review_v1');assert.deepEqual(Object.keys(v).sort(),['p_block_id','p_not_after','p_principal_key','p_request_id','p_site_id']);
     try{return{data:(await one(client,sql,[v.p_site_id,v.p_block_id,v.p_request_id,v.p_principal_key,v.p_not_after])).result,error:null};}catch(error){return{data:null,error:{message:error.message}};}
    }});
@@ -24,6 +25,11 @@ export async function legacyReviewCases(t,{admin,a,b,seed,submit,state,site,one,
   for(const p of [{...f.principal,accountId:'58889998'},{...f.principal,userId:'other-isolated-user'}])assert.deepEqual(await(await invoke(q,p)).json(),empty(q));
   for(const patch of [{blockId:'different'},{requestId:'not-present'},{siteId:'10909992'}]){const other={...q,...patch};assert.deepEqual(await(await invoke(other,f.principal)).json(),empty(other));}
   assert.deepEqual(await state(),before);
+ });
+ await t.test('explicit handoff recheck uses the actual private SQL and verified session but creates no database acknowledgement or financial side effect',async()=>{
+  const f=await seed(),x=await ordinary(f),order=await x.create(),q={siteId:site,blockId:x.input.blockId,requestId:x.input.clientRequestId},before=await state();
+  const response=await invoke(q,f.principal,a,true);assert.equal(response.status,200);const value=await response.json();assert.equal(value.readOnly,true);assert.equal(value.review.order.id,order.id);
+  assert.deepEqual(Object.keys(value.review.order).sort(),['createdAt','id','status','updatedAt']);assert.deepEqual(await(await invoke(q,{...f.principal,userId:'different-handoff-user'},a,true)).json(),empty(q));assert.deepEqual(await state(),before);
  });
  await t.test('legacy read: canonical chunks override roots; strict raw identities, duplicate requests/IDs and financial marker cannot invent ownership',async()=>{
   await save([base]);let before=await state();const found=await(await invoke()).json();assert.deepEqual(found.review.order,{id:base.id,status:'pending',createdAt:'2026-11-24T10:00:00.000Z',updatedAt:'2026-11-24T10:00:00.123Z'});assert.ok(!JSON.stringify(found).includes('PRIVATE'));assert.deepEqual(await state(),before);

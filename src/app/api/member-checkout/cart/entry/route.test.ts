@@ -62,3 +62,12 @@ test("legacy record-review capability is independently closed and available only
   }
   let n = 0; const changed = await handleCartCheckoutEntry(req(), { ...x.deps, ...gates, legacyReviewEnabled: () => ++n === 1 }); assert.equal(changed.status, 503); assert.deepEqual(await changed.json(), { error: "checkout_entry_unavailable" });
 });
+
+test("explicit legacy handoff is separate from readonly discovery and cannot be granted to guests or incomplete modes", async () => {
+  const x = fixture(), gates = { intentEnabled: () => true, draftEnabled: () => true, legacyReviewEnabled: () => true, legacyHandoffEnabled: () => true };
+  const r = await handleCartCheckoutEntry(req(), { ...x.deps, ...gates }); assert.equal((await r.json()).legacyHandoff, true);
+  for (const patch of [{ legacyHandoffEnabled: () => false }, { legacyReviewEnabled: () => false }, { draftEnabled: () => false }, { draftEnabled: () => false, intentEnabled: () => false }, { session: async () => null }]) {
+    const response = await handleCartCheckoutEntry(req(), { ...x.deps, ...gates, ...patch }); assert.equal(response.status, 200); assert.equal(Object.hasOwn(await response.json(), "legacyHandoff"), false);
+  }
+  let n = 0; assert.equal((await handleCartCheckoutEntry(req(), { ...x.deps, ...gates, legacyHandoffEnabled: () => ++n === 1 })).status, 503);
+});

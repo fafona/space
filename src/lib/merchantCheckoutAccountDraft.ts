@@ -2,6 +2,8 @@ import { checkoutClientStorageKey, type CheckoutClientExclusive } from "./mercha
 import { assertCheckoutDraftLease, withCheckoutDraftLease, type CheckoutDraftLease } from "./merchantCheckoutDraftLease";
 import type { ProductItem } from "./productBlock";
 import type { MerchantOrderCustomerInput } from "./merchantOrders";
+import { legacyHandoffStorageKey, type LegacyCartHandoff } from "./merchantCheckoutLegacyHandoff";
+import type { LegacyOrderReview } from "./merchantCheckoutLegacyReview";
 
 export type AccountCartScope = { siteId: string; blockId: string; accountId: string };
 export type AccountCartItem = { productId: string; quantity: number; checked: boolean; product: ProductItem; unitPrice: number; unitPriceText: string };
@@ -47,10 +49,11 @@ function parseEnvelope(raw: string | null, scope: AccountCartScope) {
  * untouched and are NEVER adopted into an account. Every owned writer uses
  * the same site/account Web Lock as financial nonce/ack operations. */
 export function createAccountCartDraft(scope: AccountCartScope, ports: {
-  storage?: Pick<Storage, "getItem" | "setItem">; exclusive?: CheckoutClientExclusive;
+  storage?: Pick<Storage, "getItem" | "setItem">; exclusive?: CheckoutClientExclusive; legacyHandoff?: LegacyCartHandoff;
 } = {}) {
   const ownedScope = { ...scope }, storageKey = accountCartStorageKey(ownedScope), lockKey = checkoutClientStorageKey(scope.siteId, scope.accountId);
   const legacyKey = `merchant-space:product-cart:v1:${scope.siteId}:${scope.blockId}`;
+  if (ports.legacyHandoff && ports.legacyHandoff.storageKey !== legacyHandoffStorageKey(ownedScope)) throw new Error("checkout_draft_invalid");
   const exclusive: CheckoutClientExclusive = ports.exclusive ?? (async (key, run) => {
     if (!navigator.locks) throw new Error("checkout_browser_unsupported");
     return navigator.locks.request(key, { ifAvailable: true }, async lock => { if (!lock) return false; await run(); return true; });
@@ -66,6 +69,7 @@ export function createAccountCartDraft(scope: AccountCartScope, ports: {
     if (legacy !== null) { try { if (legacy.length > 1_048_576) throw new Error("large"); const value: unknown = JSON.parse(legacy);
       legacyPending = !object(value) || typeof value.clientRequestId !== "string" || value.clientRequestId.trim() !== "";
     } catch { legacyPending = true; } }
+    if (legacyPending && ports.legacyHandoff?.matches(legacy)) legacyPending = false;
     valid(run); return { raw, ...next, legacyPresent: legacy !== null, legacyPending };
   };
   const errors = new Set(["checkout_draft_invalid", "checkout_draft_inactive", "checkout_browser_unsupported", "checkout_other_tab", "checkout_cart_changed", "checkout_legacy_original_pending"]);
@@ -76,15 +80,21 @@ export function createAccountCartDraft(scope: AccountCartScope, ports: {
     valid(run); if (!acquired) throw new Error("checkout_other_tab");
   };
   const controller = {
-    storageKey, lockKey, legacyKey, getSnapshot: () => state,
+    storageKey, lockKey, legacyKey, handoffStorageKey: ports.legacyHandoff?.storageKey, getSnapshot: () => state,
     subscribe(fn: () => void) { listeners.add(fn); return () => { listeners.delete(fn); }; },
-    async activate() { active = true; const run = ++epoch; state = blank(); emit({ busy: true });
-      try { let loaded: ReturnType<typeof read> | undefined; await locked(run, async () => { loaded = read(run); }); valid(run); emit({ ...loaded, ready: true, busy: false, error: "" }); }
+    async activate() { active = true; const run = ++epoch; state = blank(); ports.legacyHandoff?.activate(); emit({ busy: true });
+      try { let loaded: ReturnType<typeof read> | undefined; await locked(run, async lease => {
+        if (ports.legacyHandoff) { const legacy = storage().getItem(legacyKey), marker = storage().getItem(storageKey);
+          await ports.legacyHandoff.prepare(legacy, () => { valid(run); if (storage().getItem(legacyKey) !== legacy || storage().getItem(storageKey) !== marker) throw new Error("checkout_cart_changed"); }, lease); }
+        loaded = read(run); }); valid(run); emit({ ...loaded, ready: true, busy: false, error: "" }); }
       catch (error) { if (active && epoch === run) fail(error); }
     },
-    deactivate() { active = false; epoch++; state = blank(); emit({}); },
+    deactivate() { active = false; epoch++; ports.legacyHandoff?.deactivate(); state = blank(); emit({}); },
     async refresh() { if (!active || state.busy) return; const run = epoch; emit({ busy: true, ready: false });
-      try { let loaded: ReturnType<typeof read> | undefined; await locked(run, async () => { loaded = read(run); }); valid(run); emit({ ...loaded, ready: true, busy: false, error: "" }); }
+      try { let loaded: ReturnType<typeof read> | undefined; await locked(run, async lease => {
+        if (ports.legacyHandoff) { const legacy = storage().getItem(legacyKey), marker = storage().getItem(storageKey);
+          await ports.legacyHandoff.prepare(legacy, () => { valid(run); if (storage().getItem(legacyKey) !== legacy || storage().getItem(storageKey) !== marker) throw new Error("checkout_cart_changed"); }, lease); }
+        loaded = read(run); }); valid(run); emit({ ...loaded, ready: true, busy: false, error: "" }); }
       catch (error) { if (active && epoch === run) fail(error); }
     },
     async edit(update: (data: AccountCartData) => AccountCartData) {
@@ -98,6 +108,18 @@ export function createAccountCartDraft(scope: AccountCartScope, ports: {
       const run = epoch; valid(run); let raw = "";
       await locked(run, async lease => { if (storage().getItem(lockKey) !== null) throw new Error("checkout_other_tab");
         raw = await controller.persist(expected, data, lease); }); return raw;
+    },
+    async confirmLegacyHandoff(review: LegacyOrderReview, confirmed: boolean): Promise<void> {
+      const run = epoch; valid(run); if (!ports.legacyHandoff || !state.ready || state.busy) throw new Error("checkout_legacy_handoff_unavailable");
+      const expected = state.raw; emit({ busy: true });
+      try { await locked(run, async lease => {
+        const legacy = storage().getItem(legacyKey); if (legacy === null) throw new Error("checkout_cart_changed");
+        const guard = () => { valid(run); if (storage().getItem(lockKey) !== null) throw new Error("checkout_other_tab");
+          if (storage().getItem(legacyKey) !== legacy || storage().getItem(storageKey) !== expected) throw new Error("checkout_cart_changed"); };
+        guard(); await ports.legacyHandoff!.confirm(legacy, review, confirmed, guard, lease); guard();
+        const current = read(run); if (current.legacyPending) throw new Error("checkout_legacy_original_pending"); emit({ ...current, ready: true, error: "" });
+      }); } catch (error) { if (active && epoch === run) fail(error); throw error; }
+      finally { if (active && epoch === run) emit({ busy: false }); }
     },
     /** Exact saved bytes, scope and legacy barrier, under the caller's live
      * financial lock. A read check never adopts, repairs or rewrites a draft. */
