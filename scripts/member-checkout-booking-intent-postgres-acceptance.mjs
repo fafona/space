@@ -28,6 +28,7 @@ import commonClient from '../src/lib/merchantCheckoutClient.ts';
 import cartHttp from '../src/lib/merchantCheckoutCartHttp.server.ts';
 import intentHttp from '../src/lib/merchantCheckoutIntentHttp.server.ts';
 import resultHttp from '../src/app/api/member-checkout/result/route-handler.ts';
+import { checkoutCompatibilityCases } from './member-checkout-compatibility-postgres-cases.mjs';
 import resultService from '../src/lib/merchantMemberCheckoutResult.server.ts';
 import cashHttp from '../src/lib/merchantCheckoutOnSiteHttp.server.ts';
 import { unusedReferenceCases } from './member-checkout-unused-reference-postgres-cases.mjs';
@@ -88,7 +89,11 @@ test('owned booking intent lifecycle preserves coupons, points, slots and exact 
     await db.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_cart_management.sql'), 'utf8'));
     await db.query(await readFile(path.resolve('database/proposals/20261124_member_checkout_unused_reference.sql'), 'utf8'));
     await db.query(await readFile(path.resolve('database/proposals/20261124_member_checkout_original_service.sql'), 'utf8'));
+    // Full private protocol inventory also requires the existing customer cart
+    // lookup, previously absent from this specific owned TEMP installation.
+    await db.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_cart_personal_boundary.sql'), 'utf8'));
     assert.deepEqual(await oldDefinitions(), baseline);
+    await checkoutCompatibilityCases(t, { db });
     for (const table of ['bundle_pilots', 'intent_pilots']) {
       assert.equal((await one(db, `select count(*)::int n from faolla_checkout_design.${table} where enabled`)).n, 0);
       await db.query(`insert into faolla_checkout_design.${table}(site_id,enabled) values($1,true)`, [site]);

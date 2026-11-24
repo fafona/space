@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "scope": "private-checkout-compatibility-evidence",
+  "basisCommit": "0332f25bcb5e01aa6433bdd03028eb66cd2a8fbb",
+  "application": {
+    "algorithm": "sha256-lf-path-content-v1",
+    "files": 2967,
+    "sha256": "af440116acc272e453cdd5076bb26c334867fb4908be5dfa680393bb2db3409f"
+  },
+  "sources": [
+    {
+      "file": "scripts/supabase-migrations/202609080045_order_membership_atomic_mutation.sql",
+      "sha256": "1002191009309523728fb38aa441ae24540364cdaabf6a7525590a7b744c5bca"
+    },
+    {
+      "file": "scripts/supabase-migrations/202609080046_redemption_atomic_mutation.sql",
+      "sha256": "7192cf31a96817e005d17d982ebc1be3ccd9c8c769f1bd543bdc4b1c8d1e7143"
+    },
+    {
+      "file": "scripts/supabase-migrations/202610250211_booking_atomic_preparation.sql",
+      "sha256": "0af1dae82cc60a308b1c717ff4168d3d1640feec26e35abf7c80a837fdd5de3f"
+    },
+    {
+      "file": "scripts/supabase-migrations/202610250212_booking_atomic_runtime.sql",
+      "sha256": "9ccd3a97c7ac7bb2b8a807ad2bea770057db595d4537a4906c3db22ba900870c"
+    },
+    {
+      "file": "scripts/supabase-migrations/202611050213_booking_atomic_safeupdate_singleton.sql",
+      "sha256": "92c413c5877bcf09b45c83085ef637a9377ef4dd10dd4e830a46f7e28f42a769"
+    },
+    {
+      "file": "database/proposals/20261122_member_checkout_design.sql",
+      "sha256": "dd8c0cefd3983f9b2df96335ba8e10afd7b1c10062288f5d3df7c3cb695d7207"
+    },
+    {
+      "file": "database/proposals/20261122_member_checkout_catalog.sql",
+      "sha256": "6682da1a4a0cd34e4864a2b5f255f5fca01061009b2f5126cba1b61dcfc8efe0"
+    },
+    {
+      "file": "database/proposals/20261122_member_checkout_bundle.sql",
+      "sha256": "4cb67f7512a8a79f7678903bb2b07c6f67cdb8e4d0050682a79a86cafc0d10ac"
+    },
+    {
+      "file": "database/proposals/20261122_member_checkout_cancellation.sql",
+      "sha256": "e7c5f93a0adb66c3eb080b9150a78c2904e73ae5dbed632f974235f050b7b01f"
+    },
+    {
+      "file": "database/proposals/20261122_member_checkout_queries.sql",
+      "sha256": "b64864ca280b0a3ff4c7b75a93e1be22da4dc319229fa1204af42bd2dc1c68d0"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_legacy_boundary.sql",
+      "sha256": "6c13fbaee66a92cdf7c8b2923600072035b2f99c7fe1c0cdcb65a597fc56df07"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_on_site_pending.sql",
+      "sha256": "3a44cb492c8c630374001cfa9c95448963262f36a8bed97019b407106989eff2"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_on_site_cancellation.sql",
+      "sha256": "647468fd243b55c289e5142a910e4d6969b105c5cf5f835980fa7c34f965b270"
+    },
+    {
+      "file": "database/proposals/20261122_member_checkout_submission.sql",
+      "sha256": "da62626b264ee955af75d937f6f463553d8d5593fcca371a48d99dfddd44b01b"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_on_site_submission.sql",
+      "sha256": "e7f103f92494a725300d577e7dd34ef396d5e29ae935a1b4ce6b4a333bb0d128"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_reporting.sql",
+      "sha256": "0f4c60b202fd9783d9117f2d046246bdd531ab64a8b381c4250385785ffcbd79"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_presentation.sql",
+      "sha256": "a2ea1f1a5fa5c487d17de954da18cd028f0736e437b3ff9e0c491ffdaa24dabc"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_on_site_management.sql",
+      "sha256": "4e8f5e143d17dbf5aa2fc89bbd6397d17c3c13a8f9999743efa1ec0548bfe843"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_cart_quote.sql",
+      "sha256": "ec1c56d841c2c6c3ed843793040467af722122d5c9edab6b6662500d0c458e24"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_cart_collection.sql",
+      "sha256": "8705aebe0f14493f16dc47c0d34f1666b22b6b2620ad6ba1182db3627d741d6c"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_cart_submission.sql",
+      "sha256": "5ed265e9df3db14dcdf96058400c2a1858187a9f83ab19e6f6131fdc03668f5d"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_cart_cancellation.sql",
+      "sha256": "9d9f2ef8d72d774793db0cd5ee73ed8a5d1465bc927f4eea1512376739370246"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_cart_presentation.sql",
+      "sha256": "963f48b321a332a4578267179d79a48d672b1e791575c107e09390dc3cbce937"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_pending_intents.sql",
+      "sha256": "b8390daf745c638f80a818c46a84275bfd1bbec1616cf2ca1d0523060cc3b3b1"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_intent_review.sql",
+      "sha256": "74576859bd0f8dc49839fa94c1119a09f028d6eb42803326cdc75c974242d1ed"
+    },
+    {
+      "file": "database/proposals/20261124_member_checkout_history_original.sql",
+      "sha256": "16d6131bae7ddd6b1822224f3abc02de14db7850e9bc00a7016caa25045cc81f"
+    },
+    {
+      "file": "database/proposals/20261124_member_checkout_legacy_review.sql",
+      "sha256": "c3f840a1b4e99a5c31d0d262367b4122408a4a3df4f73db51abb26c26d5cf421"
+    },
+    {
+      "file": "database/proposals/20261124_member_checkout_retained_intent.sql",
+      "sha256": "18331b79131745564acf5820c7ebf731a432981cb930e3ee362f471214e90de2"
+    },
+    {
+      "file": "database/proposals/20261124_member_checkout_history_inventory.sql",
+      "sha256": "b6d4439d63c1ea0a3633231193ef3c85538dece394a08e161eea91f87e8a72b7"
+    },
+    {
+      "file": "database/proposals/20261124_member_checkout_legacy_order_rewards.sql",
+      "sha256": "8ff75d1eafff2fe53578608e767d1e69d4c6c2fd6b493db226dfc950e1cb4593"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_legacy_order_intent.sql",
+      "sha256": "9b77e7b5a0ce22d0eb0ab09f800f58e7448c6a7edc0dc27a48c35fad3a43d42b"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_legacy_booking_intent.sql",
+      "sha256": "952d4445810402567bdf5e6440fb1135c09f0d06ed10d4d3ad8ac1d995302af1"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_closed_gate_creation.sql",
+      "sha256": "d2ee829a24a6bd34fa24024a05f8637739a4666a7f07556e4587624bc9889dba"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_cart_management.sql",
+      "sha256": "02aeaac6a9aceb317358daca5b7371c907f0692b64e4cdcd44992b0c31e1c9ca"
+    },
+    {
+      "file": "database/proposals/20261124_member_checkout_unused_reference.sql",
+      "sha256": "806f52816f89754d4e67734c1ef72d4c92557b5c510bda1edca55c1a0cac3497"
+    },
+    {
+      "file": "database/proposals/20261124_member_checkout_original_service.sql",
+      "sha256": "d763d5e2364fdb6f8ef0b64ba0e0fe05b90cf78f58ce309acc7fc47fb52a4730"
+    },
+    {
+      "file": "database/proposals/20261123_member_checkout_cart_personal_boundary.sql",
+      "sha256": "82abfef0bd0f278dc2ba6e8a08d5c38be5c900e6774abf02823decc4db150e3b"
+    }
+  ]
+}
