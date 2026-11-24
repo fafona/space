@@ -11,6 +11,7 @@ import {legacyBookingIntentCases} from './member-checkout-legacy-booking-intent-
 import {closedGateOrderCases} from './member-checkout-closed-gate-creation-postgres-cases.mjs';
 import {retainedOrderCases} from './member-checkout-retained-orders-postgres-cases.mjs';
 import {historyReadCases} from './member-checkout-history-read-postgres-cases.mjs';
+import {historyRecoveryCases} from './member-checkout-history-recovery-postgres-cases.mjs';
 
 test('ordinary order creation cannot bypass an enrolled original pending review',{timeout:120000},async t=>{
  const runtime=path.resolve(process.env.FAOLLA_BOOKING_TEST_RUNTIME_DIR||'.missing-test-runtime'),relative=path.relative(tmpdir(),runtime);
@@ -37,7 +38,7 @@ test('ordinary order creation cannot bypass an enrolled original pending review'
    'database/proposals/20261122_member_checkout_design.sql','database/proposals/20261122_member_checkout_catalog.sql','database/proposals/20261122_member_checkout_bundle.sql','database/proposals/20261122_member_checkout_cancellation.sql','database/proposals/20261122_member_checkout_queries.sql',
    'database/proposals/20261123_member_checkout_legacy_boundary.sql','database/proposals/20261123_member_checkout_on_site_pending.sql','database/proposals/20261123_member_checkout_on_site_cancellation.sql','database/proposals/20261122_member_checkout_submission.sql','database/proposals/20261123_member_checkout_on_site_submission.sql',
    'database/proposals/20261123_member_checkout_reporting.sql','database/proposals/20261123_member_checkout_presentation.sql','database/proposals/20261123_member_checkout_on_site_management.sql','database/proposals/20261123_member_checkout_cart_quote.sql','database/proposals/20261123_member_checkout_cart_collection.sql',
-   'database/proposals/20261123_member_checkout_cart_submission.sql','database/proposals/20261123_member_checkout_cart_cancellation.sql','database/proposals/20261123_member_checkout_cart_presentation.sql','database/proposals/20261123_member_checkout_pending_intents.sql','database/proposals/20261123_member_checkout_intent_review.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
+   'database/proposals/20261123_member_checkout_cart_submission.sql','database/proposals/20261123_member_checkout_cart_cancellation.sql','database/proposals/20261123_member_checkout_cart_presentation.sql','database/proposals/20261123_member_checkout_pending_intents.sql','database/proposals/20261123_member_checkout_intent_review.sql','database/proposals/20261124_member_checkout_history_original.sql'])await admin.query(await readFile(path.resolve(file),'utf8'));
   const definitions=async()=>(await admin.query("select p.oid::regprocedure::text name,pg_get_functiondef(p.oid) definition from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','faolla_checkout_design') and p.prokind='f' and p.proname not in ('faolla_checkout_legacy_order_commit_v1','faolla_checkout_legacy_booking_commit_v1','guard_closed_gate_creation') order by name")).rows;
   const beforeDefinitions=await definitions();await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_legacy_order_intent.sql'),'utf8'));
   await admin.query(await readFile(path.resolve('database/proposals/20261123_member_checkout_legacy_booking_intent.sql'),'utf8'));
@@ -148,6 +149,7 @@ test('ordinary order creation cannot bypass an enrolled original pending review'
   });
   await retainedOrderCases(t,{admin,a,seed,submit,state,site,one,rows,records,dispatch});
   await historyReadCases(t,{admin,a,seed,submit,state,site,one,dispatch});
+  await historyRecoveryCases(t,{admin,a,b,seed,submit,state,site,one,dispatch,pending,ack});
   await closedGateOrderCases(t,{admin,a,b,seed,submit,ack,state,site,one,rows,records,newInput,ordinary,http,mutation});
   await legacyBookingIntentCases(t,{admin,a,b,seed,submit,pending,ack,state,site,one,evidence});
   await t.test('all API roles and retained snapshots are denied and every old SQL definition remains byte-identical',async()=>{

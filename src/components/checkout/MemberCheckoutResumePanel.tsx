@@ -6,6 +6,7 @@ import { merchantSettlementLanguage } from "@/lib/merchantSettlement";
 import { CartCheckoutSummary } from "./CartCheckoutSummary";
 import { OnSiteCheckoutSummary } from "./OnSiteCheckoutSummary";
 import { MerchantSettlementBadge } from "./MerchantSettlementBadge";
+import { MemberCheckoutLocalRecovery } from "./MemberCheckoutLocalRecovery";
 const copy = {
   zh: { title: "我的结算原单", note: "这里仅查看服务器已登记的原单，不重新提交、扣减、确认已核对，也不清空原表单或购物车。没有显示原单，不代表其他尚未确认的提交已经失败；请保留原结算页和编号，不要重复提交。", read: "重新读取原单", reading: "正在读取本人原单…", empty: "当前没有待核对的已登记原单。", failed: "暂时无法核对本人原单，请重新读取，不要重复提交。", changed: "账号状态已变化，请重新打开本页。", review: "原单需要人工核对，不能据此认定已付款或再次扣减。", detail: "查看原单详情与取消规则", single: "单项目结算原单" },
   en: { title: "My original checkout", note: "Read registered originals only. This does not submit, debit, acknowledge or clear a form/cart. No original shown does not prove another unconfirmed submission failed. Keep its page and reference; do not submit again.", read: "Read original again", reading: "Reading your original…", empty: "No registered original is awaiting review.", failed: "Your original could not be checked. Read it again; do not resubmit.", changed: "Your account changed. Reopen this page.", review: "The original needs manual review. Do not infer payment or debit again.", detail: "Original details & cancellation policy", single: "Single-item original" },
@@ -38,6 +39,7 @@ export function MemberCheckoutResumePanel({ siteId, accountId, locale = "zh-CN",
   return <section data-checkout-resume className="mx-auto max-w-4xl space-y-5 p-4 text-slate-900 sm:p-7">
     <header><p translate="no" className="text-xs font-semibold tracking-widest text-teal-700">FAOLLA · ORIGINAL CHECKOUT</p><h1 className="mt-2 text-2xl font-bold">{t.title}</h1><p className="mt-3 text-sm leading-6 text-slate-600">{t.note}</p></header>
     {readOnly && <p data-checkout-history-read className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">{history.note}</p>}
+    {readOnly && !blocked && <MemberCheckoutLocalRecovery key={`${siteId}:${accountId}`} siteId={siteId} accountId={accountId} locale={locale}/>}
     {blocked ? <p role="alert">{t.changed}</p> : <>
       <button type="button" className={button} disabled={state.phase === "reading"} onClick={() => void controller.read()}>{t.read}</button>
       {(state.phase === "reading" || state.phase === "idle") && <p role="status">{t.reading}</p>}
