@@ -56,9 +56,15 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     }
     assert.fail('owned service readiness timed out');
   };
-  const caseOf = async (name, run) => t.test(name, async () => {
-    try { await run(); report.checks.push({ name, passed: true }); } catch (e) { report.checks.push({ name, passed: false }); throw e; }
-  });
+  const caseOf = async (name, run) => {
+    let passed = false;
+    await t.test(name, async () => {
+      try { await run(); passed = true; report.checks.push({ name, passed: true }); } catch (e) { report.checks.push({ name, passed: false }); throw e; }
+    });
+    // Dependent checks must not accidentally pass merely because login failed
+    // and left the browser signed out. Abort this owned pipeline on first failure.
+    assert.equal(passed, true, 'required prerequisite failed: ' + name);
+  };
   const stop = async () => {
     await browser?.close().catch(() => {});
     for (const entry of [...children].reverse()) {
@@ -135,6 +141,7 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     assert.equal((await authCall('/admin/users/' + userId, { email_confirm: true }, serviceJwt, 'PUT')).status, 200);
     fixture = await prepareOwnedNextFixture(); report.application = await applicationFingerprint(fixture.root);
     const appEnv = { NODE_ENV: 'development', NODE_OPTIONS: '--max-old-space-size=3072', NEXT_TELEMETRY_DISABLED: '1', FAOLLA_CHECKOUT_NEXT_LOCAL: '1',
+      FAOLLA_CANONICAL_PORTAL_ORIGIN: 'https://portal.checkout-auth.test', FAOLLA_SUPER_ADMIN_ORIGIN: 'https://console.checkout-auth.test',
       SUPABASE_INTERNAL_URL: gatewayOrigin, NEXT_PUBLIC_SUPABASE_URL: gatewayOrigin, NEXT_PUBLIC_SUPABASE_ANON_KEY: anonJwt, SUPABASE_SERVICE_ROLE_KEY: serviceJwt,
       FAOLLA_CHECKOUT_RUNTIME_JWT: runtimeJwt, FAOLLA_BACKGROUND_JOBS_PAUSED: '1', MERCHANT_BOOKING_AUTOMATION_WORKER_ENABLED: 'false', MERCHANT_BOOKING_STORAGE_MODE: 'atomic-v2',
       MERCHANT_MEMBER_CHECKOUT_PILOT_SITES: financial.site, MERCHANT_MEMBER_CHECKOUT_CART_PILOT_SITES: financial.site, MERCHANT_MEMBER_CHECKOUT_CART_UI_PILOT_SITES: financial.site,
@@ -144,8 +151,14 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     report.phase = 'next-startup'; const deadline = Date.now() + 45000;
     while (!nextEvents.some(v => v.type === 'listening') && Date.now() < deadline) { assert.equal(nextChild.exitCode, null); await sleep(50); }
     const listening = nextEvents.find(v => v.type === 'listening'); assert.ok(listening, 'Next readiness');
-    const origin = `https://127.0.0.1:${listening.port}`, route = '/api/member-checkout/single/points/submit';
-    browser = await chromium.launch({ headless: true }); const context = await browser.newContext({ ignoreHTTPSErrors: true }), view = await context.newPage();
+    // Bare loopback is intentionally also treated as the dev super-admin host
+    // by the unchanged middleware. Use DISTINCT synthetic canonical hosts,
+    // DNS-mapped in this browser to loopback, not a middleware/auth bypass.
+    const origin = `https://portal.checkout-auth.test:${listening.port}`, route = '/api/member-checkout/single/points/submit';
+    browser = await chromium.launch({ headless: true, args: ['--host-resolver-rules=MAP portal.checkout-auth.test 127.0.0.1', '--no-proxy-server'] });
+    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+    const view = await context.newPage();
     const response = await view.goto(origin + route, { timeout: 90000 }); assert.equal(response.status(), 405);
     const call = (route, body, headers = {}) => view.evaluate(async ({ route, body, headers }) => {
       const response = await fetch(route, { method: body === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json', ...headers },

@@ -34,6 +34,9 @@ test('artifact report excludes exception content and credentials; test source ha
   assert.match(runner, /\/api\/auth\/merchant-login/); assert.match(runner, /\/api\/auth\/merchant-session\?reauth=1/);
   assert.match(runner, /\/api\/auth\/merchant-logout/); assert.match(runner, /\/logout\?scope=global/);
   assert.match(runner, /await financial\.state\(\), replay/);
+  assert.match(runner, /FAOLLA_CANONICAL_PORTAL_ORIGIN: 'https:\/\/portal\.checkout-auth\.test'/);
+  assert.match(runner, /--host-resolver-rules=MAP portal\.checkout-auth\.test 127\.0\.0\.1/);
+  assert.match(runner, /required prerequisite failed:/);
 });
 test('startup diagnostic redacts local secrets, JWTs, URLs and SQL instead of hiding startup failure behind cleanup', () => {
   const value = sanitizeStartupDiagnostic('config failed: secret-sentinel eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature postgres://actor:password@127.0.0.1/test\nSTATEMENT: select private_data;', ['secret-sentinel']);
