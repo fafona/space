@@ -23,6 +23,8 @@ import { runtimeLifecycleCases } from './member-checkout-runtime-lifecycle-cases
 import { versionCutoverCases } from './member-checkout-version-cutover-cases.mjs';
 import { verifyOwnedRollbackSource } from './member-checkout-version-cutover-support.mjs';
 import { buildOwnedCandidate } from './member-checkout-rollback-build.mjs';
+import { createInstallationSourceBundle } from './member-checkout-installation-bundle.mjs';
+import { readInstallationPreflight,assertInstallationPreflight,installationPreflightSummary } from './member-checkout-installation-preflight.mjs';
 
 test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> points/coupon booking', { timeout: process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1' ? 900000 : 360000 }, async t => {
   const owned = assertIsolatedCi(); await verifyOwnedTools(owned.tools, owned.profileName);
@@ -155,6 +157,17 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
       assert.equal((await authCall('/token?grant_type=password', { email, password: 'WrongPassword!' }, anonJwt)).status, 400);
     });
     assert.equal((await authCall('/admin/users/' + userId, { email_confirm: true }, serviceJwt, 'PUT')).status, 200);
+    await caseOf('fixed metadata-only installation observation works against the selected real PG protocol without changing financial state',async()=>{
+      const before=await financial.state(),sourceBundle=await createInstallationSourceBundle();
+      await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      try{
+        await db.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='1s';SET LOCAL search_path=pg_catalog,public");
+        const first=await readInstallationPreflight(sql=>db.query(sql),sourceBundle),second=await readInstallationPreflight(sql=>db.query(sql),sourceBundle);
+        assert.equal(first.data.context.readOnly,true);assertInstallationPreflight(first,second);
+        report.installationObservation=installationPreflightSummary(first);
+      }finally{await db.query('ROLLBACK');}
+      assert.deepEqual(await financial.state(),before);
+    });
     const productionCandidate = process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1';
     fixture = await prepareOwnedNextFixture({ productionBuild: productionCandidate }); report.application = await applicationFingerprint(fixture.root);
     if (productionCandidate) {

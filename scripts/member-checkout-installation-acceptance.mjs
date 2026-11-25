@@ -11,6 +11,7 @@ import {assertIsolatedCi,database,databasePort,safeError} from './member-checkou
 import {assertOwnedLifecycleTarget} from './member-checkout-runtime-lifecycle-cases.mjs';
 import {loadInstallationPlan} from './member-checkout-installation-plan.mjs';
 import {createInstallationSourceBundle,verifyInstallationSourceBundle,installationBundleSummary} from './member-checkout-installation-bundle.mjs';
+import {readInstallationPreflight,assertInstallationTarget,assertInstallationPreflight,installationPreflightSummary} from './member-checkout-installation-preflight.mjs';
 import {readCompatibilityCatalog,inspectCompatibilityCatalog} from './member-checkout-compatibility-check.mjs';
 import {createOwnedCheckoutData} from './fixtures/member-checkout-real-auth-database.mjs';
 import submission from '../src/lib/merchantCheckoutSubmission.server.ts';
@@ -98,6 +99,14 @@ test('owned atomic installation, interruption, idempotency and retained financia
    assert.deepEqual(await registry(observer),plan.registry);
   });
   const baseline=await state(observer),oldRoles=baseline.roles,oldMemberships=baseline.memberships;
+  const previewPreflight=async()=>{
+   await observer.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+   try{
+    await observer.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='1s';SET LOCAL search_path=pg_catalog,public");
+    return await readInstallationPreflight(sql=>observer.query(sql),bundle);
+   }finally{await observer.query('ROLLBACK');}
+  };
+  const preflight=await previewPreflight();report.installationPreflight=installationPreflightSummary(preflight);
   const install=async(fault,bundleFile=packageFile)=>{
    const approved=await verifyInstallationSourceBundle(await readFile(bundleFile,'utf8'));
    assert.equal(approved.digest,bundle.digest,'installation_bundle_changed');
@@ -105,11 +114,14 @@ test('owned atomic installation, interruption, idempotency and retained financia
    try{
     await db.query('BEGIN');await db.query("SET LOCAL lock_timeout='1s';SET LOCAL statement_timeout='15s';SET LOCAL search_path=pg_catalog,public;SET LOCAL standard_conforming_strings=on");
     assert.equal((await db.query('select pg_try_advisory_xact_lock(20261125,6064) locked')).rows[0].locked,true,'installation_busy');
+    const currentPreflight=await readInstallationPreflight(sql=>db.query(sql),approved);
+    assertInstallationTarget(preflight,currentPreflight);
     const rows=await registry(db),receipt=rows.find(r=>r.version===markerVersion);
     if(receipt){assert.equal(receipt.name,markerName,'installation_receipt_conflict');assert.deepEqual(rows.filter(r=>r.version!==markerVersion),plan.registry);await installed(db);await db.query('COMMIT');return{status:'already_installed',applied};}
     assert.deepEqual(rows,plan.registry,'installation_registry_changed');
     assert.deepEqual(inspectCompatibilityCatalog(plan.prerequisites,await catalogue(db)).issues,['schema_boundary_changed'],'installation_prerequisite_catalogue_changed');
     assert.equal((await db.query("select count(*)::int n from pg_roles where rolname in ('faolla_checkout_runtime','faolla_checkout_executor')")).rows[0].n,0,'installation_role_collision');
+    assertInstallationPreflight(preflight,currentPreflight);
     for(const step of approved.material.steps){await db.query(step.body);applied++;
      if(fault==='middle'&&applied===16)await db.query('select 1/0');}
     await installed(db);
@@ -119,6 +131,10 @@ test('owned atomic installation, interruption, idempotency and retained financia
    }catch(error){await db.query('ROLLBACK').catch(()=>{});throw error;}
    finally{await close(db);}
   };
+  await check('a separate readonly preview has the same source/target/metadata binding without reading business rows',async()=>{
+   const again=await previewPreflight();assert.equal(again.data.context.readOnly,true);assert.equal(again.data.context.isolation,'repeatable read');
+   assertInstallationPreflight(preflight,again);assert.deepEqual(await state(observer),baseline);
+  });
   await check('a rehashed package with altered SQL is refused before any installer connection or DDL',async()=>{
    const material=JSON.parse(sourceBundle.wire).material,hash=value=>createHash('sha256').update(value).digest('hex');
    material.steps[0].body+='\nSELECT 1;';material.steps[0].bodySha256=hash(material.steps[0].body);
@@ -140,10 +156,46 @@ test('owned atomic installation, interruption, idempotency and retained financia
    try{await assert.rejects(install(),/installation_busy/);}finally{await observer.query('ROLLBACK');}
    assert.deepEqual(await state(observer),baseline);
   });
-  await check('unrelated global default function grantee is detected before commit and never silently revoked',async()=>{
+  await check('an extra registry entry changes the complete preflight and is never ignored or deleted by installation',async()=>{
+   const version='999999990002',name='ci_only_preflight_extra_registry';
+   await observer.query('insert into public.faolla_schema_migrations(version,name) values($1,$2)',[version,name]);
+   try{
+    const before=await state(observer),changed=await previewPreflight();assert.equal(changed.data.registry.count,preflight.data.registry.count+1);
+    assert.throws(()=>assertInstallationPreflight(preflight,changed),/installation_preflight_changed/);
+    await assert.rejects(install(),/installation_registry_changed/);assert.deepEqual(await state(observer),before);
+    assertInstallationPreflight(changed,await previewPreflight());
+   }finally{assert.equal((await observer.query('delete from public.faolla_schema_migrations where version=$1 and name=$2',[version,name])).rowCount,1);}
+   assertInstallationPreflight(preflight,await previewPreflight());assert.deepEqual(await state(observer),baseline);
+  });
+  await check('scoped legacy table constraint drift is refused before checkout DDL without repairing the reviewed table',async()=>{
+   await observer.query('alter table public.pages add constraint ci_only_preflight_shape check (true) not valid');
+   try{
+    const before=await state(observer),changed=await previewPreflight();
+    assert.throws(()=>assertInstallationPreflight(preflight,changed),/installation_preflight_changed/);
+    await assert.rejects(install(),/installation_preflight_changed/);assert.deepEqual(await state(observer),before);
+    assertInstallationPreflight(changed,await previewPreflight());
+   }finally{await observer.query('alter table public.pages drop constraint ci_only_preflight_shape');}
+   assertInstallationPreflight(preflight,await previewPreflight());assert.deepEqual(await state(observer),baseline);
+  });
+  await check('ordinary API role attribute drift is refused before checkout DDL without changing the role',async()=>{
+   assert.equal(oldRoles.find(r=>r.name==='service_role').rolinherit,true);
+   await observer.query('alter role service_role noinherit');
+   try{
+    const before=await state(observer),changed=await previewPreflight();
+    assert.throws(()=>assertInstallationPreflight(preflight,changed),/installation_preflight_changed/);
+    await assert.rejects(install(),/installation_preflight_changed/);assert.deepEqual(await state(observer),before);
+    assertInstallationPreflight(changed,await previewPreflight());
+   }finally{await observer.query('alter role service_role inherit');}
+   assertInstallationPreflight(preflight,await previewPreflight());assert.deepEqual(await state(observer),baseline);
+  });
+  await check('unrelated global default function grantee is detected before checkout DDL and never silently revoked',async()=>{
    await observer.query('alter default privileges grant execute on functions to pg_read_all_data');
-   try{const before=await state(observer);await assert.rejects(install(),/installation_unapproved_grantee/);assert.deepEqual(await state(observer),before);}
+   try{const before=await state(observer),changed=await previewPreflight();
+    assert.throws(()=>assertInstallationPreflight(preflight,changed),/installation_preflight_changed/);
+    await assert.rejects(install(),/installation_preflight_changed/);assert.deepEqual(await state(observer),before);
+    assertInstallationPreflight(changed,await previewPreflight());}
    finally{await observer.query('alter default privileges revoke execute on functions from pg_read_all_data');}
+   assertInstallationPreflight(preflight,await previewPreflight());
    assert.deepEqual(await state(observer),baseline);
   });
   await check('single committed installation preserves old data and API roles, keeps pilots off and records exact source digest',async()=>{
