@@ -16,6 +16,7 @@ import {observeInstallationSeal,assertInstallationSealObservation,prepareInstall
  sealRegistryVersion,installationSealRegistryName,installationSealRegistryDigest} from './member-checkout-installation-seal.mjs';
 import {createInstallationSealJournal,openInstallationSealJournal,installationSealFileName} from './member-checkout-installation-seal-journal.mjs';
 import {createInstallationReview,installationReviewSummary} from './member-checkout-installation-review.mjs';
+import {loadInstallationSupplement,observeInstallationSupplement,installationSupplementSummary} from './member-checkout-installation-supplement.mjs';
 import {readCompatibilityCatalog,inspectCompatibilityCatalog} from './member-checkout-compatibility-check.mjs';
 import {createOwnedCheckoutData} from './fixtures/member-checkout-real-auth-database.mjs';
 import submission from '../src/lib/merchantCheckoutSubmission.server.ts';
@@ -120,6 +121,19 @@ test('owned atomic installation, interruption, idempotency and retained financia
    }finally{await observer.query('ROLLBACK');}
   };
   const sealBaseline=await previewSeal();assertInstallationPreflight(preflight,sealBaseline.core);
+  await check('read-only supplement matches all original function definitions and guards on the real owned PG',async()=>{
+   const contract=await loadInstallationSupplement(bundle);
+   await observer.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+   try{await observer.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='1s';SET LOCAL search_path=pg_catalog,public");
+    const supplement=await observeInstallationSupplement(sql=>observer.query(sql),contract,bundle,['127.0.0.1']);
+    report.installationSupplement=installationSupplementSummary(contract,supplement);
+    assert.equal(report.installationSupplement.legacyDefinitionsMatch,true);assert.equal(report.installationSupplement.legacyFunctions,15);
+    assert.equal(report.installationSupplement.legacyTriggers,3);assert.equal(report.installationSupplement.gatewayStatus,'observed-session-login');
+    assert.equal(report.installationSupplement.gatewayGrantAuthorized,false);assert.equal(report.installationSupplement.productionAuthorized,false);
+    assertInstallationSealObservation(sealBaseline,supplement.seal);
+   }finally{await observer.query('ROLLBACK');}
+   assert.deepEqual(await state(observer),baseline);
+  });
   await check('offline production review keeps the five-source CI fixture distinct from a real complete registry and never authorizes installation',async()=>{
    const reviewed=await createInstallationReview(sealBaseline.core,bundle,{
     captureSha256:createHash('sha256').update(JSON.stringify(sealBaseline.core.data)).digest('hex'),publicBuild:process.env.GITHUB_SHA});
