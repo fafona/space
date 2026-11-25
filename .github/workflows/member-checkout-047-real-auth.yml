@@ -239,3 +239,34 @@ jobs:
           path: ${{ runner.temp }}/faolla-install-047-evidence/report.json
           if-no-files-found: warn
           retention-days: 14
+
+  credential-file-delivery:
+    name: Credential File Delivery Component (isolated Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.20.1
+          cache: npm
+      - name: Install Locked Test Dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Type Check Independent Delivery Revision
+        run: node node_modules/typescript/bin/tsc --noEmit --strict --skipLibCheck --target ES2017 --lib dom,esnext --module esnext --moduleResolution bundler --resolveJsonModule --esModuleInterop scripts/fixtures/merchant-checkout-credential-file.ts scripts/fixtures/merchant-checkout-runtime-delivery.ts scripts/member-checkout-credential-file.test.ts
+      - name: Rehearse Owned File Delivery Component
+        env:
+          FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '1'
+          FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: current-auth
+          FAOLLA_CHECKOUT_CREDENTIAL_FILE_ACCEPTANCE: '1'
+        run: node scripts/member-checkout-credential-file-acceptance.mjs
+      - name: Preserve Sanitized Delivery Component Evidence Only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: member-checkout-credential-file-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/faolla-credential-file-evidence/report.json
+          if-no-files-found: warn
+          retention-days: 14
