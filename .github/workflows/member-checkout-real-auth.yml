@@ -165,7 +165,7 @@ jobs:
           mkdir "$tools"
           npm install --prefix "$tools/pg-client" --ignore-scripts --no-audit --no-fund --save-exact pg@8.23.1
       - name: Validate Pinned Installation Plan
-        run: node --test scripts/member-checkout-installation-plan.test.mjs
+        run: node --test scripts/member-checkout-installation-plan.test.mjs scripts/member-checkout-installation-bundle.test.mjs
       - name: Rehearse Owned Atomic Installation And Retention
         env:
           FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '1'

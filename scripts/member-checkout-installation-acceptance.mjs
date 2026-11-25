@@ -4,12 +4,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createRequire} from 'node:module';
-import {randomUUID} from 'node:crypto';
-import {mkdir,writeFile} from 'node:fs/promises';
+import {createHash,randomUUID} from 'node:crypto';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {assertIsolatedCi,database,databasePort,safeError} from './member-checkout-real-auth-support.mjs';
 import {assertOwnedLifecycleTarget} from './member-checkout-runtime-lifecycle-cases.mjs';
 import {loadInstallationPlan} from './member-checkout-installation-plan.mjs';
+import {createInstallationSourceBundle,verifyInstallationSourceBundle,installationBundleSummary} from './member-checkout-installation-bundle.mjs';
 import {readCompatibilityCatalog,inspectCompatibilityCatalog} from './member-checkout-compatibility-check.mjs';
 import {createOwnedCheckoutData} from './fixtures/member-checkout-real-auth-database.mjs';
 import submission from '../src/lib/merchantCheckoutSubmission.server.ts';
@@ -35,8 +36,14 @@ test('owned atomic installation, interruption, idempotency and retained financia
  const check=async(name,run)=>{let success=false;await t.test(name,async()=>{try{await run();success=true;report.checks.push({name,passed:true});}catch(e){report.checks.push({name,passed:false});throw e;}});assert.equal(success,true,'required installation prerequisite failed: '+name);};
  let observer;
  try{
-  observer=await open();const plan=await loadInstallationPlan();report.planSha256=plan.digest;report.application=plan.material.application;
-  const markerName='ci_only_checkout_bundle_'+plan.digest;
+  const sourceBundle=await createInstallationSourceBundle(),packageFile=path.join(evidence,'installation-bundle.private.json');
+  await writeFile(packageFile,sourceBundle.wire,{flag:'wx',mode:0o600});
+  const bundle=await verifyInstallationSourceBundle(await readFile(packageFile,'utf8'));
+  const plan=await loadInstallationPlan();report.planSha256=plan.digest;report.application=plan.material.application;
+  report.installationBundle=installationBundleSummary(bundle);
+  assert.equal(bundle.material.planSha256,plan.digest);assert.equal(bundle.receipt.version,markerVersion);
+  assert.equal(bundle.receipt.name,'ci_only_checkout_bundle_'+bundle.digest);
+  const markerName=bundle.receipt.name;observer=await open();
   const registry=db=>db.query('select version::text version,name from public.faolla_schema_migrations order by version').then(r=>r.rows);
   const roleState=db=>db.query(`select oid::text oid,rolname::text name,rolsuper,rolcanlogin,rolinherit,rolcreaterole,rolcreatedb,rolbypassrls,rolreplication
    from pg_roles order by rolname`).then(r=>r.rows);
@@ -91,7 +98,9 @@ test('owned atomic installation, interruption, idempotency and retained financia
    assert.deepEqual(await registry(observer),plan.registry);
   });
   const baseline=await state(observer),oldRoles=baseline.roles,oldMemberships=baseline.memberships;
-  const install=async fault=>{
+  const install=async(fault,bundleFile=packageFile)=>{
+   const approved=await verifyInstallationSourceBundle(await readFile(bundleFile,'utf8'));
+   assert.equal(approved.digest,bundle.digest,'installation_bundle_changed');
    const db=await open();let applied=0;
    try{
     await db.query('BEGIN');await db.query("SET LOCAL lock_timeout='1s';SET LOCAL statement_timeout='15s';SET LOCAL search_path=pg_catalog,public;SET LOCAL standard_conforming_strings=on");
@@ -101,7 +110,7 @@ test('owned atomic installation, interruption, idempotency and retained financia
     assert.deepEqual(rows,plan.registry,'installation_registry_changed');
     assert.deepEqual(inspectCompatibilityCatalog(plan.prerequisites,await catalogue(db)).issues,['schema_boundary_changed'],'installation_prerequisite_catalogue_changed');
     assert.equal((await db.query("select count(*)::int n from pg_roles where rolname in ('faolla_checkout_runtime','faolla_checkout_executor')")).rows[0].n,0,'installation_role_collision');
-    for(const step of plan.steps){await db.query(step.body);applied++;
+    for(const step of approved.material.steps){await db.query(step.body);applied++;
      if(fault==='middle'&&applied===16)await db.query('select 1/0');}
     await installed(db);
     await db.query('insert into public.faolla_schema_migrations(version,name) values($1,$2)',[markerVersion,markerName]);
@@ -110,6 +119,16 @@ test('owned atomic installation, interruption, idempotency and retained financia
    }catch(error){await db.query('ROLLBACK').catch(()=>{});throw error;}
    finally{await close(db);}
   };
+  await check('a rehashed package with altered SQL is refused before any installer connection or DDL',async()=>{
+   const material=JSON.parse(sourceBundle.wire).material,hash=value=>createHash('sha256').update(value).digest('hex');
+   material.steps[0].body+='\nSELECT 1;';material.steps[0].bodySha256=hash(material.steps[0].body);
+   // Parsed canonical key order is retained; this is a valid self-hashed wire,
+   // not merely malformed JSON. Only the independent local source check rejects it.
+   const forged=path.join(evidence,'installation-bundle-forged.private.json');
+   await writeFile(forged,JSON.stringify({material,sha256:hash(JSON.stringify(material))}),{flag:'wx',mode:0o600});
+   const connections=opened;await assert.rejects(install(null,forged),/^Error: installation_bundle_unapproved$/);
+   assert.equal(opened,connections);assert.deepEqual(await state(observer),baseline);
+  });
   await check('mid-bundle database error rolls back all new objects, grants and registration without modifying old rows',async()=>{
    await assert.rejects(install('middle'),e=>e.code==='22012');assert.deepEqual(await state(observer),baseline);
   });
