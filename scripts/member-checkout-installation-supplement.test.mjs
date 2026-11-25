@@ -79,5 +79,7 @@ test('query module has no production transport, credentials, metadata mutation o
  assert.doesNotMatch(source,/process\.env|child_process|fetch\(|writeFile\(|spawn\(|\.Config\.Env|PGRST_DB_URI|JWT_SECRET|DATABASE_URL/);
  const harness=await readFile('scripts/member-checkout-installation-acceptance.mjs','utf8');
  assert.match(harness,/read-only supplement matches all original function definitions and guards on the real owned PG/);
+ assert.match(harness,/select inet_client_addr\(\)::text address/);assert.match(harness,/contract,bundle,\[peer\]/);
+ assert.match(harness,/gatewayStatus,'not-observed'/);assert.match(harness,/wrongPeerRefused=true/);
  const workflow=await readFile('.github/workflows/member-checkout-real-auth.yml','utf8');assert.match(workflow,/member-checkout-installation-supplement\.test\.mjs/);
 });

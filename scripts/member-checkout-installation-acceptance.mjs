@@ -123,13 +123,20 @@ test('owned atomic installation, interruption, idempotency and retained financia
   const sealBaseline=await previewSeal();assertInstallationPreflight(preflight,sealBaseline.core);
   await check('read-only supplement matches all original function definitions and guards on the real owned PG',async()=>{
    const contract=await loadInstallationSupplement(bundle);
+   // Docker's published loopback port does not imply that PostgreSQL sees a
+   // loopback peer. Read OUR owned connection's server-observed address only.
+   const peer=(await observer.query('select inet_client_addr()::text address')).rows[0].address;
    await observer.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
    try{await observer.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='1s';SET LOCAL search_path=pg_catalog,public");
-    const supplement=await observeInstallationSupplement(sql=>observer.query(sql),contract,bundle,['127.0.0.1']);
+    const supplement=await observeInstallationSupplement(sql=>observer.query(sql),contract,bundle,[peer]);
     report.installationSupplement=installationSupplementSummary(contract,supplement);
     assert.equal(report.installationSupplement.legacyDefinitionsMatch,true);assert.equal(report.installationSupplement.legacyFunctions,15);
     assert.equal(report.installationSupplement.legacyTriggers,3);assert.equal(report.installationSupplement.gatewayStatus,'observed-session-login');
+    assert.equal(supplement.data.gatewayLogins[0].role,'checkout_ci_admin');
     assert.equal(report.installationSupplement.gatewayGrantAuthorized,false);assert.equal(report.installationSupplement.productionAuthorized,false);
+    const unmatched=await observeInstallationSupplement(sql=>observer.query(sql),contract,bundle,['192.0.2.240']);
+    assert.equal(installationSupplementSummary(contract,unmatched).gatewayStatus,'not-observed');
+    report.installationSupplement.ownedPeerMatched=true;report.installationSupplement.wrongPeerRefused=true;
     assertInstallationSealObservation(sealBaseline,supplement.seal);
    }finally{await observer.query('ROLLBACK');}
    assert.deepEqual(await state(observer),baseline);
