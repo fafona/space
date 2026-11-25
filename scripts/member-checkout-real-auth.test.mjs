@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { assertIsolatedCi, artifacts, branch, compatibilityProfiles, safeError, sanitizeStartupDiagnostic, ownedStopRequest, requestOwnedStop, ownedCleanupSucceeded } from './member-checkout-real-auth-support.mjs';
+import { assertIsolatedCi, artifacts, authReleases, branch, compatibilityProfiles, safeError, sanitizeStartupDiagnostic, ownedStopRequest, requestOwnedStop, ownedCleanupSucceeded } from './member-checkout-real-auth-support.mjs';
 import { assertOwnedLifecycleTarget } from './member-checkout-runtime-lifecycle-cases.mjs';
 
 const env = () => ({ GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted', GITHUB_REPOSITORY: 'fafona/space',
@@ -27,13 +27,35 @@ test('workflow is branch-only, read-only and has no production secrets or releas
   assert.match(workflow, /path: \$\{\{ runner\.temp \}\}\/faolla-real-auth-evidence\/report\.json/);
   assert.doesNotMatch(workflow, /secrets\.|id-token:|contents: write|workflow_run:|workflow_dispatch:|pull_request:|environment:|ssh |scp |deploy-production|production-deploy|git push|git merge/);
   for (const hash of Object.values(artifacts)) assert.ok(workflow.includes(hash));
-  for (const profile of Object.values(compatibilityProfiles)) { assert.ok(workflow.includes(profile.postgres)); assert.ok(workflow.includes(profile.postgrestSha256)); }
+  for (const profile of Object.values(compatibilityProfiles)) {
+    assert.ok(workflow.includes(profile.postgres)); assert.ok(workflow.includes(profile.postgrestSha256)); assert.ok(workflow.includes(profile.authVersion));
+    for (const value of Object.values(authReleases[profile.authVersion])) assert.ok(workflow.includes(value));
+  }
   assert.match(workflow, /fail-fast: false/); assert.match(workflow, /member-checkout-real-auth-\$\{\{ matrix\.profile \}\}/);
+  const toolStep = workflow.split('- name: Prepare Disposable Test Tools')[1].split('- name: Validate Isolation Contracts')[0];
+  assert.match(toolStep, /env:\s+TEST_AUTH_VERSION: \$\{\{ matrix\.auth \}\}/);
+  assert.doesNotMatch(workflow.split('steps:')[0], /TEST_AUTH_VERSION/);
 });
-test('compatibility matrix pins two separate protocols without treating either as observed production state', () => {
+test('compatibility matrix retains both protocols and adds the observed Auth version without claiming a full production clone', () => {
   assert.equal(assertIsolatedCi({ ...env(), FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: 'legacy' }, 'linux', 'x64').profile.serverVersion, '150008');
   assert.equal(assertIsolatedCi(env(), 'linux', 'x64').profile.serverVersion, '170006');
-  assert.deepEqual(Object.keys(compatibilityProfiles), ['modern', 'legacy']);
+  const current = assertIsolatedCi({ ...env(), FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: 'current-auth' }, 'linux', 'x64').profile;
+  assert.deepEqual(Object.keys(compatibilityProfiles), ['modern', 'legacy', 'current-auth']);
+  assert.equal(current.authVersion, '2.186.0'); assert.equal(current.serverVersion, '150008'); assert.equal(current.postgrest, '14.5');
+  assert.equal(compatibilityProfiles.modern.authVersion, '2.198.0'); assert.equal(compatibilityProfiles.legacy.authVersion, '2.198.0');
+  assert.equal(ownedStopRequest('postgrest', 'current-auth'), 'SIGINT');
+  assert.equal(ownedStopRequest('auth', 'current-auth'), 'SIGTERM');
+});
+
+test('Auth binary, migration source and live health version are bound to the same selected immutable release', async () => {
+  assert.deepEqual(Object.keys(authReleases), ['2.198.0', '2.186.0']);
+  assert.equal(authReleases['2.186.0'].archive, 'auth.tar.gz');
+  assert.equal(authReleases['2.186.0'].sourceCommit, 'effd66245bd981ba5a07aa6b7441ad37578f9b73');
+  assert.equal(authReleases['2.186.0'].archiveSha256, '2683b9549e922d0644621129fdabd7edb8b78c35274e133e61a3280ad9675161');
+  const runner = await readFile('scripts/member-checkout-real-auth-acceptance.mjs', 'utf8');
+  assert.match(runner, /authReleases\[owned\.profile\.authVersion\]\.sourceCommit/);
+  assert.match(runner, /assert\.equal\(health\.version, 'v' \+ owned\.profile\.authVersion\)/);
+  assert.match(runner, /report\.authRuntimeVersion = health\.version/);
 });
 test('cleanup success requires owned requested signals, all three exits and Next acknowledgement before report success', async () => {
   const next = { acknowledged: true, forbiddenFetches: 0 };

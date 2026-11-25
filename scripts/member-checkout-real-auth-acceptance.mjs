@@ -13,7 +13,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { chromium } from 'playwright';
-import { assertIsolatedCi, verifyOwnedTools, safeError, sanitizeStartupDiagnostic, requestOwnedStop, ownedCleanupSucceeded, database, databasePort } from './member-checkout-real-auth-support.mjs';
+import { assertIsolatedCi, verifyOwnedTools, safeError, sanitizeStartupDiagnostic, requestOwnedStop, ownedCleanupSucceeded, authReleases, database, databasePort } from './member-checkout-real-auth-support.mjs';
 import { installRealAuthCheckoutFixture } from './fixtures/member-checkout-real-auth-database.mjs';
 import { prepareOwnedNextFixture } from './member-checkout-next-session-cases.mjs';
 import { applicationFingerprint } from './member-checkout-compatibility-check.mjs';
@@ -96,13 +96,19 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     const authChild = spawnOwned('auth', path.join(owned.tools, 'auth-bin/auth'), [], {
       GOTRUE_API_HOST: '127.0.0.1', PORT: String(authPort), API_EXTERNAL_URL: authOrigin, GOTRUE_SITE_URL: 'https://127.0.0.1',
       GOTRUE_DB_DRIVER: 'postgres', GOTRUE_DB_DATABASE_URL: `postgresql://checkout_ci_auth:disposable-auth-ci-only@127.0.0.1:${databasePort}/${database}?sslmode=disable`,
-      GOTRUE_DB_NAMESPACE: 'auth', GOTRUE_DB_MIGRATIONS_PATH: path.join(owned.tools, 'auth-387e91f37e00b64b9060352988066bbb685f6e45/migrations'),
+      GOTRUE_DB_NAMESPACE: 'auth', GOTRUE_DB_MIGRATIONS_PATH: path.join(owned.tools, 'auth-' + authReleases[owned.profile.authVersion].sourceCommit + '/migrations'),
       GOTRUE_JWT_SECRET: secret, GOTRUE_JWT_AUD: audience, GOTRUE_JWT_EXP: '3600', GOTRUE_JWT_DEFAULT_GROUP_NAME: 'authenticated',
       GOTRUE_JWT_ADMIN_ROLES: 'service_role', GOTRUE_EXTERNAL_EMAIL_ENABLED: 'true', GOTRUE_EXTERNAL_PHONE_ENABLED: 'false',
       GOTRUE_MAILER_AUTOCONFIRM: 'false', GOTRUE_DISABLE_SIGNUP: 'true', GOTRUE_SMTP_HOST: '127.0.0.1', GOTRUE_SMTP_PORT: '1',
       GOTRUE_SMTP_ADMIN_EMAIL: 'noreply@example.invalid', GOTRUE_LOG_LEVEL: 'error', GOTRUE_TRACING_ENABLED: 'false',
     }, owned.evidence);
     await ready(authChild, authOrigin + '/health');
+    await caseOf('real Auth reports the exact pinned version before login acceptance', async () => {
+      const response = await nativeFetch(authOrigin + '/health', { signal: AbortSignal.timeout(5000) });
+      assert.equal(response.status, 200); const health = await response.json();
+      assert.equal(health.name, 'GoTrue'); assert.equal(health.version, 'v' + owned.profile.authVersion);
+      report.authRuntimeVersion = health.version;
+    });
     report.phase = 'postgrest-startup';
     const restChild = spawnOwned('postgrest', path.join(owned.tools, 'postgrest-bin/postgrest'), [], {
       PGRST_DB_URI: `postgresql://checkout_local_gateway:disposable-gateway-ci-only@127.0.0.1:${databasePort}/${database}`,

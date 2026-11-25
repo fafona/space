@@ -8,11 +8,20 @@ import { readFile, realpath } from 'node:fs/promises';
 export const branch = 'acceptance/member-checkout-real-auth-20261125';
 export const database = 'faolla_member_checkout_auth_test';
 export const databasePort = 56463;
+export const authReleases = Object.freeze({
+  '2.198.0': Object.freeze({ archive: 'auth.tar.xz', sourceCommit: '387e91f37e00b64b9060352988066bbb685f6e45',
+    archiveSha256: '4abe9134d7615faa9149cab514acada8e7133cd69d2ccd96fdcef0d795c05171', sourceSha256: '99cdf807b817cf59da7ff10329898fbd32380e2e73231c3458660595e6ca679f' }),
+  '2.186.0': Object.freeze({ archive: 'auth.tar.gz', sourceCommit: 'effd66245bd981ba5a07aa6b7441ad37578f9b73',
+    archiveSha256: '2683b9549e922d0644621129fdabd7edb8b78c35274e133e61a3280ad9675161', sourceSha256: 'ad95e1f30263cfeaec800d7ba2ecc039d2e209c14c5d6e45b5b824de9bbcbe26' }),
+});
 export const compatibilityProfiles = Object.freeze({
-  modern: { postgres: '17.6', serverVersion: '170006', postgrest: '16.6', postgrestSha256: '335ea29f00145705fb569b1268b9c8e53d062f8f6f9188192e92ea3781d2dca1' },
+  modern: { postgres: '17.6', serverVersion: '170006', postgrest: '16.6', postgrestSha256: '335ea29f00145705fb569b1268b9c8e53d062f8f6f9188192e92ea3781d2dca1', authVersion: '2.198.0' },
   // PostgreSQL protocol baseline only, NOT the full Supabase image/extensions
   // or an assertion about the currently running production versions.
-  legacy: { postgres: '15.8', serverVersion: '150008', postgrest: '14.5', postgrestSha256: 'ab5cc7e974d4940447991804588cfb8b3f7b2c57b691f0905df04d51ede69470' },
+  legacy: { postgres: '15.8', serverVersion: '150008', postgrest: '14.5', postgrestSha256: 'ab5cc7e974d4940447991804588cfb8b3f7b2c57b691f0905df04d51ede69470', authVersion: '2.198.0' },
+  // Matches observed production Auth and PG/PostgREST protocol versions only.
+  // Still a fresh plain PostgreSQL service, NOT a Supabase/Kong clone or cutover.
+  'current-auth': { postgres: '15.8', serverVersion: '150008', postgrest: '14.5', postgrestSha256: 'ab5cc7e974d4940447991804588cfb8b3f7b2c57b691f0905df04d51ede69470', authVersion: '2.186.0' },
 });
 export const artifacts = Object.freeze({
   'auth.tar.xz': '4abe9134d7615faa9149cab514acada8e7133cd69d2ccd96fdcef0d795c05171',
@@ -40,7 +49,8 @@ export function assertIsolatedCi(env = process.env, platform = process.platform,
 export async function verifyOwnedTools(directory, profileName = 'modern') {
   assert.equal(await realpath(directory), directory);
   assert.ok(Object.hasOwn(compatibilityProfiles, profileName));
-  const hashes = { ...artifacts, 'postgrest.tar.xz': compatibilityProfiles[profileName].postgrestSha256 };
+  const profile = compatibilityProfiles[profileName], auth = authReleases[profile.authVersion];
+  const hashes = { [auth.archive]: auth.archiveSha256, 'source.zip': auth.sourceSha256, 'postgrest.tar.xz': profile.postgrestSha256 };
   for (const [file, hash] of Object.entries(hashes))
     assert.equal(createHash('sha256').update(await readFile(path.join(directory, file))).digest('hex'), hash);
   const pg = JSON.parse(await readFile(path.join(directory, 'pg-client/node_modules/pg/package.json'), 'utf8'));
@@ -54,7 +64,7 @@ export function ownedStopRequest(name, profileName) {
   // v14.5 Unix.installSignalHandlers maps SIGINT and SIGTERM to
   // UserInterrupt. Request SIGINT explicitly and require that exact owned
   // request/observed termination pairing, never accept unsolicited interrupts.
-  return name === 'postgrest' && profileName === 'legacy' ? 'SIGINT' : 'SIGTERM';
+  return name === 'postgrest' && compatibilityProfiles[profileName].postgrest === '14.5' ? 'SIGINT' : 'SIGTERM';
 }
 
 export function requestOwnedStop(child, name, profileName) {
