@@ -15,6 +15,7 @@ import {readInstallationPreflight,assertInstallationTarget,assertInstallationPre
 import {observeInstallationSeal,assertInstallationSealObservation,prepareInstallationSeal,verifyInstallationSeal,installationSealSummary,
  sealRegistryVersion,installationSealRegistryName,installationSealRegistryDigest} from './member-checkout-installation-seal.mjs';
 import {createInstallationSealJournal,openInstallationSealJournal,installationSealFileName} from './member-checkout-installation-seal-journal.mjs';
+import {createInstallationReview,installationReviewSummary} from './member-checkout-installation-review.mjs';
 import {readCompatibilityCatalog,inspectCompatibilityCatalog} from './member-checkout-compatibility-check.mjs';
 import {createOwnedCheckoutData} from './fixtures/member-checkout-real-auth-database.mjs';
 import submission from '../src/lib/merchantCheckoutSubmission.server.ts';
@@ -119,6 +120,14 @@ test('owned atomic installation, interruption, idempotency and retained financia
    }finally{await observer.query('ROLLBACK');}
   };
   const sealBaseline=await previewSeal();assertInstallationPreflight(preflight,sealBaseline.core);
+  await check('offline production review keeps the five-source CI fixture distinct from a real complete registry and never authorizes installation',async()=>{
+   const reviewed=await createInstallationReview(sealBaseline.core,bundle,{
+    captureSha256:createHash('sha256').update(JSON.stringify(sealBaseline.core.data)).digest('hex'),publicBuild:process.env.GITHUB_SHA});
+   report.installationReview=installationReviewSummary(reviewed);
+   assert.equal(report.installationReview.registeredSources,5);assert.equal(report.installationReview.unregisteredSources,210);
+   assert.equal(report.installationReview.productionAuthorized,false);assert.equal(report.installationReview.deploymentReady,false);
+   assert.deepEqual(await state(observer),baseline);
+  });
   const install=async(fault,bundleFile=packageFile)=>{
    const approved=await verifyInstallationSourceBundle(await readFile(bundleFile,'utf8'));
    assert.equal(approved.digest,bundle.digest,'installation_bundle_changed');
