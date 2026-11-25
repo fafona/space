@@ -20,8 +20,9 @@ import { applicationFingerprint } from './member-checkout-compatibility-check.mj
 import runtime from '../src/lib/merchantCheckoutRuntime.server.ts';
 import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
 import { runtimeLifecycleCases } from './member-checkout-runtime-lifecycle-cases.mjs';
+import { versionCutoverCases } from './member-checkout-version-cutover-cases.mjs';
 
-test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> points/coupon booking', { timeout: 360000 }, async t => {
+test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> points/coupon booking', { timeout: process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1' ? 480000 : 360000 }, async t => {
   const owned = assertIsolatedCi(); await verifyOwnedTools(owned.tools, owned.profileName);
   await mkdir(owned.evidence); // Existing evidence must never be overwritten.
   const report = { version: 1, commit: process.env.GITHUB_SHA, scope: 'isolated-real-auth-not-production', profile: owned.profileName, testedVersions: owned.profile, productionVersionsObserved: false, phase: 'database', checks: [], stopped: [], paths: [], methods: [], failure: null, passed: false };
@@ -155,7 +156,9 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
       SUPABASE_INTERNAL_URL: gatewayOrigin, NEXT_PUBLIC_SUPABASE_URL: gatewayOrigin, NEXT_PUBLIC_SUPABASE_ANON_KEY: anonJwt, SUPABASE_SERVICE_ROLE_KEY: serviceJwt,
       FAOLLA_CHECKOUT_RUNTIME_JWT: runtimeJwt, FAOLLA_BACKGROUND_JOBS_PAUSED: '1', MERCHANT_BOOKING_AUTOMATION_WORKER_ENABLED: 'false', MERCHANT_BOOKING_STORAGE_MODE: 'atomic-v2',
       MERCHANT_MEMBER_CHECKOUT_PILOT_SITES: financial.site, MERCHANT_MEMBER_CHECKOUT_CART_PILOT_SITES: financial.site, MERCHANT_MEMBER_CHECKOUT_CART_UI_PILOT_SITES: financial.site,
-      MERCHANT_MEMBER_CHECKOUT_INTENT_PILOT_SITES: financial.site, MERCHANT_MEMBER_CHECKOUT_ON_SITE_PILOT_SITES: financial.site };
+      MERCHANT_MEMBER_CHECKOUT_INTENT_PILOT_SITES: financial.site, MERCHANT_MEMBER_CHECKOUT_ON_SITE_PILOT_SITES: financial.site,
+      ...(process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1' ? {
+        MERCHANT_MEMBER_CHECKOUT_HISTORY_READ_SITES: financial.site, MERCHANT_MEMBER_CHECKOUT_ORIGINAL_SERVICE_SITES: financial.site } : {}) };
     nextChild = spawnOwned('next', process.execPath, [path.join(fixture.root, 'scripts/fixtures/member-checkout-next-local-server.mjs'), fixture.app], appEnv, fixture.app);
     nextEvents = []; nextChild.on('message', message => nextEvents.push(message));
     report.phase = 'next-startup'; const deadline = Date.now() + 45000;
@@ -220,6 +223,10 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
       activeSession: async () => (await call('/api/auth/merchant-session?reauth=1')).status,
       replay: () => call(route, body, scope), newSubmission: nonce => call(route, { ...body, nonce }, scope),
     });
+    if (process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1') {
+      report.phase = 'two-version-api-cutover';
+      await versionCutoverCases(caseOf, { db, financial, f, body, scope, candidate: { port: listening.port, evidence: fixture.evidence }, appEnv, context, callCandidate: call, methods, report });
+    }
     report.phase = 'actual-auth-rejections';
     await caseOf('fresh Auth pause or forged account scope rejects before financial RPC and leaves ledger unchanged', async () => {
       for (const paused of [true, false]) {
@@ -252,7 +259,7 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     t.signal.removeEventListener('abort', abort);
     const stopped = nextEvents?.find(v => v.type === 'stopped');
     report.nextShutdown = stopped ? { acknowledged: true, forbiddenFetches: stopped.forbiddenFetches } : { acknowledged: false };
-    report.cleanupPassed = ownedCleanupSucceeded(owned.profileName, report.stopped, report.nextShutdown);
+    report.cleanupPassed = ownedCleanupSucceeded(owned.profileName, report.stopped, report.nextShutdown) && (report.cutover === undefined || report.cutover.cleanupPassed === true);
     if (!report.cleanupPassed) report.failure ??= { name: 'Error', code: 'OWNED_PROCESS_STOP_FAILED' };
     report.passed = success && report.checks.every(c => c.passed) && report.failure === null && report.cleanupPassed;
     // The ONLY uploaded artifact is this path/method/status-only report.

@@ -49,6 +49,13 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - name: Read Pinned Old Application Source For Current Protocol Only
+        if: matrix.profile == 'current-auth'
+        uses: actions/checkout@v5
+        with:
+          ref: 98ce90e63c84e0da7747d0a14d2f5fc9d7f5f980
+          path: .owned-checkout-base
+          persist-credentials: false
       - uses: actions/setup-node@v5
         with:
           node-version: 20.20.1
@@ -104,12 +111,13 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           npx --no-install playwright install --with-deps chromium
       - name: Validate Isolation Contracts
-        run: node --test scripts/member-checkout-real-auth.test.mjs
+        run: node --test scripts/member-checkout-real-auth.test.mjs scripts/member-checkout-version-cutover.test.mjs
       - name: Real Auth And Checkout Acceptance
         env:
           FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '1'
           FAOLLA_CHECKOUT_NEXT_ACCEPTANCE: '1'
           FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: ${{ matrix.profile }}
+          FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE: ${{ matrix.profile == 'current-auth' && '1' || '0' }}
         run: node --import tsx --test scripts/member-checkout-real-auth-acceptance.mjs
       - name: Preserve Sanitized Evidence Only
         if: always()
