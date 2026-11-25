@@ -19,7 +19,8 @@ const stable=(a:BigIntStats,b:BigIntStats)=>identity(a)===identity(b)&&a.nlink==
 function policy(input:CredentialFilePolicy){
  need(process.platform==="linux"&&typeof process.getuid==="function"&&typeof window==="undefined");
  need(dataObject(input)&&Object.keys(input).sort().join("|")===["directory","ownerUid","ownerGid","access","algorithm","issuer","audience"].sort().join("|"));
- need(typeof input.directory==="string"&&input.directory.length<4096&&!input.directory.includes("\0")&&path.posix.isAbsolute(input.directory)&&path.posix.normalize(input.directory)===input.directory&&input.directory.split("/").filter(Boolean).length>=2);
+ // POSIX normalize preserves a trailing slash; reject that alias explicitly.
+ need(typeof input.directory==="string"&&input.directory.length<4096&&!input.directory.includes("\0")&&!input.directory.endsWith("/")&&path.posix.isAbsolute(input.directory)&&path.posix.normalize(input.directory)===input.directory&&input.directory.split("/").filter(Boolean).length>=2);
  need([input.ownerUid,input.ownerGid].every(n=>Number.isSafeInteger(n)&&n>=0&&n<=4294967294));
  need(["owner","group"].includes(input.access)&&["HS256","RS256","ES256","EdDSA"].includes(input.algorithm));
  need([input.issuer,input.audience].every(s=>typeof s==="string"&&s.length>0&&s.length<=256&&!/[\x00-\x20\x7f]/.test(s)));
