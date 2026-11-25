@@ -20,7 +20,7 @@ Stripe 对接延后到其他业务功能接近完成时再做，不作为当前�
 
 ## 状态与边界
 
-目前推进到**第七十七阶段：新的单次获批正式只读核对完成，047 所需函数／守卫及两张旧收银表的元数据证据已补齐**。准确 26 个函数、3 个守卫全部匹配，正式 214 条登记和原可见元数据未变，采集前后公开版本仍相同。此前独立提交 `420bf7f5380028b2d65be19e82c7cd609b53e415` 的新旧 10 个 CI 作业、362 组检查及临时服务退出均已核对通过。新旧两次只读许可及证据分开保存，本次许可已使用，不可重连复用；没有读取客户行／密钥、安装、授权、改配置或部署。接下来先将两张表与固定 SQL 来源做离线逐项兼容比较，再形成正式来源／权限／凭据及结算专属发布准备；已取得结构不等于来源兼容和正式执行批准，六来源 CI 夹具也不替代完整 Supabase／Kong。Stripe 仍最后接入。
+目前推进到**第七十八阶段：两张旧收银表已采结构与独立 PostgreSQL 15.8 来源基准逐项匹配**。准确提交 `479f267427e6ee4df2c0b570e611fd8d9b47bbdc` 的新旧 10 个 CI 作业、364 组检查全部通过；正常安装／提交后报错恢复各 28 组，均导出与已保存生产快照一致的 16 列／17 约束／3 索引及直接 ACL／RLS 结构指纹，刻意漂移均检出、恢复和临时服务退出均确认。此前单次只读核对的 26 函数／3 守卫匹配、214 条登记和原元数据不变证据保留；本轮没有重连生产或复用许可，没有修改业务、权限、配置或部署。此处只证明已采目录字段的来源匹配，不自动覆盖未采结构属性、完整 Supabase／Kong 或正式执行批准；正式持久恢复凭证、来源／权限批准、运行凭据交付和结算专属发布准备仍需完成。Stripe 仍最后接入。
 下文早期阶段保留的是当时状态；后续已补齐的验证以最新阶段及对应 CI 提交为准，不将本地合成、真实网关、生产构建和正式环境证据混为一谈。
 第四十七阶段预约原单的提交、恢复与取消验收保留。早期 SQL 验收已覆盖预约提交／取消，近期 intent 金融样本主要为商品订单；独立 owned TEMP PostgreSQL 使用实际预约配置、发布源、控制器、HTTP、可信规划器与原预约写入器验证积分／金额券及原政策取消。它不替代运行 Next.js／PostgREST 或真机验收。
 第四十六阶段旧完成赠分保护保留。已复现旧赠分准备器／旧 CAS 可对关联原单额外赠分；独立数据库触发器提案只拒绝账本关联商品原单的旧赠分／撤销赠分标记变化。它不替换旧函数，不给 API 角色私有权限，不按订单“完成”生成收款凭证，也不修改既有普通赠分政策。提案仍未安装或部署，不代表任意旧版本可安全回退。
@@ -2433,3 +2433,11 @@ git diff --check
 - 新投影没有连接器、SQL 执行、密钥或配置读取、数据写入及批准入口；来源 profile 可安全记录 owned 合成结构，不含生产 OID、角色名或客户数据。比较明确只覆盖本次已采目录字段，不声称证明未采的数据库 collation 定义、表 access method／options／tablespace／inheritance、完整历史迁移效果或完整 Supabase／Kong／财务执行兼容；所有正式 authority 和 deploymentReady 仍为 false。
 - 新边界及原安装／预检／编排等本地 **32 项全部通过**，lint／严格编码／diff 检查通过。新两个 owned PG 15.8 安装作业各保留原 27 组，并新增一组：在准确六来源夹具上导出结构 profile，真实修改后逐次核对默认值、额外约束／索引、RLS、API／其它角色列级授权和策略，再明确恢复并逐项确认全状态与原 baseline 相同；不删除原安装／财务／恢复断言。完整 CI 与保存证据的最终比较结果待下方补记。
 - 对此前固定私有采集 `9631503a1cc28bda772013fc874dadd7a8f0fccb0cc6f0a8f8e5006ed8fdae4b` 已生成离线投影，来源契约摘要 `f4123323095d8c5c6b97ac0494bd1aeee62e7f2bb9b149804e151cd931f13377`，投影摘要 `230ff9ae1306056f2ca66cddc5c531bbbefd92272e1058f8ebfaa291a872f8cc`；私有文件为 `output/checkout-047-relation-offline-20261125-3be621/saved-profile.private.json`。此时明确 `sourceCiProfileVerified:false`，不能先宣布与独立来源相符。本轮不调用原采集器、不复用许可、不访问生产、不改应用／依赖／旧迁移／原提案／冻结来源包，不安装、授权、签发凭据、启用试点或部署；Stripe 仍最后接入。
+
+### 完整 CI、独立来源与保存快照的最终逐项比较
+
+- 准确提交 `479f267427e6ee4df2c0b570e611fd8d9b47bbdc` 的原工作流 [45688913055](https://github.com/fafona/space/actions/runs/45688913055) 五作业成功：normal／commit-unknown 各 **30 组**、modern／legacy 各 **34 组**、current-auth **47 组**；新工作流 [45688913141](https://github.com/fafona/space/actions/runs/45688913141) 五作业成功：047 normal／commit-unknown 各 **28 组**、modern／legacy 各 **40 组**、current-auth **53 组**。十份下载报告共 **364 组**逐项通过，准确提交、原应用 2971 文件摘要、`passed:true／cleanupPassed:true／failure:null` 全部匹配。仅原条件明确限定的 current-auth 旧源码检出在 modern／legacy 跳过，没有跳过必需检查。
+- 新两个独立 owned PG 15.8 来源库的结构 profile 均精确等于保存的正式快照投影，正文材料和 SHA-256 都比较，不仅核对数量；两者均为 `230ff9ae1306056f2ca66cddc5c531bbbefd92272e1058f8ebfaa291a872f8cc`。16 列、17 约束、3 索引、全部已采列／约束／索引属性、RLS／持久性、仅 owner 完整直接 ACL、无列级授权／触发器／策略均匹配。7 类实际 DDL／授权漂移逐次检出并恢复，全状态与原 baseline 相同，原 27 组安装／财务／恢复检查仍保留。新正常 32 个／提交后报错恢复 33 个连接、原正常 35 个／异常恢复 36 个连接均关闭，剩余 0、清理失败 0；提交后报错确认已提交结果，不重放 DDL。
+- 两条 current-auth 各完成新旧两个原生产构建，每版原五阶段退出 0、后端构建请求 0；两条实际页面各核对 **144 次**静态响应，浏览器错误／非预期请求／关闭时活动请求均 0，原登录可操作、资源保留、候选→保留回退→候选切换及取消丢回复恢复通过。`serviceWorkerCacheTested:false`；本轮仍不是对真机、PWA、完整 Supabase／Kong 或生产路由的验收。旧五来源包、新六来源包、047 修订、应用和依赖摘要均未改变。
+- 十份报告及离线 CI 核对脚本／结果保留在 `C:/Users/User/AppData/Local/Temp/faolla-checkout-047-relations-ci-cce912a8e07047e4abb936b5fe49fffb/complete/`。最终私有比较文件为 `output/checkout-047-relation-offline-20261125-3be621/source-comparison-20261125.private.json`，材料摘要 `f8468c51434d9735adf5cec55e6e699a1081c163e2c4698f40f4d04c353f8054`；它重新检查原采集文件、当前 normalizer 字节、固定来源契约，并重新投影实际保存快照，与两份准确 CI 报告完整材料比较。原先 pending 的投影文件、旧未批准审阅包和单次许可均保留，不覆盖或把其批准字段改为 true；CI 6 条登记与保存生产证据的 214 条仍区分。
+- 最终结论仅为 `capturedRelationMetadataMatches:true`；`completeDdlCompatibilityProved:false／fullSupabaseKongValidated:false／productionReadPerformed:false`，全部正式执行 authority 仍为 false。没有新正式读取、业务写入、角色授权、能力签发、安装、开关变更、合并正式分支或部署；原只读许可不能再次使用。下一步整理正式持久 journal／locator、来源与版本批准、安装／网关权限、运行凭据签发交付／续期撤销及结算专属发布的可执行方案，再取得对应明确权限；本轮匹配结果不替代这些条件，Stripe 继续最后接入。
