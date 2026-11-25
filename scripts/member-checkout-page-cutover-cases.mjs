@@ -8,9 +8,9 @@ import { ownedPageRequest } from './member-checkout-browser-policy.mjs';
 export async function createOwnedPageChecks({ context, origin, servicePath, assets, evidence, extraContexts, ownedViews }) {
   const guest = await context.browser().newContext({ ignoreHTTPSErrors: true, serviceWorkers: 'block', locale: 'zh-CN', viewport: { width: 1280, height: 1000 } });
   extraContexts.push(guest);
-  const unexpected = [], errors = [], responses = [], blockedTranslations = [];
+  const unexpected = [], errors = [], responses = [], blockedTranslations = [], apiResponses = [];
   // Keep safe request identity on failure too, never headers, query or body.
-  evidence.browserPolicy = { unexpectedRequests: unexpected, pageErrors: errors, blockedTranslations };
+  evidence.browserPolicy = { unexpectedRequests: unexpected, pageErrors: errors, blockedTranslations, apiResponses };
   const track = async page => {
     ownedViews.push(page);
     await page.route('**/*', route => {
@@ -23,6 +23,12 @@ export async function createOwnedPageChecks({ context, origin, servicePath, asse
     page.on('pageerror', error => errors.push({ name: error.name }));
     page.on('response', response => {
       const url = new URL(response.url()); if (url.pathname.startsWith('/_next/static/')) responses.push({ path: canonicalStaticPath(url.pathname), status: response.status() });
+      if (url.origin === origin && ['/api/personal-favorites', '/api/member-checkout/original-service/review', '/api/member-checkout/original-service/cancel'].includes(url.pathname)) {
+        const record = { path: url.pathname, status: response.status() }; apiResponses.push(record);
+        if (response.status() >= 400) void response.json().then(value => {
+          record.error = typeof value?.error === 'string' && /^(?:checkout_[a-z_]+|forbidden_origin|portal_origin_required|favorite_state_unavailable)$/.test(value.error) ? value.error : 'unclassified';
+        }).catch(() => { record.error = 'unreadable'; });
+      }
     });
     page.on('requestfailed', request => { if (new URL(request.url()).pathname.startsWith('/_next/static/')) errors.push({ name: 'StaticRequestFailed' }); });
     return page;

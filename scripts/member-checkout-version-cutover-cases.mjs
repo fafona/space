@@ -76,6 +76,10 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
     proxy = https.createServer({ key: await readFile(path.join(candidate.evidence, 'tls-key.pem')), cert: destinations.candidate.certificate }, (req, res) => {
       const pathname = new URL(req.url, 'https://portal.checkout-auth.test').pathname, name = policy.target(req.method, pathname);
       evidence.requests.push({ method: req.method, path: pathname === servicePath ? '/member-checkout/[owned-site]/service/[owned-operation]' : pathname, target: pathname.startsWith('/_next/static/') ? 'immutable-assets' : name });
+      if (pathname === '/api/member-checkout/original-service/review' || pathname === '/api/member-checkout/original-service/cancel') {
+        Object.assign(evidence.requests.at(-1), { accountScopeMatches: req.headers['x-checkout-account-scope'] === scope['x-checkout-account-scope'],
+          originMatches: req.headers.origin === `https://portal.checkout-auth.test:${proxy.address().port}` });
+      }
       const fail = status => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end('{"error":"owned_cutover_unavailable"}'); };
       if (pathname.startsWith('/_next/static/')) {
         void (async () => {
