@@ -129,9 +129,13 @@ jobs:
           retention-days: 14
 
   installation:
-    name: Atomic Installation (isolated PG 15.8)
+    name: Atomic Installation (isolated PG 15.8) - ${{ matrix.ack-mode }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        ack-mode: [normal, commit-unknown]
     services:
       postgres:
         image: postgres:15.8
@@ -165,17 +169,18 @@ jobs:
           mkdir "$tools"
           npm install --prefix "$tools/pg-client" --ignore-scripts --no-audit --no-fund --save-exact pg@8.23.1
       - name: Validate Pinned Installation Plan
-        run: node --test scripts/member-checkout-installation-plan.test.mjs scripts/member-checkout-installation-bundle.test.mjs scripts/member-checkout-installation-preflight.test.mjs
+        run: node --test scripts/member-checkout-installation-plan.test.mjs scripts/member-checkout-installation-bundle.test.mjs scripts/member-checkout-installation-preflight.test.mjs scripts/member-checkout-installation-seal.test.mjs
       - name: Rehearse Owned Atomic Installation And Retention
         env:
           FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '1'
           FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: current-auth
+          FAOLLA_CHECKOUT_INSTALLATION_ACK_MODE: ${{ matrix.ack-mode }}
         run: node --import tsx --test scripts/member-checkout-installation-acceptance.mjs
       - name: Preserve Sanitized Installation Evidence Only
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: member-checkout-installation-${{ github.run_id }}-${{ github.run_attempt }}
+          name: member-checkout-installation-${{ matrix.ack-mode }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/faolla-install-evidence/report.json
           if-no-files-found: warn
           retention-days: 14

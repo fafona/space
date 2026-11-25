@@ -99,7 +99,7 @@ test('owned installation gates the full pre-DDL snapshot but uses exact post-ins
   assert.match(source,/assertInstallationTarget\(preflight,currentPreflight\)/);
   assert.ok(source.indexOf('assertInstallationPreflight(preflight,currentPreflight)')<source.indexOf('for(const step of approved.material.steps)'));
   assert.match(source,/report\.installationPreflight=installationPreflightSummary\(preflight\)/);
-  assert.match(source,/if\(receipt\)\{[\s\S]*?await installed\(db\);await db\.query\('COMMIT'\)/);
+  assert.match(source,/if\(receipt\)\{[\s\S]*?await installed\(db\);[\s\S]*?verifyInstallationSeal\(reopened\.read[\s\S]*?await db\.query\('COMMIT'\)/);
   assert.match(source,/await observer\.query\('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'\)/);
   const protocols=await readFile('scripts/member-checkout-real-auth-acceptance.mjs','utf8');
   assert.match(protocols,/fixed metadata-only installation observation works against the selected real PG protocol/);

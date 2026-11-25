@@ -5,13 +5,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createRequire} from 'node:module';
 import {createHash,randomUUID} from 'node:crypto';
-import {mkdir,readFile,writeFile} from 'node:fs/promises';
+import {mkdir,readFile,writeFile,rename,chmod} from 'node:fs/promises';
 import path from 'node:path';
 import {assertIsolatedCi,database,databasePort,safeError} from './member-checkout-real-auth-support.mjs';
 import {assertOwnedLifecycleTarget} from './member-checkout-runtime-lifecycle-cases.mjs';
 import {loadInstallationPlan} from './member-checkout-installation-plan.mjs';
 import {createInstallationSourceBundle,verifyInstallationSourceBundle,installationBundleSummary} from './member-checkout-installation-bundle.mjs';
 import {readInstallationPreflight,assertInstallationTarget,assertInstallationPreflight,installationPreflightSummary} from './member-checkout-installation-preflight.mjs';
+import {observeInstallationSeal,assertInstallationSealObservation,prepareInstallationSeal,verifyInstallationSeal,installationSealSummary,
+ sealRegistryVersion,installationSealRegistryName,installationSealRegistryDigest} from './member-checkout-installation-seal.mjs';
+import {createInstallationSealJournal,openInstallationSealJournal,installationSealFileName} from './member-checkout-installation-seal-journal.mjs';
 import {readCompatibilityCatalog,inspectCompatibilityCatalog} from './member-checkout-compatibility-check.mjs';
 import {createOwnedCheckoutData} from './fixtures/member-checkout-real-auth-database.mjs';
 import submission from '../src/lib/merchantCheckoutSubmission.server.ts';
@@ -20,10 +23,11 @@ import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
 const markerVersion='999999990001'; // Explicitly synthetic, NOT a production migration reservation.
 test('owned atomic installation, interruption, idempotency and retained financial rollback', {timeout:180000}, async t=>{
  const owned=assertIsolatedCi();assert.equal(owned.profileName,'current-auth');
+ const ackMode=process.env.FAOLLA_CHECKOUT_INSTALLATION_ACK_MODE??'normal';assert.ok(['normal','commit-unknown'].includes(ackMode),'installation_ack_mode_invalid');
  const evidence=path.join(process.env.RUNNER_TEMP,'faolla-install-evidence');await mkdir(evidence);
  const requirePg=createRequire(path.join(process.env.RUNNER_TEMP,'faolla-install-tools/pg-client/package.json'));
  const {Client}=requirePg('pg');const clients=new Set();let opened=0,closed=0;
- const report={version:1,commit:process.env.GITHUB_SHA,scope:'owned-ci-atomic-installation-not-production',checks:[],passed:false,cleanupPassed:false,failure:null};
+ const report={version:1,commit:process.env.GITHUB_SHA,ackMode,scope:'owned-ci-atomic-installation-not-production',checks:[],passed:false,cleanupPassed:false,failure:null};
  const open=async()=>{
   assertIsolatedCi();const db=new Client({host:'127.0.0.1',port:databasePort,database,user:'checkout_ci_admin',password:'disposable-checkout-ci-only',ssl:false,
    connectionTimeoutMillis:5000,query_timeout:20000,statement_timeout:15000,application_name:'checkout-ci-installation'});
@@ -40,6 +44,7 @@ test('owned atomic installation, interruption, idempotency and retained financia
   const sourceBundle=await createInstallationSourceBundle(),packageFile=path.join(evidence,'installation-bundle.private.json');
   await writeFile(packageFile,sourceBundle.wire,{flag:'wx',mode:0o600});
   const bundle=await verifyInstallationSourceBundle(await readFile(packageFile,'utf8'));
+  const journal=createInstallationSealJournal();let committedSeal,conflictingJournalFile;
   const plan=await loadInstallationPlan();report.planSha256=plan.digest;report.application=plan.material.application;
   report.installationBundle=installationBundleSummary(bundle);
   assert.equal(bundle.material.planSha256,plan.digest);assert.equal(bundle.receipt.version,markerVersion);
@@ -107,28 +112,57 @@ test('owned atomic installation, interruption, idempotency and retained financia
    }finally{await observer.query('ROLLBACK');}
   };
   const preflight=await previewPreflight();report.installationPreflight=installationPreflightSummary(preflight);
+  const previewSeal=async()=>{
+   await observer.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+   try{await observer.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='1s';SET LOCAL search_path=pg_catalog,public");
+    return await observeInstallationSeal(sql=>observer.query(sql),bundle);
+   }finally{await observer.query('ROLLBACK');}
+  };
+  const sealBaseline=await previewSeal();assertInstallationPreflight(preflight,sealBaseline.core);
   const install=async(fault,bundleFile=packageFile)=>{
    const approved=await verifyInstallationSourceBundle(await readFile(bundleFile,'utf8'));
    assert.equal(approved.digest,bundle.digest,'installation_bundle_changed');
-   const db=await open();let applied=0;
+   const db=await open();let applied=0,commitDispatched=false;
    try{
     await db.query('BEGIN');await db.query("SET LOCAL lock_timeout='1s';SET LOCAL statement_timeout='15s';SET LOCAL search_path=pg_catalog,public;SET LOCAL standard_conforming_strings=on");
     assert.equal((await db.query('select pg_try_advisory_xact_lock(20261125,6064) locked')).rows[0].locked,true,'installation_busy');
-    const currentPreflight=await readInstallationPreflight(sql=>db.query(sql),approved);
+    const currentSeal=await observeInstallationSeal(sql=>db.query(sql),approved),currentPreflight=currentSeal.core;
     assertInstallationTarget(preflight,currentPreflight);
-    const rows=await registry(db),receipt=rows.find(r=>r.version===markerVersion);
-    if(receipt){assert.equal(receipt.name,markerName,'installation_receipt_conflict');assert.deepEqual(rows.filter(r=>r.version!==markerVersion),plan.registry);await installed(db);await db.query('COMMIT');return{status:'already_installed',applied};}
+    const rows=await registry(db),receipt=rows.find(r=>r.version===markerVersion),sealReceipt=rows.find(r=>r.version===sealRegistryVersion);
+    if(receipt){
+     assert.equal(receipt.name,markerName,'installation_receipt_conflict');assert.ok(sealReceipt,'installation_seal_receipt_missing');
+     assert.deepEqual(rows.filter(r=>![markerVersion,sealRegistryVersion].includes(r.version)),plan.registry);
+     await installed(db);
+     const digest=installationSealRegistryDigest(sealReceipt.name);
+     // This trusted root is locally owned; a database row never chooses a path.
+     const reopened=openInstallationSealJournal(journal.root);
+     verifyInstallationSeal(reopened.read(digest),{expectedSha256:digest,before:sealBaseline,current:currentSeal,bundle:approved});
+     await db.query('COMMIT');return{status:'already_installed',applied};
+    }
+    assert.equal(sealReceipt,undefined,'installation_source_receipt_missing');
     assert.deepEqual(rows,plan.registry,'installation_registry_changed');
     assert.deepEqual(inspectCompatibilityCatalog(plan.prerequisites,await catalogue(db)).issues,['schema_boundary_changed'],'installation_prerequisite_catalogue_changed');
     assert.equal((await db.query("select count(*)::int n from pg_roles where rolname in ('faolla_checkout_runtime','faolla_checkout_executor')")).rows[0].n,0,'installation_role_collision');
     assertInstallationPreflight(preflight,currentPreflight);
+    assertInstallationSealObservation(sealBaseline,currentSeal);
     for(const step of approved.material.steps){await db.query(step.body);applied++;
      if(fault==='middle'&&applied===16)await db.query('select 1/0');}
     await installed(db);
-    await db.query('insert into public.faolla_schema_migrations(version,name) values($1,$2)',[markerVersion,markerName]);
+    const after=await observeInstallationSeal(sql=>db.query(sql),approved),seal=prepareInstallationSeal(sealBaseline,after,approved);
+    if(fault==='journal-collision'){
+     conflictingJournalFile=path.join(journal.root,installationSealFileName(seal.digest));
+     await writeFile(conflictingJournalFile,'retained-conflict',{flag:'wx',mode:0o600});
+    }
+    journal.write(seal); // Exclusive durable prepare and readback BEFORE database COMMIT.
+    await db.query('insert into public.faolla_schema_migrations(version,name) values($1,$2),($3,$4)',
+     [markerVersion,markerName,sealRegistryVersion,installationSealRegistryName(seal.digest)]);
+    verifyInstallationSeal(journal.read(seal.digest),{expectedSha256:seal.digest,before:sealBaseline,
+     current:await observeInstallationSeal(sql=>db.query(sql),approved),bundle:approved});
     if(fault==='before-commit'){await close(db);throw Object.assign(Error('owned_connection_closed_before_commit'),{code:'OWNED_CI_DISCONNECT'});}
-    await db.query('COMMIT');return{status:'installed',applied};
-   }catch(error){await db.query('ROLLBACK').catch(()=>{});throw error;}
+    commitDispatched=true;
+    // A real post-COMMIT error, not a simulated TCP loss or proof of power-loss durability.
+    await db.query(fault==='after-commit'?'COMMIT; SELECT 1/0':'COMMIT');return{status:'installed',applied};
+   }catch(error){if(!commitDispatched)await db.query('ROLLBACK').catch(()=>{});throw error;}
    finally{await close(db);}
   };
   await check('a separate readonly preview has the same source/target/metadata binding without reading business rows',async()=>{
@@ -150,6 +184,11 @@ test('owned atomic installation, interruption, idempotency and retained financia
   });
   await check('disconnect after all DDL and receipt insertion leaves neither roles nor half-installed schema',async()=>{
    await assert.rejects(install('before-commit'),e=>e.code==='OWNED_CI_DISCONNECT');assert.deepEqual(await state(observer),baseline);
+  });
+  await check('exclusive journal collision rolls back the full database attempt and retains conflicting evidence',async()=>{
+   await assert.rejects(install('journal-collision'),e=>e.code==='EEXIST');assert.deepEqual(await state(observer),baseline);
+   assert.equal(await readFile(conflictingJournalFile,'utf8'),'retained-conflict');
+   assertInstallationSealObservation(sealBaseline,await previewSeal());
   });
   await check('held installer lock refuses a second attempt before DDL or registry changes',async()=>{
    await observer.query('BEGIN');await observer.query('select pg_advisory_xact_lock(20261125,6064)');
@@ -198,13 +237,29 @@ test('owned atomic installation, interruption, idempotency and retained financia
    assertInstallationPreflight(preflight,await previewPreflight());
    assert.deepEqual(await state(observer),baseline);
   });
+  await check('legacy trigger drift invisible to the old preflight is refused before checkout DDL',async()=>{
+   await observer.query('alter table public.pages disable trigger set_pages_updated_at');
+   try{assertInstallationPreflight(preflight,await previewPreflight());const before=await state(observer);
+    await assert.rejects(install(),/installation_seal_precondition_changed/);assert.deepEqual(await state(observer),before);
+   }finally{await observer.query('alter table public.pages enable trigger set_pages_updated_at');}
+   assertInstallationSealObservation(sealBaseline,await previewSeal());
+  });
   await check('single committed installation preserves old data and API roles, keeps pilots off and records exact source digest',async()=>{
-   assert.deepEqual(await install(),{status:'installed',applied:33});await installed(observer);
+   if(ackMode==='commit-unknown'){
+    await assert.rejects(install('after-commit'),e=>e.code==='22012');
+    const committed=await state(observer),connections=opened;
+    assert.deepEqual(await install(),{status:'already_installed',applied:0});assert.equal(opened,connections+1);
+    assert.deepEqual(await state(observer),committed);report.commitRecoveredWithoutReapply=true;
+   }else assert.deepEqual(await install(),{status:'installed',applied:33});
+   await installed(observer);
    assert.deepEqual((await roleState(observer)).filter(r=>!r.name.startsWith('faolla_checkout_')),oldRoles);
    assert.deepEqual(await memberships(observer),oldMemberships);assert.deepEqual((await state(observer)).pages,baseline.pages);
    for(const table of ['bundle_pilots','intent_pilots','cart_quote_pilots','cart_submission_pilots','cart_collection_pilots','unused_reference_pilots','original_service_pilots'])
     assert.equal((await observer.query(`select count(*)::int n from faolla_checkout_design.${table}`)).rows[0].n,0);
-   assert.deepEqual(await registry(observer),[...plan.registry,{version:markerVersion,name:markerName}]);
+   const rows=await registry(observer),sealReceipt=rows.find(r=>r.version===sealRegistryVersion),digest=installationSealRegistryDigest(sealReceipt.name);
+   committedSeal=verifyInstallationSeal(journal.read(digest),{expectedSha256:digest,before:sealBaseline,current:await previewSeal(),bundle});
+   report.installationSeal=installationSealSummary(committedSeal);
+   assert.deepEqual(rows,[...plan.registry,{version:markerVersion,name:markerName},{version:sealRegistryVersion,name:sealReceipt.name}]);
   });
   await check('exact repeat performs no DDL and preserves receipt, object identities, rows and grants',async()=>{
    const before=await state(observer);assert.deepEqual(await install(),{status:'already_installed',applied:0});assert.deepEqual(await state(observer),before);
@@ -215,9 +270,58 @@ test('owned atomic installation, interruption, idempotency and retained financia
    finally{await observer.query('update public.faolla_schema_migrations set name=$2 where version=$1',[markerVersion,markerName]);}
   });
   await check('existing schema without the exact receipt is refused instead of reapplying a partial install',async()=>{
-   await observer.query('delete from public.faolla_schema_migrations where version=$1',[markerVersion]);
+   await observer.query('delete from public.faolla_schema_migrations where version=any($1::bigint[])',[[markerVersion,sealRegistryVersion]]);
    try{const before=await state(observer);await assert.rejects(install(),/installation_prerequisite_catalogue_changed/);assert.deepEqual(await state(observer),before);}
-   finally{await observer.query('insert into public.faolla_schema_migrations(version,name) values($1,$2)',[markerVersion,markerName]);}
+   finally{await observer.query('insert into public.faolla_schema_migrations(version,name) values($1,$2),($3,$4)',
+    [markerVersion,markerName,sealRegistryVersion,installationSealRegistryName(committedSeal.digest)]);}
+  });
+  await check('either half of the atomic receipt pair missing refuses all reapplication',async()=>{
+   for(const [version,name,reason] of [[markerVersion,markerName,/installation_source_receipt_missing/],
+    [sealRegistryVersion,installationSealRegistryName(committedSeal.digest),/installation_seal_receipt_missing/]]){
+    await observer.query('delete from public.faolla_schema_migrations where version=$1',[version]);
+    try{const before=await state(observer);await assert.rejects(install(),reason);assert.deepEqual(await state(observer),before);}
+    finally{await observer.query('insert into public.faolla_schema_migrations(version,name) values($1,$2)',[version,name]);}
+   }
+  });
+  await check('full result seal detects a new private constraint that the old function and ACL checker accepts',async()=>{
+   await observer.query('alter table faolla_checkout_design.bundle_pilots add constraint ci_only_post_shape check (true) not valid');
+   try{await installed(observer);const before=await state(observer);await assert.rejects(install(),/installation_seal_unconfirmed/);assert.deepEqual(await state(observer),before);}
+   finally{await observer.query('alter table faolla_checkout_design.bundle_pilots drop constraint ci_only_post_shape');}
+  });
+  await check('full result seal detects disabling a legacy trigger without repairing it',async()=>{
+   await observer.query('alter table public.pages disable trigger set_pages_updated_at');
+   try{await installed(observer);const before=await state(observer);await assert.rejects(install(),/installation_seal_unconfirmed/);assert.deepEqual(await state(observer),before);}
+   finally{await observer.query('alter table public.pages enable trigger set_pages_updated_at');}
+  });
+  await check('full result seal detects an otherwise hidden legacy policy',async()=>{
+   await observer.query('create policy ci_only_post_policy on public.pages using (true)');
+   try{await installed(observer);const before=await state(observer);await assert.rejects(install(),/installation_seal_unconfirmed/);assert.deepEqual(await state(observer),before);}
+   finally{await observer.query('drop policy ci_only_post_policy on public.pages');}
+  });
+  await check('legacy trigger function body drift is sealed even outside the faolla function-name prefix',async()=>{
+   await observer.query('create or replace function public.set_pages_updated_at() returns trigger language plpgsql as $$begin new.updated_at=clock_timestamp();return new;end;$$');
+   try{await installed(observer);const before=await state(observer);await assert.rejects(install(),/installation_seal_unconfirmed/);assert.deepEqual(await state(observer),before);}
+   finally{await observer.query('create or replace function public.set_pages_updated_at() returns trigger language plpgsql as $$begin new.updated_at=now();return new;end;$$');}
+  });
+  await check('missing private journal never regenerates evidence from a mutable database receipt',async()=>{
+   const file=path.join(journal.root,installationSealFileName(committedSeal.digest)),retained=file+'.retained';
+   await rename(file,retained);
+   try{const before=await state(observer);await assert.rejects(install(),e=>e.code==='ENOENT');assert.deepEqual(await state(observer),before);}
+   finally{await writeFile(file,await readFile(retained),{flag:'wx',mode:0o600});}
+  });
+  await check('publicly readable journal evidence is refused without changing its permissions',async()=>{
+   const file=path.join(journal.root,installationSealFileName(committedSeal.digest));await chmod(file,0o644);
+   try{const before=await state(observer);await assert.rejects(install(),/installation_journal_file_privacy/);assert.deepEqual(await state(observer),before);}
+   finally{await chmod(file,0o600);}
+  });
+  await check('a self-rehashed wrong catalogue journal and matching database seal name do not approve changed evidence',async()=>{
+   const value=JSON.parse(committedSeal.wire),canonical=input=>JSON.stringify(input,(_,item)=>item&&typeof item==='object'&&!Array.isArray(item)
+    ?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
+   value.material.catalogSha256='0'.repeat(64);value.sha256=createHash('sha256').update(canonical(value.material)).digest('hex');
+   await writeFile(path.join(journal.root,installationSealFileName(value.sha256)),canonical(value),{flag:'wx',mode:0o600});
+   await observer.query('update public.faolla_schema_migrations set name=$2 where version=$1',[sealRegistryVersion,installationSealRegistryName(value.sha256)]);
+   try{const before=await state(observer);await assert.rejects(install(),/installation_seal_unconfirmed/);assert.deepEqual(await state(observer),before);}
+   finally{await observer.query('update public.faolla_schema_migrations set name=$2 where version=$1',[sealRegistryVersion,installationSealRegistryName(committedSeal.digest)]);}
   });
   await check('security drift after installation is refused rather than silently re-granted or repaired',async()=>{
    await observer.query('grant execute on function public.faolla_checkout_runtime_v1(text,jsonb) to PUBLIC');
