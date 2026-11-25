@@ -44,7 +44,11 @@ export function safeError(error) {
 }
 
 export function sanitizeStartupDiagnostic(text, credentials = []) {
-  let value = String(text).slice(-4096);
+  // A migration error may include the complete DDL in one JSON message. Keep
+  // only its trailing PostgreSQL ERROR + SQLSTATE, never that SQL payload.
+  const raw = String(text).slice(-16384), sqlError = raw.match(/ERROR: ([^\n]{1,400}?)\(SQLSTATE ([0-9A-Z]{5})\)/);
+  if (sqlError) return ('ERROR: ' + sqlError[1] + '(SQLSTATE ' + sqlError[2] + ')').replace(/\\/g, '').slice(0, 512);
+  let value = raw.slice(-4096);
   for (const credential of credentials) if (credential) value = value.split(credential).join('[credential]');
   return value.replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[jwt]')
     .replace(/\b(?:postgres(?:ql)?|https?):\/\/[^\s"']+/g, '[endpoint]')

@@ -42,7 +42,10 @@ export async function installRealAuthCheckoutFixture(t, db) {
     create table public.merchants(id text primary key,user_id text,auth_user_id text,owner_user_id text,owner_id text,auth_id text,created_by text,created_by_user_id text,email text,owner_email text,contact_email text,user_email text);
     grant select on public.merchant_enterprise_employees,public.merchants to service_role;
     create role checkout_local_gateway login noinherit nosuperuser nocreatedb nocreaterole nobypassrls password 'disposable-gateway-ci-only';
-    grant faolla_checkout_runtime,anon,authenticated,service_role to checkout_local_gateway;`);
+    grant faolla_checkout_runtime,anon,authenticated,service_role to checkout_local_gateway;
+    -- Official Auth expects its namespace to exist before its own migrator runs.
+    -- This is a NEW empty CI namespace, not an edit to Auth tables or migrations.
+    create schema auth;`);
   const site = '10909992';
   for (const table of ['bundle_pilots', 'intent_pilots']) await db.query(`insert into faolla_checkout_design.${table}(site_id,enabled) values($1,true)`, [site]);
   await db.query('update public.faolla_booking_atomic_control set active=true where singleton');

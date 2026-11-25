@@ -39,4 +39,7 @@ test('startup diagnostic redacts local secrets, JWTs, URLs and SQL instead of hi
   const value = sanitizeStartupDiagnostic('config failed: secret-sentinel eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature postgres://actor:password@127.0.0.1/test\nSTATEMENT: select private_data;', ['secret-sentinel']);
   assert.match(value, /config failed:/);
   assert.doesNotMatch(value, /secret-sentinel|eyJ|password|select private_data/);
+  const sql = sanitizeStartupDiagnostic('failed migration CREATE TABLE private_data (...); ERROR: schema \\"auth\\" does not exist (SQLSTATE 3F000)');
+  assert.equal(sql, 'ERROR: schema "auth" does not exist (SQLSTATE 3F000)');
+  assert.doesNotMatch(sql, /CREATE TABLE|private_data/);
 });
