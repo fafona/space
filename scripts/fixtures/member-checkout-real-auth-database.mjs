@@ -51,6 +51,15 @@ export async function installRealAuthCheckoutFixture(t, db) {
     create schema auth authorization checkout_ci_auth;
     grant create on database faolla_member_checkout_auth_test to checkout_ci_auth;
     alter role checkout_ci_auth set search_path=auth;`);
+  return createOwnedCheckoutData(db,runtimeCall);
+}
+
+// Shared synthetic financial data only, after the caller's owned CI installation.
+// The existing Auth fixture and the independent atomic-install rehearsal use
+// identical real domain builders. This is not an Auth or SQL response mock.
+export async function createOwnedCheckoutData(db,runtimeCall) {
+  assert.equal(db.connectionParameters.host,'127.0.0.1');assert.equal(db.connectionParameters.port,databasePort);
+  assert.equal(db.connectionParameters.database,database);assert.equal(db.connectionParameters.user,'checkout_ci_admin');
   const site = '10909992';
   for (const table of ['bundle_pilots', 'intent_pilots']) await db.query(`insert into faolla_checkout_design.${table}(site_id,enabled) values($1,true)`, [site]);
   await db.query('update public.faolla_booking_atomic_control set active=true where singleton');

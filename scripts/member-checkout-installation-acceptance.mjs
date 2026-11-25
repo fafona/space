@@ -1,0 +1,170 @@
+// Fresh GitHub-hosted service DB ONLY. No production connector or installer.
+// Tests the frozen proposal bundle's atomicity/receipt semantics, not a formal
+// migration version, full Supabase clone or production traffic promotion.
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {createRequire} from 'node:module';
+import {randomUUID} from 'node:crypto';
+import {mkdir,writeFile} from 'node:fs/promises';
+import path from 'node:path';
+import {assertIsolatedCi,database,databasePort,safeError} from './member-checkout-real-auth-support.mjs';
+import {assertOwnedLifecycleTarget} from './member-checkout-runtime-lifecycle-cases.mjs';
+import {loadInstallationPlan} from './member-checkout-installation-plan.mjs';
+import {readCompatibilityCatalog,inspectCompatibilityCatalog} from './member-checkout-compatibility-check.mjs';
+import {createOwnedCheckoutData} from './fixtures/member-checkout-real-auth-database.mjs';
+import submission from '../src/lib/merchantCheckoutSubmission.server.ts';
+import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
+
+const markerVersion='999999990001'; // Explicitly synthetic, NOT a production migration reservation.
+test('owned atomic installation, interruption, idempotency and retained financial rollback', {timeout:180000}, async t=>{
+ const owned=assertIsolatedCi();assert.equal(owned.profileName,'current-auth');
+ const evidence=path.join(process.env.RUNNER_TEMP,'faolla-install-evidence');await mkdir(evidence);
+ const requirePg=createRequire(path.join(process.env.RUNNER_TEMP,'faolla-install-tools/pg-client/package.json'));
+ const {Client}=requirePg('pg');const clients=new Set();let opened=0,closed=0;
+ const report={version:1,commit:process.env.GITHUB_SHA,scope:'owned-ci-atomic-installation-not-production',checks:[],passed:false,cleanupPassed:false,failure:null};
+ const open=async()=>{
+  assertIsolatedCi();const db=new Client({host:'127.0.0.1',port:databasePort,database,user:'checkout_ci_admin',password:'disposable-checkout-ci-only',ssl:false,
+   connectionTimeoutMillis:5000,query_timeout:20000,statement_timeout:15000,application_name:'checkout-ci-installation'});
+  assertOwnedLifecycleTarget(db);await db.connect();clients.add(db);opened++;
+  assert.deepEqual((await db.query(`select current_database() db,current_user::text actor,
+   (select pg_get_userbyid(datdba) from pg_database where datname=current_database()) owner,
+   current_setting('server_version_num') version`)).rows[0],{db:database,actor:'checkout_ci_admin',owner:'checkout_ci_admin',version:'150008'});
+  return db;
+ };
+ const close=async db=>{if(clients.has(db)){await db.end();clients.delete(db);closed++;}};
+ const check=async(name,run)=>{let success=false;await t.test(name,async()=>{try{await run();success=true;report.checks.push({name,passed:true});}catch(e){report.checks.push({name,passed:false});throw e;}});assert.equal(success,true,'required installation prerequisite failed: '+name);};
+ let observer;
+ try{
+  observer=await open();const plan=await loadInstallationPlan();report.planSha256=plan.digest;report.application=plan.material.application;
+  const markerName='ci_only_checkout_bundle_'+plan.digest;
+  const registry=db=>db.query('select version::text version,name from public.faolla_schema_migrations order by version').then(r=>r.rows);
+  const roleState=db=>db.query(`select oid::text oid,rolname::text name,rolsuper,rolcanlogin,rolinherit,rolcreaterole,rolcreatedb,rolbypassrls,rolreplication
+   from pg_roles order by rolname`).then(r=>r.rows);
+  const memberships=db=>db.query(`select a.rolname::text parent,b.rolname::text child,m.admin_option from pg_auth_members m
+   join pg_roles a on a.oid=m.roleid join pg_roles b on b.oid=m.member order by parent,child`).then(r=>r.rows);
+  const catalogue=db=>readCompatibilityCatalog(sql=>db.query(sql));
+  const state=async db=>({catalogue:await catalogue(db),registry:await registry(db),roles:await roleState(db),memberships:await memberships(db),
+   identities:(await db.query(`select 'relation' kind,c.oid::text oid,n.nspname::text namespace,c.relname::text name from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in ('public','faolla_checkout_design')
+    union all select 'function',p.oid::text,n.nspname::text,p.proname::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','faolla_checkout_design')
+    union all select 'trigger',t.oid::text,n.nspname::text,t.tgname::text from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname in ('public','faolla_checkout_design') order by kind,namespace,name,oid`)).rows,
+   pages:(await db.query('select to_jsonb(p) value from public.pages p order by id')).rows});
+  const installed=async db=>{
+   const inspected=inspectCompatibilityCatalog(plan.expected,await catalogue(db));assert.deepEqual(inspected.issues,[]);assert.equal(inspected.deploymentReady,false);
+   const rows=(await roleState(db)).filter(r=>['faolla_checkout_runtime','faolla_checkout_executor'].includes(r.name));assert.equal(rows.length,2);
+   for(const r of rows){for(const key of ['rolsuper','rolcanlogin','rolinherit','rolcreaterole','rolcreatedb','rolreplication'])assert.equal(r[key],false);assert.equal(r.rolbypassrls,r.name==='faolla_checkout_executor');}
+   assert.equal((await memberships(db)).filter(r=>/^faolla_checkout_/.test(r.parent)||/^faolla_checkout_/.test(r.child)).length,0);
+   assert.deepEqual((await db.query(`select pg_get_userbyid(proowner)::text owner from pg_proc
+    where oid='public.faolla_checkout_runtime_v1(text,jsonb)'::regprocedure`)).rows[0],{owner:'faolla_checkout_executor'});
+   for(const role of ['anon','authenticated','service_role','faolla_checkout_runtime']){
+    assert.equal((await db.query("select has_function_privilege($1,'public.faolla_checkout_runtime_v1(text,jsonb)','EXECUTE') allowed",[role])).rows[0].allowed,role==='faolla_checkout_runtime');
+    assert.equal((await db.query("select has_schema_privilege($1,'faolla_checkout_design','USAGE') allowed",[role])).rows[0].allowed,false);
+   }
+   for(const table of [...plan.expected.tables,'public.pages','public.faolla_booking_atomic_control'])
+    assert.equal((await db.query("select has_table_privilege('faolla_checkout_runtime',$1,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') allowed",[table])).rows[0].allowed,false);
+  };
+  await check('fresh owned old-schema fixture contains only the five pinned legacy prerequisites',async()=>{
+   assert.equal((await observer.query("select count(*)::int n from pg_tables where schemaname not in ('pg_catalog','information_schema')")).rows[0].n,0);
+   assert.equal((await observer.query("select count(*)::int n from pg_roles where rolname in ('anon','authenticated','service_role','faolla_checkout_runtime','faolla_checkout_executor')")).rows[0].n,0);
+   await observer.query(`create role anon nologin;create role authenticated nologin;create role service_role nologin bypassrls;
+    create table public.pages(id uuid primary key default gen_random_uuid(),merchant_id text,slug text,blocks jsonb,updated_at timestamptz default clock_timestamp());
+    create table public.faolla_schema_migrations(version bigint primary key,name text not null);
+    grant usage on schema public to anon,authenticated,service_role;grant select,insert,update,delete on public.pages to service_role;
+    create function public.set_pages_updated_at() returns trigger language plpgsql as $$begin new.updated_at=now();return new;end;$$;
+    create trigger set_pages_updated_at before update on public.pages for each row execute function public.set_pages_updated_at();`);
+   await observer.query('insert into public.pages(merchant_id,slug,blocks) values($1,$2,$3)',['__faolla_booking_persistence__','__merchant_booking_records__:v1',{version:1,records:[]}]);
+   for(const original of plan.originals)await observer.query(original.source);
+   assert.deepEqual(await registry(observer),plan.registry);
+  });
+  const baseline=await state(observer),oldRoles=baseline.roles,oldMemberships=baseline.memberships;
+  const install=async fault=>{
+   const db=await open();let applied=0;
+   try{
+    await db.query('BEGIN');await db.query("SET LOCAL lock_timeout='1s';SET LOCAL statement_timeout='15s';SET LOCAL search_path=pg_catalog,public;SET LOCAL standard_conforming_strings=on");
+    assert.equal((await db.query('select pg_try_advisory_xact_lock(20261125,6064) locked')).rows[0].locked,true,'installation_busy');
+    const rows=await registry(db),receipt=rows.find(r=>r.version===markerVersion);
+    if(receipt){assert.equal(receipt.name,markerName,'installation_receipt_conflict');assert.deepEqual(rows.filter(r=>r.version!==markerVersion),plan.registry);await installed(db);await db.query('COMMIT');return{status:'already_installed',applied};}
+    assert.deepEqual(rows,plan.registry,'installation_registry_changed');
+    assert.deepEqual(inspectCompatibilityCatalog(plan.prerequisites,await catalogue(db)).issues,['schema_boundary_changed'],'installation_prerequisite_catalogue_changed');
+    assert.equal((await db.query("select count(*)::int n from pg_roles where rolname in ('faolla_checkout_runtime','faolla_checkout_executor')")).rows[0].n,0,'installation_role_collision');
+    for(const step of plan.steps){await db.query(step.body);applied++;
+     if(fault==='middle'&&applied===16)await db.query('select 1/0');}
+    await installed(db);
+    await db.query('insert into public.faolla_schema_migrations(version,name) values($1,$2)',[markerVersion,markerName]);
+    if(fault==='before-commit'){await close(db);throw Object.assign(Error('owned_connection_closed_before_commit'),{code:'OWNED_CI_DISCONNECT'});}
+    await db.query('COMMIT');return{status:'installed',applied};
+   }catch(error){await db.query('ROLLBACK').catch(()=>{});throw error;}
+   finally{await close(db);}
+  };
+  await check('mid-bundle database error rolls back all new objects, grants and registration without modifying old rows',async()=>{
+   await assert.rejects(install('middle'),e=>e.code==='22012');assert.deepEqual(await state(observer),baseline);
+  });
+  await check('disconnect after all DDL and receipt insertion leaves neither roles nor half-installed schema',async()=>{
+   await assert.rejects(install('before-commit'),e=>e.code==='OWNED_CI_DISCONNECT');assert.deepEqual(await state(observer),baseline);
+  });
+  await check('held installer lock refuses a second attempt before DDL or registry changes',async()=>{
+   await observer.query('BEGIN');await observer.query('select pg_advisory_xact_lock(20261125,6064)');
+   try{await assert.rejects(install(),/installation_busy/);}finally{await observer.query('ROLLBACK');}
+   assert.deepEqual(await state(observer),baseline);
+  });
+  await check('single committed installation preserves old data and API roles, keeps pilots off and records exact source digest',async()=>{
+   assert.deepEqual(await install(),{status:'installed',applied:33});await installed(observer);
+   assert.deepEqual((await roleState(observer)).filter(r=>!r.name.startsWith('faolla_checkout_')),oldRoles);
+   assert.deepEqual(await memberships(observer),oldMemberships);assert.deepEqual((await state(observer)).pages,baseline.pages);
+   for(const table of ['bundle_pilots','intent_pilots','cart_quote_pilots','cart_submission_pilots','cart_collection_pilots','unused_reference_pilots','original_service_pilots'])
+    assert.equal((await observer.query(`select count(*)::int n from faolla_checkout_design.${table}`)).rows[0].n,0);
+   assert.deepEqual(await registry(observer),[...plan.registry,{version:markerVersion,name:markerName}]);
+  });
+  await check('exact repeat performs no DDL and preserves receipt, object identities, rows and grants',async()=>{
+   const before=await state(observer);assert.deepEqual(await install(),{status:'already_installed',applied:0});assert.deepEqual(await state(observer),before);
+  });
+  await check('conflicting receipt is refused without rewriting the receipt or repairing metadata',async()=>{
+   await observer.query('update public.faolla_schema_migrations set name=$2 where version=$1',[markerVersion,'ci_only_conflicting_receipt']);
+   try{const before=await state(observer);await assert.rejects(install(),/installation_receipt_conflict/);assert.deepEqual(await state(observer),before);}
+   finally{await observer.query('update public.faolla_schema_migrations set name=$2 where version=$1',[markerVersion,markerName]);}
+  });
+  await check('existing schema without the exact receipt is refused instead of reapplying a partial install',async()=>{
+   await observer.query('delete from public.faolla_schema_migrations where version=$1',[markerVersion]);
+   try{const before=await state(observer);await assert.rejects(install(),/installation_prerequisite_catalogue_changed/);assert.deepEqual(await state(observer),before);}
+   finally{await observer.query('insert into public.faolla_schema_migrations(version,name) values($1,$2)',[markerVersion,markerName]);}
+  });
+  await check('security drift after installation is refused rather than silently re-granted or repaired',async()=>{
+   await observer.query('grant execute on function public.faolla_checkout_runtime_v1(text,jsonb) to PUBLIC');
+   try{const before=await state(observer);await assert.rejects(install());assert.deepEqual(await state(observer),before);}
+   finally{await observer.query('revoke execute on function public.faolla_checkout_runtime_v1(text,jsonb) from PUBLIC');}
+  });
+  const runtimeCall=async(name,args)=>{
+   const db=await open();try{await db.query('BEGIN');await db.query('SET LOCAL SESSION AUTHORIZATION faolla_checkout_runtime');
+    assert.equal((await db.query('select current_user::text name')).rows[0].name,'faolla_checkout_runtime');
+    const value=(await db.query('select public.faolla_checkout_runtime_v1($1,$2) result',[name,args])).rows[0].result;await db.query('COMMIT');return value;
+   }catch(e){await db.query('ROLLBACK').catch(()=>{});throw e;}finally{await close(db);}
+  };
+  const financial=await createOwnedCheckoutData(observer,runtimeCall),f=await financial.seed(randomUUID());
+  const rpc=async(name,args)=>{try{return{data:await runtimeCall(name,args),error:null};}catch(error){return{data:null,error:{message:error.message}};}};
+  const nonce=randomUUID(),initial={...f.selection,method:'points',nonce,confirmationHash:'0'.repeat(64),customer:f.customer};
+  const identity=points.checkoutSubmissionIdentity(initial,f.principal),read=await runtimeCall('faolla_member_checkout_submission_snapshot_v2',{
+   p_site_id:financial.site,p_operation_key:identity.operationKey,p_principal_key:identity.principalKey,p_request_hash:identity.requestHash,p_offer_id:f.offer.id});
+  const quote=await points.quoteCheckoutSubmissionSnapshot(points.parseCheckoutSubmissionSnapshot(read.snapshot,identity),identity,f.principal);
+  const request={...initial,confirmationHash:quote.confirmationHash};
+  const submit=request=>submission.submitMemberCheckout({request,principal:f.principal,authorize:async()=>f.principal},rpc);
+  await check('installed least-privilege entry commits a real points/coupon booking and retains it across exact reinstallation',async()=>{
+   const result=await submit(request);assert.equal(result.replayed,false);assert.equal(result.result.totalPoints,80);
+   assert.equal((await financial.page(`__merchant_memberships__:${financial.site}`)).blocks[0].pointBalance,920);
+   const before=await financial.state();assert.deepEqual(await install(),{status:'already_installed',applied:0});assert.deepEqual(await financial.state(),before);
+   assert.equal((await submit(request)).replayed,true);assert.deepEqual(await financial.state(),before);
+  });
+  await check('closing creation retains the paid original, balance, coupon and immutable history while refusing a new order',async()=>{
+   await observer.query('update faolla_checkout_design.bundle_pilots set enabled=false where site_id=$1',[financial.site]);
+   const before=await financial.state();assert.equal((await submit(request)).replayed,true);
+   await assert.rejects(submit({...request,nonce:randomUUID()}),/checkout_disabled/);assert.deepEqual(await financial.state(),before);
+   assert.deepEqual(await install(),{status:'already_installed',applied:0});assert.deepEqual(await financial.state(),before);
+  });
+  report.passed=report.checks.every(c=>c.passed);
+ }catch(error){report.failure=safeError(error);throw error;}
+ finally{
+  for(const client of [...clients])await close(client);
+  report.cleanupPassed=clients.size===0&&opened===closed;report.openedConnections=opened;report.closedConnections=closed;
+  report.passed=report.passed&&report.cleanupPassed&&report.failure===null;
+  await writeFile(path.join(evidence,'report.json'),JSON.stringify(report,null,2),{flag:'wx',mode:0o600});
+  assert.equal(report.cleanupPassed,true);
+ }
+});
