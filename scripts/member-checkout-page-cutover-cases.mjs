@@ -48,8 +48,14 @@ export async function createOwnedPageChecks({ context, origin, servicePath, asse
   };
   const login = async (version, width = 1280, keep = false) => {
     const page = keep ? oldTab : await track(await guest.newPage()); await page.setViewportSize({ width, height: 1000 }); await page.bringToFront();
-    const response = await page.goto(origin + '/login?accountType=personal&loggedOut=1&uiLocale=zh-CN', { timeout: 90000, waitUntil: 'domcontentloaded' });
+    const response = await page.goto(origin + '/login?accountType=personal&uiLocale=zh-CN', { timeout: 90000, waitUntil: 'domcontentloaded' });
     assert.equal(response.status(), 200); assert.equal(response.headers()['x-owned-source-version'], version);
+    // Existing React control proves hydration; SSR-visible input alone does
+    // not. This is a fresh guest, not the timed loggedOut=1 autofill scrub.
+    await page.getByRole('button', { name: '显示密码', exact: true }).click();
+    await page.locator('input[name="merchant-login-password"][type="text"]').waitFor({ state: 'visible' });
+    await page.getByRole('button', { name: '隐藏密码', exact: true }).click();
+    await page.locator('input[name="merchant-login-password"][type="password"]').waitFor({ state: 'visible' });
     const input = page.locator('input[autocomplete="username"]'); await input.waitFor({ state: 'visible', timeout: 20000 });
     await input.fill('owned-draft@example.invalid'); assert.equal(await input.inputValue(), 'owned-draft@example.invalid');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);

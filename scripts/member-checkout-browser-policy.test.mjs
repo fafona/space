@@ -28,4 +28,8 @@ test('actual page harness aborts all non-owned requests and preserves fatal erro
   assert.match(source, /assert\.deepEqual\(unexpected, \[\], 'production_page_external_requests'\)/);
   assert.match(source, /assert\.deepEqual\(errors, \[\], 'production_page_errors'\)/);
   assert.doesNotMatch(source, /\.fulfill\(|addInitScript|window\.fetch\s*=|innerHTML\s*=/);
+  assert.match(source, /\/login\?accountType=personal&uiLocale=zh-CN/);
+  assert.doesNotMatch(source, /\/login\?[^']*loggedOut=/);
+  assert.match(source, /getByRole\('button', \{ name: '显示密码', exact: true \}\)\.click\(\)/);
+  assert.match(source, /getByRole\('button', \{ name: '隐藏密码', exact: true \}\)\.click\(\)/);
 });
