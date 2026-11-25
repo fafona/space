@@ -46,16 +46,18 @@ const retainedRoutes = new Map([
   ['/api/member-checkout/original-service/cancel', 'POST'],
   ['/api/member-checkout/single/points/submit', 'POST'], // Exact original replay; DB creation gate must be closed first.
 ]);
-export function createOwnedCutoverPolicy() {
+export function createOwnedCutoverPolicy({ retainedPage } = {}) {
+  if (retainedPage !== undefined) assert.match(retainedPage, /^\/member-checkout\/\d{8}\/service\/[a-f0-9]{64}$/);
   let mode = 'old', generation = 0, busy = false;
   const snapshot = () => ({ mode, generation });
   const target = (method, pathname) => {
     if (!pathname.startsWith('/') || /[%\\]|\/\//.test(pathname)) return null;
     if (mode === 'candidate') return 'candidate';
     if (mode === 'old') return 'old';
+    if (retainedPage && pathname === retainedPage) return method === 'GET' ? 'candidate' : null;
     if (pathname.startsWith('/api/member-checkout/')) return retainedRoutes.get(pathname) === method ? 'candidate' : null;
-    // Dev assets cannot be mixed across versions. This harness proves HTTP
-    // APIs only; it must not pretend to validate rollback of checkout page UI.
+    // No catch-all new page fallback. An explicit tested service page can be
+    // retained only when the caller also supplies both production asset sets.
     if (pathname === '/api/member-checkout' || pathname.startsWith('/member-checkout/')) return null;
     return 'old';
   };

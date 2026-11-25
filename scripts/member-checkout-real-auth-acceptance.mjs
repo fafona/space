@@ -22,6 +22,7 @@ import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
 import { runtimeLifecycleCases } from './member-checkout-runtime-lifecycle-cases.mjs';
 import { versionCutoverCases } from './member-checkout-version-cutover-cases.mjs';
 import { verifyOwnedRollbackSource } from './member-checkout-version-cutover-support.mjs';
+import { buildOwnedCandidate } from './member-checkout-rollback-build.mjs';
 
 test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> points/coupon booking', { timeout: process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1' ? 900000 : 360000 }, async t => {
   const owned = assertIsolatedCi(); await verifyOwnedTools(owned.tools, owned.profileName);
@@ -154,8 +155,13 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
       assert.equal((await authCall('/token?grant_type=password', { email, password: 'WrongPassword!' }, anonJwt)).status, 400);
     });
     assert.equal((await authCall('/admin/users/' + userId, { email_confirm: true }, serviceJwt, 'PUT')).status, 200);
-    fixture = await prepareOwnedNextFixture(); report.application = await applicationFingerprint(fixture.root);
-    const appEnv = { NODE_ENV: 'development', NODE_OPTIONS: '--max-old-space-size=3072', NEXT_TELEMETRY_DISABLED: '1', FAOLLA_CHECKOUT_NEXT_LOCAL: '1',
+    const productionCandidate = process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1';
+    fixture = await prepareOwnedNextFixture({ productionBuild: productionCandidate }); report.application = await applicationFingerprint(fixture.root);
+    if (productionCandidate) {
+      report.phase = 'candidate-production-build'; report.candidateBuild = {};
+      await caseOf('frozen candidate completes all five production build stages without credentials, backend IO or source changes', () => buildOwnedCandidate(fixture, t.signal, report.candidateBuild));
+    }
+    const appEnv = { NODE_ENV: productionCandidate ? 'production' : 'development', NODE_OPTIONS: '--max-old-space-size=3072', NEXT_TELEMETRY_DISABLED: '1', FAOLLA_CHECKOUT_NEXT_LOCAL: '1',
       FAOLLA_CANONICAL_PORTAL_ORIGIN: 'https://portal.checkout-auth.test', FAOLLA_SUPER_ADMIN_ORIGIN: 'https://console.checkout-auth.test',
       SUPABASE_INTERNAL_URL: gatewayOrigin, NEXT_PUBLIC_SUPABASE_URL: gatewayOrigin, NEXT_PUBLIC_SUPABASE_ANON_KEY: anonJwt, SUPABASE_SERVICE_ROLE_KEY: serviceJwt,
       FAOLLA_CHECKOUT_RUNTIME_JWT: runtimeJwt, FAOLLA_BACKGROUND_JOBS_PAUSED: '1', MERCHANT_BOOKING_AUTOMATION_WORKER_ENABLED: 'false', MERCHANT_BOOKING_STORAGE_MODE: 'atomic-v2',
@@ -163,7 +169,7 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
       MERCHANT_MEMBER_CHECKOUT_INTENT_PILOT_SITES: financial.site, MERCHANT_MEMBER_CHECKOUT_ON_SITE_PILOT_SITES: financial.site,
       ...(process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1' ? {
         MERCHANT_MEMBER_CHECKOUT_HISTORY_READ_SITES: financial.site, MERCHANT_MEMBER_CHECKOUT_ORIGINAL_SERVICE_SITES: financial.site } : {}) };
-    nextChild = spawnOwned('next', process.execPath, [path.join(fixture.root, 'scripts/fixtures/member-checkout-next-local-server.mjs'), fixture.app], appEnv, fixture.app);
+    nextChild = spawnOwned('next', process.execPath, [path.join(fixture.root, productionCandidate ? 'scripts/fixtures/member-checkout-rollback-local-server.mjs' : 'scripts/fixtures/member-checkout-next-local-server.mjs'), fixture.app], appEnv, fixture.app);
     nextEvents = []; nextChild.on('message', message => nextEvents.push(message));
     report.phase = 'next-startup'; const deadline = Date.now() + 45000;
     while (!nextEvents.some(v => v.type === 'listening') && Date.now() < deadline) { assert.equal(nextChild.exitCode, null); await sleep(50); }
@@ -173,7 +179,7 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     // DNS-mapped in this browser to loopback, not a middleware/auth bypass.
     const origin = `https://portal.checkout-auth.test:${listening.port}`, route = '/api/member-checkout/single/points/submit';
     browser = await chromium.launch({ headless: true, args: ['--host-resolver-rules=MAP portal.checkout-auth.test 127.0.0.1', '--no-proxy-server'] });
-    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    const context = await browser.newContext({ ignoreHTTPSErrors: true, ...(productionCandidate ? { serviceWorkers: 'block', locale: 'zh-CN' } : {}) });
     await context.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
     const view = await context.newPage();
     const response = await view.goto(origin + route, { timeout: 90000 }); assert.equal(response.status(), 405);
@@ -229,7 +235,7 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     });
     if (process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1') {
       report.phase = 'two-version-api-cutover';
-      await versionCutoverCases(caseOf, { db, financial, f, body, scope, source: rollbackSource, candidate: { port: listening.port, evidence: fixture.evidence }, appEnv, context, callCandidate: call, methods, report, signal: t.signal });
+      await versionCutoverCases(caseOf, { db, financial, f, body, scope, source: rollbackSource, candidate: { port: listening.port, evidence: fixture.evidence, app: fixture.app }, appEnv, context, callCandidate: call, methods, report, signal: t.signal });
     }
     report.phase = 'actual-auth-rejections';
     await caseOf('fresh Auth pause or forged account scope rejects before financial RPC and leaves ledger unchanged', async () => {

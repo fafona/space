@@ -9,14 +9,21 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import http from 'node:http';
-import { applicationFingerprint } from './member-checkout-compatibility-check.mjs';
+import { applicationFingerprint, loadCompatibilityBaseline } from './member-checkout-compatibility-check.mjs';
 import { rollbackApplication } from './member-checkout-version-cutover-support.mjs';
 
 export async function buildOwnedRollback(fixture, signal, evidence) {
+  return buildOwnedApplication(fixture, signal, evidence, rollbackApplication);
+}
+export async function buildOwnedCandidate(fixture, signal, evidence) {
+  const baseline = await loadCompatibilityBaseline(); assert.deepEqual(baseline.issues, []);
+  return buildOwnedApplication(fixture, signal, evidence, baseline.application);
+}
+async function buildOwnedApplication(fixture, signal, evidence, expected) {
   assert.equal(process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE, '1');
   assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(process.env.RUNNER_ENVIRONMENT, 'github-hosted');
   assert.ok(path.basename(fixture.evidence).startsWith('faolla-checkout-build-'));
-  assert.deepEqual(await applicationFingerprint(fixture.app), rollbackApplication);
+  assert.deepEqual(await applicationFingerprint(fixture.app), expected);
   for (const name of ['public', 'scripts']) await cp(path.join(fixture.root, name), path.join(fixture.app, name), { recursive: true, force: false, errorOnExist: true });
   const pkg = JSON.parse(await readFile(path.join(fixture.app, 'package.json'), 'utf8'));
   assert.equal(pkg.scripts.build, 'npm run check:env:strict && npm run check:v1-deploy-config && node scripts/prepare-next-wasm.mjs && next build --webpack && npm run check:bundle:admin');
@@ -49,7 +56,7 @@ export async function buildOwnedRollback(fixture, signal, evidence) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   assert.ok(network.every(v => ['framework-version-refused', 'owned-tsx-ipc-refused'].includes(v.kind)), 'old_build_attempted_network_io');
   assert.equal(backendRequests, 0, 'old_build_attempted_backend_io'); await stat(path.join(fixture.app, '.next/BUILD_ID'));
-  assert.deepEqual(await applicationFingerprint(fixture.app), rollbackApplication);
+  assert.deepEqual(await applicationFingerprint(fixture.app), expected);
   Object.assign(evidence, { backendRequests, networkKinds: network.map(v => v.kind), buildIdSha256: createHash('sha256').update(await readFile(path.join(fixture.app, '.next/BUILD_ID'))).digest('hex') });
   return evidence;
   } finally { evidence.backendRequests = backendRequests; backend.closeAllConnections(); if (backend.listening) await new Promise(resolve => backend.close(resolve)); }

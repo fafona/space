@@ -1,4 +1,4 @@
-// Test-only TLS launcher for the already-built, exact old source. No dev-mode
+// Test-only TLS launcher for an already-built, exact pinned source (old or new). No dev-mode
 // instrumentation workaround, source rewrite, system certificate or workers.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

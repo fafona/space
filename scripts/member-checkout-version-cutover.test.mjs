@@ -51,6 +51,13 @@ test('retained rollback routes only reviewed original APIs to candidate, ordinar
   assert.equal(policy.target('GET', '/api/auth/merchant-session'), 'old');
   await policy.promote('candidate', 2, async () => true); assert.equal(policy.target('GET', '/api/auth/merchant-session'), 'candidate');
 });
+test('retained production-page scope is explicit, exact and read-only, never a wildcard checkout fallback', async () => {
+  const page = '/member-checkout/10909992/service/' + 'a'.repeat(64), policy = createOwnedCutoverPolicy({ retainedPage: page });
+  await policy.promote('candidate', 0, async () => true); await policy.promote('retained', 1, async () => true);
+  assert.equal(policy.target('GET', page), 'candidate'); assert.equal(policy.target('POST', page), null);
+  assert.equal(policy.target('GET', page + '/extra'), null); assert.equal(policy.target('GET', '/member-checkout/10909992/start'), null);
+  for (const invalid of ['/admin', '/member-checkout/*', '/member-checkout/10909992/service/not-a-key']) assert.throws(() => createOwnedCutoverPolicy({ retainedPage: invalid }));
+});
 test('source and workflow pins have no production transport, mutation implementation or credentials', async () => {
   assert.match(rollbackCommit, /^[a-f0-9]{40}$/); assert.equal(rollbackApplication.files, 2704);
   const support = await readFile('scripts/member-checkout-version-cutover-support.mjs', 'utf8');

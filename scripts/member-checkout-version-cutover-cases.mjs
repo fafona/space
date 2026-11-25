@@ -1,7 +1,6 @@
 // Two REAL, fingerprint-pinned Next applications behind owned loopback TLS.
-// Old production build + candidate dev router. HTTP API evidence, NOT candidate
-// production-build cutover, UI asset switching,
-// Supabase/Kong topology, installation, a release tool or production recovery.
+// Both production builds, real selected pages and immutable static asset union.
+// Still NOT a Supabase/Kong clone, release tool or production recovery.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -17,6 +16,8 @@ import { requestOwnedStop, safeError } from './member-checkout-real-auth-support
 import { applicationFingerprint } from './member-checkout-compatibility-check.mjs';
 import { buildOwnedRollback } from './member-checkout-rollback-build.mjs';
 import { createOwnedCutoverPolicy, ownedCompilerFailure, rollbackCommit, rollbackApplication } from './member-checkout-version-cutover-support.mjs';
+import { loadOwnedStaticVersions } from './member-checkout-static-versions.mjs';
+import { createOwnedPageChecks } from './member-checkout-page-cutover-cases.mjs';
 
 export async function versionCutoverCases(caseOf, { db, financial, f, body, scope, source, candidate, appEnv, context, callCandidate, methods, report, signal }) {
   assertOwnedLifecycleTarget(db);
@@ -24,13 +25,19 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
   assert.equal(source, path.join(process.cwd(), '.owned-checkout-base')); assert.equal(await realpath(source), source);
   assert.deepEqual(await applicationFingerprint(source), rollbackApplication);
   const fixture = await prepareOwnedNextFixture({ sourceRoot: source, dependencyRoot: process.cwd(), productionBuild: true });
-  const evidence = report.cutover = { scope: 'owned-two-version-http-api-only', rollbackCommit, rollbackApplication,
+  const evidence = report.cutover = { scope: 'owned-two-production-builds-selected-pages', rollbackCommit, rollbackApplication,
     candidateCommit: process.env.GITHUB_SHA, candidateApplication: await applicationFingerprint(), transitions: [], requests: [], cleanupPassed: false };
   assert.notDeepEqual(evidence.candidateApplication, rollbackApplication);
   await caseOf('pinned old source builds in production mode with all five normal stages and no backend credentials or network requests', async () => {
     evidence.oldBuild = {}; await buildOwnedRollback(fixture, signal, evidence.oldBuild);
   });
-  const policy = createOwnedCutoverPolicy(), events = [], pilots = [], views = [], routes = [];
+  assert.equal(report.candidateBuild.steps.length, 5); assert.ok(report.candidateBuild.steps.every(s => s.code === 0));
+  const assets = await loadOwnedStaticVersions({ old: fixture.app, candidate: candidate.app }); evidence.staticAssets = assets.summary;
+  assert.ok(assets.summary.oldOnly > 0 && assets.summary.candidateOnly > 0);
+  const submit = '/api/member-checkout/single/points/submit';
+  const original = (await callCandidate(submit, body, scope)).value.result;
+  const servicePath = `/member-checkout/${financial.site}/service/${original.operationKey}`;
+  const policy = createOwnedCutoverPolicy({ retainedPage: servicePath }), events = [], pilots = [], views = [], routes = [], extraContexts = [];
   const log = createWriteStream(path.join(fixture.evidence, 'old-next.private.log'), { flags: 'wx', mode: 0o600 });
   // Old ordinary paths do NOT inherit new purchase scopes or a runtime token.
   const oldEnv = { ...appEnv, NODE_ENV: 'production', FAOLLA_CHECKOUT_RUNTIME_JWT: '' };
@@ -68,8 +75,18 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
     let failRetained = false, loseCancellationReply = false;
     proxy = https.createServer({ key: await readFile(path.join(candidate.evidence, 'tls-key.pem')), cert: destinations.candidate.certificate }, (req, res) => {
       const pathname = new URL(req.url, 'https://portal.checkout-auth.test').pathname, name = policy.target(req.method, pathname);
-      evidence.requests.push({ method: req.method, path: pathname, target: name });
+      evidence.requests.push({ method: req.method, path: pathname === servicePath ? '/member-checkout/[owned-site]/service/[owned-operation]' : pathname, target: pathname.startsWith('/_next/static/') ? 'immutable-assets' : name });
       const fail = status => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end('{"error":"owned_cutover_unavailable"}'); };
+      if (pathname.startsWith('/_next/static/')) {
+        void (async () => {
+          try {
+            if (!['GET', 'HEAD'].includes(req.method)) { fail(405); return; }
+            const asset = await assets.read(pathname); if (!asset) { fail(404); return; }
+            res.writeHead(200, { 'content-type': asset.type, 'content-length': asset.body.length, 'cache-control': 'public, max-age=31536000, immutable',
+              'x-content-type-options': 'nosniff', etag: '"' + asset.sha256 + '"' }); res.end(req.method === 'HEAD' ? undefined : asset.body);
+          } catch { if (!res.headersSent) fail(503); else res.destroy(); }
+        })(); return;
+      }
       if (!name || failRetained && name === 'candidate') { fail(503); return; }
       const { port, certificate, version } = destinations[name];
       const upstream = https.request({ hostname: '127.0.0.1', servername: 'portal.checkout-auth.test', port, ca: certificate, method: req.method, path: req.url,
@@ -86,10 +103,13 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
     const proxyOrigin = `https://portal.checkout-auth.test:${proxy.address().port}`; await allow(proxyOrigin);
     const view = await context.newPage(); views.push(view);
     assert.equal((await view.goto(proxyOrigin + '/api/auth/merchant-session?reauth=1', { timeout: 90000 })).status(), 200);
-    const call = (route, value, headers) => browserCall(view, route, value, headers), submit = '/api/member-checkout/single/points/submit';
-    const original = (await callCandidate(submit, body, scope)).value.result;
+    const call = (route, value, headers) => browserCall(view, route, value, headers);
     const resource = '/api/member-checkout/resource?' + new URLSearchParams({ siteId: financial.site, kind: original.resourceKind, id: original.resourceId });
+    const pages = await createOwnedPageChecks({ context, origin: proxyOrigin, servicePath, assets, evidence, extraContexts, ownedViews: views });
     const transition = async (mode, probe) => evidence.transitions.push(await policy.promote(mode, policy.snapshot().generation, probe));
+    await caseOf('old production login page hydrates and accepts a draft before cutover without submitting credentials', async () => {
+      const before = await financial.state(); await pages.oldBeforeCutover(rollbackCommit); assert.deepEqual(await financial.state(), before);
+    });
     await caseOf('failed preflight leaves old routing and ledger unchanged; successful cutover reaches the actual candidate process', async () => {
       const before = await financial.state();
       await assert.rejects(policy.promote('candidate', 0, async () => false), /readiness_refused/);
@@ -99,6 +119,9 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
       assert.equal((await call('/api/auth/merchant-session?reauth=1')).version, process.env.GITHUB_SHA);
       const replay = await call(submit, body); assert.equal(replay.status, 200); assert.equal(replay.value.replayed, true);
       assert.equal(replay.version, process.env.GITHUB_SHA); assert.deepEqual(await financial.state(), before);
+    });
+    await caseOf('candidate production pages hydrate on mobile/desktop while the loaded old tab and old immutable scripts remain intact', async () => {
+      const before = await financial.state(); await pages.candidateEntered(process.env.GITHUB_SHA); assert.deepEqual(await financial.state(), before);
     });
     await caseOf('creation pilots close before ordinary traffic rollback; exact original APIs stay on candidate and new nonces are refused', async () => {
       // Only rows already created by this disposable fixture may be changed.
@@ -119,6 +142,9 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
       const start = methods.length; assert.equal((await call('/api/member-checkout/cart/submit', {})).status, 503); assert.equal(methods.length, start);
       assert.deepEqual(await financial.state(), before);
     });
+    await caseOf('retained rollback serves old mobile login plus the real original-support page and candidate immutable scripts', async () => {
+      const before = await financial.state(); await pages.retained(process.env.GITHUB_SHA, rollbackCommit); assert.deepEqual(await financial.state(), before);
+    });
     await caseOf('retained service outage fails closed without falling back to old application or breaking ordinary login', async () => {
       const before = await financial.state(), start = methods.length; failRetained = true;
       try { assert.equal((await call(resource)).status, 503); assert.equal((await call('/api/auth/merchant-session?reauth=1')).version, rollbackCommit); }
@@ -131,8 +157,8 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
       const couponBefore = (await financial.page('__merchant_coupons__:' + financial.site)).blocks.find(c => c.id === f.selection.couponClaims[0].couponId);
       const reviewed = await call(reviewPath, request); assert.equal(reviewed.status, 200); const review = reviewed.value.review;
       const cancelBody = { ...request, reviewHash: review.reviewHash, expectedUpdatedAt: review.original.original.result.resource.updatedAt };
-      loseCancellationReply = true;
-      const lost = await call('/api/member-checkout/original-service/cancel', cancelBody); assert.equal(lost.status, 503);
+      loseCancellationReply = true; const start = methods.length;
+      await pages.loseCancellation(); assert.equal(methods.slice(start).filter(m => m === 'faolla_member_checkout_original_service_cancel_v1').length, 1);
       const after = await financial.state(), reread = await call(reviewPath, request); assert.equal(reread.status, 200);
       const closed = reread.value.review.original.original.result; assert.equal(closed.closed, true);
       assert.equal(closed.cancellation.pointsReturned, 80); assert.equal(closed.cancellation.couponsReturned, 1); assert.equal(closed.cancellation.stockReleased, 1);
@@ -158,10 +184,14 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
       assert.deepEqual(await applicationFingerprint(), evidence.candidateApplication);
       assert.deepEqual(evidence.transitions, [{ mode: 'candidate', generation: 1 }, { mode: 'retained', generation: 2 }, { mode: 'candidate', generation: 3 }]);
     });
+    await caseOf('after candidate restoration, desktop and mobile production pages display the same cancelled original with no extra refund', async () => {
+      const before = await financial.state(); await pages.resumed(process.env.GITHUB_SHA); assert.deepEqual(await financial.state(), before);
+    });
     completed = true;
   } finally {
     const failures = [], cleanup = async run => { try { await run(); } catch (error) { failures.push(safeError(error)); } };
     for (const view of views) await cleanup(() => view.close());
+    for (const extra of extraContexts) await cleanup(() => extra.close());
     for (const [match, handler] of routes) await cleanup(() => context.unroute(match, handler));
     for (const upstream of upstreams) upstream.destroy();
     if (proxy) await cleanup(async () => { proxy.closeAllConnections(); if (proxy.listening) await new Promise(resolve => proxy.close(resolve)); });
