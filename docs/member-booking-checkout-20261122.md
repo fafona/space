@@ -2133,3 +2133,12 @@ git diff --check
 - 证据在上述工具目录下 `build-4Tdo1P`：编译器版本、模块下载、模块校验成功；Auth 构建退出 1，`run-summary.json` 为 `complete:false`。没有生成成功的 Auth 构建凭证，也没有启动 Auth／SMTP／PostgreSQL 或执行任何身份服务／业务数据库迁移。已只读核对无该工具目录残留进程，所有下载、缓存及失败日志保留。
 - 将可复现的脚本保存为 `scripts/member-checkout-auth-build-diagnostic.mjs`，故意只标识构建诊断，不生成“身份验收通过”。显式 opt-in 后才访问工具目录；两项新测试分别验证默认拒绝及源码／依赖固定、不可修改源码／授权部署的边界。连同原网络防护、测试发现器、工作流及结算契约，**70 项选定本地回归通过**；这不包含真实登录断言，也不是远程 CI。
 - `src`、package／lock、SQL、现有工作流及全部正式数据不变，原应用指纹仍相同。下一步建议另建隔离 Linux CI 任务：只运行临时 Auth＋PostgreSQL 和新生成测试账号，覆盖真实验证／登录／刷新／退出及 Next Cookie 接线；不借用正式 Auth、正式库或真实客户，不合并、不部署。**推送独立测试分支及创建该 CI 任务须先获用户授权，本轮未执行。** 上述 Auth 版本也尚未核对为正式环境实际版本，不能先声称生产兼容。
+
+## 第六十阶段：独立 Linux 真实 Auth 验收分支（2026-11-25，进行中）
+
+- 用户已批准推送独立测试分支及新增 Linux CI。分支为 `acceptance/member-checkout-real-auth-20261125`；只在该分支 push 时运行 `Isolated Member Checkout Real Auth`。只读仓库权限，检出不保留 Git 凭据，不引用生产 secrets／environment，不触发原正式发布工作流，不创建合并请求、不合并、不部署。
+- 使用 GitHub 托管 Ubuntu 24.04、临时 PostgreSQL 17.6 服务（仅本机 56463 端口，专用数据库名、空库及角色检查），独立安装版本锁定的 pg 8.23.1 客户端。应用 package／lock、原本的 Windows 验收及预算、现有 CI 和所有生产配置保持不变。
+- 官方 Auth v2.198.0 Linux amd64 包与对应固定源码 ZIP 均核对 SHA-256；源码只提供原版 migrations，未修改或重新编译身份服务。PostgREST v16.6 Linux 静态包同样固定校验。临时 Auth JWT、密码、邮箱与账号在运行时生成，不借用任何正式账号；临时 SMTP 指向本机不可用端口，禁用注册及外部电话，后台任务、Stripe 和邮件不启用。
+- 新用例计划验证：未验证邮箱／错误密码拒绝；实际登录路由设置 Secure／HttpOnly Cookie；缺少访问 Cookie 时实际会话路由调用真实 refresh token；真实个人账号经固定 runtime RPC 完成一次积分＋券预约，重复请求不重复扣减；暂停账号／伪造账号提示不触发财务 RPC；应用退出清理 Cookie，与 Auth 提供方撤销刷新令牌分别验证，不虚称 JWT 会立即失效。
+- 浏览器只信任临时回环 HTTPS 证书，不改系统信任库。复制应用逐文件指纹检查，真实 Auth／PostgREST 仅由路径代理转发，不伪造身份、Cookie、权限或业务结果。成功／失败均关闭所有拥有的子进程；只上传不含令牌、密码、SQL 内容的路径／方法／结果报告，原进程日志保留在临时机器而不上传。
+- 本地隔离契约 3 项、既有兼容／受限入口／接线契约 15 项通过；真实 Linux 验收尚未完成，不能据此宣布已接通生产。原型新增入口仍被原兼容基线拒绝自动部署。
