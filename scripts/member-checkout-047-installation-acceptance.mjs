@@ -17,6 +17,7 @@ import {createCheckout047InstallationBundle,verifyCheckout047InstallationBundle,
 import {createCheckout047InstallationJournal,openCheckout047InstallationJournal,checkout047SealFileName} from './member-checkout-047-installation-journal.mjs';
 import {assertCheckout047InstalledPrivileges} from './member-checkout-047-installation-privileges.mjs';
 import {loadCheckout047PreinstallContract,observeCheckout047Preinstall,inspectCheckout047Preinstall,createCheckout047PreinstallReview,checkout047PreinstallReviewSummary} from './member-checkout-047-preinstall-review.mjs';
+import {loadCheckout047LegacyRelationSources,projectCheckout047LegacyRelations,checkout047LegacyRelationProfile,compareCheckout047LegacyRelations} from './member-checkout-047-legacy-relations.mjs';
 import {createOwnedCheckoutData} from './fixtures/member-checkout-real-auth-database.mjs';
 import submission from '../src/lib/merchantCheckoutSubmission.server.ts';
 import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
@@ -104,6 +105,29 @@ test('independent 047 atomic installation, private seal and retained financial o
    const again=await preview();assert.equal(again.data.core.context.readOnly,true);assert.equal(again.data.core.context.isolation,'repeatable read');
    assertCheckout047InstallationObservation(before,again);assert.deepEqual(await state(observer),baseline);
    for(const name of ['faolla_redemption_checkouts','faolla_redemption_operations'])assert.ok(again.data.core.relations.some(v=>v.namespace==='public'&&v.name===name));
+  });
+  await check('PG 15.8 legacy relation profile is source-bound and rejects real column, constraint, index, RLS and ACL drift without production authority',async()=>{
+   const contract=await loadCheckout047LegacyRelationSources(bundle),expected=projectCheckout047LegacyRelations(contract,before,bundle);
+   report.legacyRelations=checkout047LegacyRelationProfile(expected);
+   assert.deepEqual(report.legacyRelations.material.relations.map(v=>[v.columns.length,v.constraints.length,v.indexes.length]),[[11,12,2],[5,5,1]]);
+   assert.equal(compareCheckout047LegacyRelations(expected,projectCheckout047LegacyRelations(contract,await preview(),bundle)).capturedMetadataMatches,true);
+   for(const [change,restore,refuse] of [
+    ["ALTER TABLE public.faolla_redemption_checkouts ALTER COLUMN result SET DEFAULT '{}'::jsonb","ALTER TABLE public.faolla_redemption_checkouts ALTER COLUMN result DROP DEFAULT",false],
+    ['ALTER TABLE public.faolla_redemption_checkouts ADD CONSTRAINT ci_047_source_extra CHECK(true) NOT VALID','ALTER TABLE public.faolla_redemption_checkouts DROP CONSTRAINT ci_047_source_extra',false],
+    ['CREATE INDEX ci_047_source_extra_idx ON public.faolla_redemption_checkouts(fingerprint)','DROP INDEX public.ci_047_source_extra_idx',false],
+    ['ALTER TABLE public.faolla_redemption_operations DISABLE ROW LEVEL SECURITY','ALTER TABLE public.faolla_redemption_operations ENABLE ROW LEVEL SECURITY',false],
+    ['GRANT SELECT ON TABLE public.faolla_redemption_checkouts TO service_role','REVOKE SELECT ON TABLE public.faolla_redemption_checkouts FROM service_role',true],
+    ['GRANT SELECT (request) ON TABLE public.faolla_redemption_checkouts TO pg_read_all_data','REVOKE SELECT (request) ON TABLE public.faolla_redemption_checkouts FROM pg_read_all_data',true],
+    ['CREATE POLICY ci_047_source_extra_policy ON public.faolla_redemption_checkouts FOR SELECT TO service_role USING(true)','DROP POLICY ci_047_source_extra_policy ON public.faolla_redemption_checkouts',true],
+   ]){
+    await observer.query(change);try{
+     const observed=await preview();
+     if(refuse)assert.throws(()=>projectCheckout047LegacyRelations(contract,observed,bundle));
+     else assert.equal(compareCheckout047LegacyRelations(expected,projectCheckout047LegacyRelations(contract,observed,bundle)).capturedMetadataMatches,false);
+    }finally{await observer.query(restore);}
+    assert.deepEqual(await state(observer),baseline);
+   }
+   assert.equal(report.legacyRelations.material.productionAuthorized,false);assert.equal(report.legacyRelations.material.deploymentReady,false);
   });
   await check('read-only 047 preinstall query verifies all 26 definitions and three guards but keeps six-source CI distinct from production approval',async()=>{
    const contract=await loadCheckout047PreinstallContract(bundle),peer=(await observer.query('SELECT pg_catalog.host(inet_client_addr()) address')).rows[0].address;
