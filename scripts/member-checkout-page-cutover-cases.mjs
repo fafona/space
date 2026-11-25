@@ -8,13 +8,19 @@ export async function createOwnedPageChecks({ context, origin, servicePath, asse
   const guest = await context.browser().newContext({ ignoreHTTPSErrors: true, serviceWorkers: 'block', locale: 'zh-CN', viewport: { width: 1280, height: 1000 } });
   extraContexts.push(guest);
   const unexpected = [], errors = [], responses = [];
+  // Keep safe request identity on failure too, never headers, query or body.
+  evidence.browserPolicy = { unexpectedRequests: unexpected, pageErrors: errors };
+  const external = (kind, value) => {
+    const url = new URL(value);
+    unexpected.push({ kind, origin: url.origin, pathname: url.pathname.slice(0, 200) });
+  };
   await guest.route('**/*', route => {
-    if (new URL(route.request().url()).origin !== origin) { unexpected.push('guest-external-request'); return route.abort(); }
+    if (new URL(route.request().url()).origin !== origin) { external('guest-external-request', route.request().url()); return route.abort(); }
     return route.continue();
   });
   const track = page => {
     ownedViews.push(page);
-    page.on('request', request => { const url = new URL(request.url()); if (['http:', 'https:'].includes(url.protocol) && url.origin !== origin) unexpected.push('page-external-request'); });
+    page.on('request', request => { const url = new URL(request.url()); if (['http:', 'https:'].includes(url.protocol) && url.origin !== origin) external('page-external-request', request.url()); });
     page.on('pageerror', error => errors.push({ name: error.name }));
     page.on('response', response => {
       const url = new URL(response.url()); if (url.pathname.startsWith('/_next/static/')) responses.push({ path: canonicalStaticPath(url.pathname), status: response.status() });
