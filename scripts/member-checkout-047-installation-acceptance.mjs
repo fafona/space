@@ -16,6 +16,7 @@ import {createCheckout047InstallationBundle,verifyCheckout047InstallationBundle,
  source047RegistryVersion,seal047RegistryVersion,checkout047SealRegistryName,checkout047SealRegistryDigest} from './member-checkout-047-installation.mjs';
 import {createCheckout047InstallationJournal,openCheckout047InstallationJournal,checkout047SealFileName} from './member-checkout-047-installation-journal.mjs';
 import {assertCheckout047InstalledPrivileges} from './member-checkout-047-installation-privileges.mjs';
+import {loadCheckout047PreinstallContract,observeCheckout047Preinstall,inspectCheckout047Preinstall,createCheckout047PreinstallReview,checkout047PreinstallReviewSummary} from './member-checkout-047-preinstall-review.mjs';
 import {createOwnedCheckoutData} from './fixtures/member-checkout-real-auth-database.mjs';
 import submission from '../src/lib/merchantCheckoutSubmission.server.ts';
 import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
@@ -103,6 +104,19 @@ test('independent 047 atomic installation, private seal and retained financial o
    const again=await preview();assert.equal(again.data.core.context.readOnly,true);assert.equal(again.data.core.context.isolation,'repeatable read');
    assertCheckout047InstallationObservation(before,again);assert.deepEqual(await state(observer),baseline);
    for(const name of ['faolla_redemption_checkouts','faolla_redemption_operations'])assert.ok(again.data.core.relations.some(v=>v.namespace==='public'&&v.name===name));
+  });
+  await check('read-only 047 preinstall query verifies all 26 definitions and three guards but keeps six-source CI distinct from production approval',async()=>{
+   const contract=await loadCheckout047PreinstallContract(bundle),peer=(await observer.query('SELECT pg_catalog.host(inet_client_addr()) address')).rows[0].address;
+   await observer.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+   try{
+    await observer.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='1s'");
+    const observed=await observeCheckout047Preinstall((sql,args)=>observer.query(sql,args),contract,bundle,[peer]),inspection=inspectCheckout047Preinstall(contract,observed);
+    assert.deepEqual(inspection.issues,[]);assert.equal(inspection.functions,26);assert.equal(inspection.triggers,3);assert.equal(inspection.legacyDefinitionsMatch,true);assert.equal(inspection.gatewayStatus,'observed-session-login');
+    const wrong=await observeCheckout047Preinstall((sql,args)=>observer.query(sql,args),contract,bundle,['192.0.2.240']);assert.equal(inspectCheckout047Preinstall(contract,wrong).gatewayStatus,'not-observed');
+    const review=await createCheckout047PreinstallReview(contract,observed,bundle,{captureSha256:createHash('sha256').update(JSON.stringify(observed.data)).digest('hex'),publicBuild:process.env.GITHUB_SHA});
+    report.preinstallReview=checkout047PreinstallReviewSummary(review);assert.equal(report.preinstallReview.registeredSources,6);assert.equal(report.preinstallReview.unregisteredSources,209);
+    assert.equal(report.preinstallReview.productionAuthorized,false);assert.equal(report.preinstallReview.deploymentReady,false);assert.equal(report.preinstallReview.legacyRelationSourceCompatibilityProved,false);
+   }finally{await observer.query('ROLLBACK');}assert.deepEqual(await state(observer),baseline);
   });
   await check('self-rehashed altered source is refused before opening an installer connection',async()=>{
    const forged=JSON.parse(source.wire);forged.material.steps.at(-1).body+='\nSELECT 1;';forged.material.steps.at(-1).bodySha256=createHash('sha256').update(forged.material.steps.at(-1).body).digest('hex');
