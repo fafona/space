@@ -2148,11 +2148,17 @@ git diff --check
 - 身份新鲜资料实际使用原有分页查询回退，报告不将它冒充已修复的 getUserById 路径。原应用退出接口只清 Cookie；提供方全局退出另外撤销刷新令牌，短期访问 JWT 不保证即时失效。上述边界没有在本轮擅自更改。
 - `src`、package／lock、37 份 SQL 和现有发布工作流不变；没有合并、发布或正式数据访问。新增受限入口仍被原兼容基线拒绝自动部署。后续需另核正式版本兼容、受限权限安装和回滚方案；Stripe 正式接入、邮件与后台任务仍保持未启用。
 
-## 第六十一阶段：跨版本协议及运行权限生命周期验收（2026-11-25，进行中）
+## 第六十一阶段：跨版本协议及运行权限生命周期验收通过（2026-11-25，未部署）
 
 - 继续核对上线差距发现：第六十阶段只有普通 PostgreSQL 17.6＋PostgREST 16.6；仓库现有只读维护兼容配置还固定 Supabase PostgreSQL `15.8.1.085`／服务端版本号 `150008`、PostgREST `14.5`。这些是**仓库声明的兼容配置，不是本轮读取到的正式运行版本**；旧 Deploy Production 成功运行停留在 9 月，也不能证明 11 月正式状态。
 - 扩展原独立 CI 为 modern（PostgreSQL 17.6／PostgREST 16.6）及 legacy（普通 PostgreSQL 15.8／PostgREST 14.5）两组。第二组只证明 PostgreSQL／网关协议兼容，不冒充完整 Supabase 镜像、扩展、Kong 或正式数据库安装测试；Auth 仍使用同一已核对的 v2.198.0，正式 Auth 版本尚未采集。各组仍为全新临时库及账号，独立 artifact，`fail-fast:false` 保留两组结果。
 - PostgREST v14.5 的 Linux 静态包来自官方发行资产；官方 SHA-256 `ab5cc7e974d4940447991804588cfb8b3f7b2c57b691f0905df04d51ede69470` 固定在测试配置与下载校验。运行时检查实际 PostgreSQL 版本号分别为 `170006`、`150008`，未知组合拒绝，不接受外部数据库地址或继承凭据。
 - 在已有真实登录及成功扣减之后，新增四组隔离演练：新旧短期 runtime JWT 重叠、过期及普通 service 凭据拒绝；仅撤销固定入口 EXECUTE；仅撤销网关到 runtime 的成员关系；仅关闭单笔预约新单试点。每次确认既有 Auth 和普通资料只读路径仍可用，财务状态不变；按原准确授权恢复后重放原单，不重复扣积分、核券或预约。
 - 应急权限撤销会暂时阻止整个新结算入口，不能当作正常停卖。正常关闭单笔创建试点应拒绝新 nonce，仍允许读取／重放已完成原单；不声称已验证所有购物车与售后入口。角色停用演练只在 CI 专用库提交，`finally` 恢复原权限，不 DROP／TRUNCATE、重写业务 SQL、关闭守卫或轮换共享 JWT 密钥。不宣称新 JWT 出现后旧 JWT 就已撤销，也不把恢复入口叫作流量／应用版本回滚。
-- 新脚本只接受 GitHub 托管测试分支、回环 56463、专用数据库和安装账号；本地 6 项保护契约通过，相关 ESLint／语法检查通过。应用源代码、依赖锁、37 份 SQL、旧兼容检查和正式发布规则均未改。远程两组实际结果待验收后记录；本轮不合并、不部署、不读取正式客户记录、不启用 Stripe、邮件或后台任务。
+- 新脚本只接受 GitHub 托管测试分支、回环 56463、专用数据库和安装账号；最终本地 **8 项保护契约＋15 项既有兼容／入口／接线检查，共 23 项通过**，相关 ESLint／语法／严格乱码检查通过。应用源代码、依赖锁、37 份 SQL、旧兼容检查和正式发布规则均未改；本轮不合并、不部署、不读取正式客户记录、不启用 Stripe、邮件或后台任务。
+- 首轮 [45526318506](https://github.com/fafona/space/actions/runs/45526318506) 两组各 32 个业务／权限检查组均通过，但 legacy 最后的清理检查失败。只读核对[固定 v14.5 上游 Unix 信号处理代码](https://github.com/PostgREST/postgrest/blob/v14.5/src/PostgREST/Unix.hs)，确认 SIGTERM／SIGINT 都转为 `UserInterrupt`，实际旧版进程按 SIGINT 退出。原失败运行和本地报告 `C:/Users/User/AppData/Local/Temp/faolla-checkout-lifecycle-ci-bcdd1f65bb414a069d892fd0fb7d2b5d` 完整保留；该轮 legacy 的旧报告先写 `passed:true`、后清理断言失败，不能作为整体验收成功凭证，也没有事后覆盖为成功。
+- 只对临时测试进程：旧 PostgREST 明确请求 SIGINT，新版和 Auth 请求 SIGTERM，Next 要求 IPC-close 确认；记录实际请求、退出码／信号和是否强杀。只有三个正确归属的进程全部按对应请求结束、Next 确认且外部 fetch 为 0，报告才可写 `cleanupPassed:true`／`passed:true`。已退出或 kill 返回 false 的子进程不能事后标成自行停止；意外 SIGINT、强杀、非零退出、缺进程和缺确认均拒绝。原 10 秒停机预算和全部断言保留，没有接受任意退出信号或更改上游二进制。
+- 修正后 [45526988357](https://github.com/fafona/space/actions/runs/45526988357) 两组通过；防误标进一步补齐后，[45527091189](https://github.com/fafona/space/actions/runs/45527091189) 在 `4a3cf4de3f4b13933cb2c2f9c0d91d94946cad9d` 再次两组通过。后一轮每组 **8 项保护契约＋33 项真实链路测试（含外层套件，32 个检查组）**，0 跳过；不是完整正式发布 CI。应用仍为 2971 文件及原 `7aaecb5c7bf82f5e43c21c408dbb4fd9b12404525abe49cadcb00d57a0a72f26`。
+- 最新成功报告保存在 `C:/Users/User/AppData/Local/Temp/faolla-checkout-lifecycle-ci-82424b679b29450a9f09eaf972a99321`，分 modern／legacy 两份；均为 `passed:true`、`cleanupPassed:true`、`productionVersionsObserved:false`。正常停卖及两种应急撤权均未改变原 80 积分结算的财务表状态，恢复后均重放原收据，不产生第二笔扣减；普通身份服务及资料只读仍可用。六个临时应用进程全部按各自协议结束、未强杀，两个临时数据库服务容器正常清理。
+- 边界：本轮是顺序请求演练，没有证明撤权会取消已经在执行的数据库事务；生产暂停仍需围栏、排空和复核。没有完成生产凭据的安全签发／交付／自动续期，也没有安装、登记或移除任何正式结算对象；角色恢复不等于应用流量回滚。`release/application-release.json` 仍是原二维码代码范围，不能套用于结算迁移，原兼容检查仍 `deploymentReady:false`。
+- 下一步必须先明确只读核对正式环境的授权及访问路径，仅取镜像／服务版本、非敏感配置形态、迁移登记与角色／授权元数据，不能将仓库旧配置充当当前状态。之后才可确定角色创建／成员授权是否可行、最小权限安装与保留历史账本的兼容回滚方案；本轮未新增或运行使用正式凭据的探测任务。
