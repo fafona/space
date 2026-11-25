@@ -129,6 +129,59 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  interruption-047:
+    name: Full Installer Interruption 047 (isolated PG 15.8)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15.8
+        env:
+          POSTGRES_DB: faolla_member_checkout_auth_test
+          POSTGRES_USER: checkout_ci_admin
+          POSTGRES_PASSWORD: disposable-checkout-ci-only
+        ports:
+          - 127.0.0.1:56463:5432
+        options: >-
+          --health-cmd "pg_isready -U checkout_ci_admin -d faolla_member_checkout_auth_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.20.1
+          cache: npm
+      - name: Install Locked Test Dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prepare Owned Database Client
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_REF" = refs/heads/acceptance/member-checkout-real-auth-20261125
+          tools="$RUNNER_TEMP/faolla-install-tools"
+          mkdir "$tools"
+          npm install --prefix "$tools/pg-client" --ignore-scripts --no-audit --no-fund --save-exact pg@8.23.1
+      - name: Validate Full Interruption Contracts
+        run: node --test scripts/member-checkout-047-interruption.test.mjs scripts/member-checkout-evidence-storage.test.mjs scripts/member-checkout-047-evidence.test.mjs
+      - name: Rehearse Full Installer Death And File Recovery
+        env:
+          FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '1'
+          FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: current-auth
+          FAOLLA_CHECKOUT_047_INTERRUPTION_ACCEPTANCE: '1'
+        run: node --import tsx --test scripts/member-checkout-047-interruption-acceptance.mjs
+      - name: Preserve Sanitized Interruption Evidence Only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: member-checkout-047-interruption-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/faolla-interruption-047-evidence/report.json
+          if-no-files-found: warn
+          retention-days: 14
+
   installation-047:
     name: Atomic Installation 047 (isolated PG 15.8) - ${{ matrix.ack-mode }}
     runs-on: ubuntu-24.04
