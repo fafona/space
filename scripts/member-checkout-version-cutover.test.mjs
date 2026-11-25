@@ -1,11 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
+import https from 'node:https';
+import forge from 'node-forge';
 import { createOwnedCutoverPolicy, ownedCompilerFailure, rollbackCommit, rollbackApplication } from './member-checkout-version-cutover-support.mjs';
 
 test('compiler diagnostics contain only named error codes and module identifiers, never raw bodies or credentials', () => {
   assert.deepEqual(ownedCompilerFailure("Error: Cannot find module '@/lib/test' MODULE_NOT_FOUND secret-sentinel https://private.invalid?token=sentinel"), { codes: ['MODULE_NOT_FOUND'], modules: ['@/lib/test'] });
   assert.deepEqual(ownedCompilerFailure('TypeError: secret-sentinel'), { codes: ['TypeError'], modules: [] });
+});
+test('native loopback TLS verifies exact canonical SNI and rejects a different name without weakening certificate checks', { timeout: 10000 }, async () => {
+  const keys = forge.pki.rsa.generateKeyPair(2048), cert = forge.pki.createCertificate(); cert.publicKey = keys.publicKey; cert.serialNumber = '01';
+  cert.validity.notBefore = new Date(Date.now() - 60000); cert.validity.notAfter = new Date(Date.now() + 60000);
+  const subject = [{ name: 'commonName', value: '127.0.0.1' }]; cert.setSubject(subject); cert.setIssuer(subject);
+  cert.setExtensions([{ name: 'basicConstraints', cA: true }, { name: 'subjectAltName', altNames: [{ type: 2, value: 'portal.checkout-auth.test' }] }]);
+  cert.sign(keys.privateKey, forge.md.sha256.create()); const ca = forge.pki.certificateToPem(cert); let requests = 0;
+  const server = https.createServer({ key: forge.pki.privateKeyToPem(keys.privateKey), cert: ca }, (_req, res) => { requests++; res.writeHead(204); res.end(); });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const call = servername => new Promise((resolve, reject) => {
+    const req = https.request({ hostname: '127.0.0.1', servername, ca, port: server.address().port, agent: false }, res => { res.resume(); res.on('end', () => resolve(res.statusCode)); }); req.on('error', reject); req.end();
+  });
+  try { assert.equal(await call('portal.checkout-auth.test'), 204); await assert.rejects(call('other.checkout-auth.test'), { code: 'ERR_TLS_CERT_ALTNAME_INVALID' }); assert.equal(requests, 1); }
+  finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
 
 test('cutover needs an exact generation and successful probe; failed probes leave routing unchanged', async () => {

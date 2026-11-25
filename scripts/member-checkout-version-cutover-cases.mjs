@@ -136,7 +136,13 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
       const after = await financial.state(), reread = await call(reviewPath, request); assert.equal(reread.status, 200);
       const closed = reread.value.review.original.original.result; assert.equal(closed.closed, true);
       assert.equal(closed.cancellation.pointsReturned, 80); assert.equal(closed.cancellation.couponsReturned, 1); assert.equal(closed.cancellation.stockReleased, 1);
-      const repeated = await call('/api/member-checkout/original-service/cancel', cancelBody); assert.equal(repeated.status, 200); assert.equal(repeated.value.cancellation.replayed, true);
+      // The old review is deliberately stale AFTER the real cancellation. The
+      // service protocol requires a fresh review, not blind reuse of that CAS.
+      const stale = await call('/api/member-checkout/original-service/cancel', cancelBody); assert.equal(stale.status, 409); assert.equal(stale.value.error, 'checkout_service_changed');
+      assert.deepEqual(await financial.state(), after);
+      const refreshed = reread.value.review;
+      const repeated = await call('/api/member-checkout/original-service/cancel', { ...request, reviewHash: refreshed.reviewHash, expectedUpdatedAt: closed.resource.updatedAt });
+      assert.equal(repeated.status, 200); assert.equal(repeated.value.cancellation.replayed, true);
       assert.deepEqual(await financial.state(), after);
       const member = (await financial.page('__merchant_memberships__:' + financial.site)).blocks.find(m => m.id === f.member.id);
       assert.equal(member.pointBalance, 1000);
