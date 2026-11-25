@@ -6,6 +6,10 @@ import {createRequire} from 'node:module';
 import {createHash,randomUUID} from 'node:crypto';
 import {mkdir,readFile,writeFile,rename,chmod} from 'node:fs/promises';
 import path from 'node:path';
+import fs from 'node:fs';
+import {tmpdir} from 'node:os';
+import {fork} from 'node:child_process';
+import {once} from 'node:events';
 import {assertIsolatedCi,database,databasePort,safeError} from './member-checkout-real-auth-support.mjs';
 import {assertOwnedLifecycleTarget} from './member-checkout-runtime-lifecycle-cases.mjs';
 import {loadInstallationPlan} from './member-checkout-installation-plan.mjs';
@@ -18,6 +22,8 @@ import {createCheckout047InstallationJournal,openCheckout047InstallationJournal,
 import {assertCheckout047InstalledPrivileges} from './member-checkout-047-installation-privileges.mjs';
 import {loadCheckout047PreinstallContract,observeCheckout047Preinstall,inspectCheckout047Preinstall,createCheckout047PreinstallReview,checkout047PreinstallReviewSummary} from './member-checkout-047-preinstall-review.mjs';
 import {loadCheckout047LegacyRelationSources,projectCheckout047LegacyRelations,checkout047LegacyRelationProfile,compareCheckout047LegacyRelations} from './member-checkout-047-legacy-relations.mjs';
+import {openCheckoutEvidenceStorage} from './member-checkout-evidence-storage.mjs';
+import {beginCheckout047Evidence,appendCheckout047Prepared,reopenCheckout047Evidence,confirmCheckout047Evidence} from './member-checkout-047-evidence.mjs';
 import {createOwnedCheckoutData} from './fixtures/member-checkout-real-auth-database.mjs';
 import submission from '../src/lib/merchantCheckoutSubmission.server.ts';
 import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
@@ -28,7 +34,7 @@ test('independent 047 atomic installation, private seal and retained financial o
  const ackMode=process.env.FAOLLA_CHECKOUT_INSTALLATION_ACK_MODE??'normal';assert.ok(['normal','commit-unknown'].includes(ackMode));
  const evidence=path.join(process.env.RUNNER_TEMP,'faolla-install-047-evidence');await mkdir(evidence);
  const {Client}=createRequire(path.join(process.env.RUNNER_TEMP,'faolla-install-tools/pg-client/package.json'))('pg');
- const clients=new Set();let opened=0,closed=0,observer;
+ const clients=new Set();let opened=0,closed=0,observer,evidenceStore;
  const report={version:1,commit:process.env.GITHUB_SHA,ackMode,scope:'owned-ci-047-atomic-installation-not-production',checks:[],passed:false,cleanupPassed:false,failure:null};
  const open=async()=>{
   assertIsolatedCi();const db=new Client({host:'127.0.0.1',port:databasePort,database,user:'checkout_ci_admin',password:'disposable-checkout-ci-only',ssl:false,
@@ -72,6 +78,10 @@ test('independent 047 atomic installation, private seal and retained financial o
    await observer.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='1s'");return await observe(observer);
   }finally{await observer.query('ROLLBACK');}};
   const baseline=await state(observer),before=await preview();
+  const storageParent=fs.mkdtempSync(path.join(fs.realpathSync(tmpdir()),'faolla-checkout-evidence-test-'));fs.chmodSync(storageParent,0o700);
+  const storageRoots={dataRoot:path.join(storageParent,'data'),locatorRoot:path.join(storageParent,'locators')};
+  for(const root of Object.values(storageRoots))fs.mkdirSync(root,{mode:0o700});
+  evidenceStore=openCheckoutEvidenceStorage(storageRoots);const initialEvidence=beginCheckout047Evidence(evidenceStore,bundle,before);let preparedLocator;
   const install=async(fault,bundleFile=packageFile)=>{
    const approved=await verifyCheckout047InstallationBundle(await readFile(bundleFile,'utf8'));assert.equal(approved.digest,bundle.digest);
    const db=await open();let applied=0,commitDispatched=false;
@@ -95,6 +105,7 @@ test('independent 047 atomic installation, private seal and retained financial o
     await installed(db);const seal=prepareCheckout047InstallationSeal(before,await observe(db),approved);
     if(fault==='journal-collision'){collisionFile=path.join(journal.root,checkout047SealFileName(seal.digest));await writeFile(collisionFile,'retained-conflict',{flag:'wx',mode:0o600});}
     journal.write(seal);
+    if(!fault||fault==='after-commit')preparedLocator=appendCheckout047Prepared(initialEvidence,seal);
     await db.query('INSERT INTO public.faolla_schema_migrations(version,name) VALUES($1,$2),($3,$4)',[source047RegistryVersion,bundle.receipt.name,seal047RegistryVersion,checkout047SealRegistryName(seal.digest)]);
     verifyCheckout047InstallationSeal(journal.read(seal.digest),{expectedSha256:seal.digest,before,current:await observe(db),bundle:approved});
     if(fault==='before-commit'){await close(db);throw Object.assign(Error('owned_047_connection_closed_before_commit'),{code:'OWNED_CI_DISCONNECT'});}
@@ -172,6 +183,24 @@ test('independent 047 atomic installation, private seal and retained financial o
    const rows=await registry(observer),receipt=rows.find(v=>v.version===seal047RegistryVersion),digest=checkout047SealRegistryDigest(receipt.name);
    committedSeal=verifyCheckout047InstallationSeal(journal.read(digest),{expectedSha256:digest,before,current:await preview(),bundle});report.seal=checkout047InstallationSealSummary(committedSeal);
   });
+  await check('independent file locator survives owned recovery-process death and confirms the original commit from a fresh read-only connection without SQL replay',async()=>{
+   assert.ok(preparedLocator);assert.equal(evidenceStore.read(preparedLocator).artifacts.prepared,committedSeal.wire);evidenceStore.close();
+   const child=fork(new URL('./member-checkout-evidence-storage-worker.mjs',import.meta.url),[],{env:{},stdio:['ignore','ignore','ignore','ipc']});
+   const exited=once(child,'exit'),timer=setTimeout(()=>child.kill('SIGKILL'),10000);let reply;
+   try{
+    const response=Promise.race([once(child,'message').then(([value])=>value),exited.then(()=>{throw Error('owned_evidence_child_exited_before_ready');})]);
+    child.send({action:'read',roots:storageRoots,operationId:initialEvidence.data.locator.binding.operationId,stage:'prepared'});reply=await response;
+   }finally{clearTimeout(timer);if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');await exited;}
+   assert.equal(reply.ok,true);assert.equal(reply.locatorWire,preparedLocator);assert.equal(reply.stage,'prepared');
+   evidenceStore=openCheckoutEvidenceStorage(storageRoots);const reopened=await reopenCheckout047Evidence(evidenceStore,preparedLocator),fresh=await open();let current;
+   try{await fresh.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await fresh.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='1s'");current=await observe(fresh);await fresh.query('ROLLBACK');}finally{await close(fresh);}
+   const unchanged=await state(observer),confirmed=confirmCheckout047Evidence(reopened,current);assert.equal(confirmed.alreadyConfirmed,false);assert.equal(confirmed.sealSha256,committedSeal.digest);
+   evidenceStore.close();evidenceStore=openCheckoutEvidenceStorage(storageRoots);const again=confirmCheckout047Evidence(await reopenCheckout047Evidence(evidenceStore,confirmed.locatorWire),current);
+   assert.equal(again.alreadyConfirmed,true);assert.equal(again.locatorWire,confirmed.locatorWire);assert.deepEqual(await state(observer),unchanged);
+   report.evidenceStore={preparedBeforeCommit:true,independentLocatorVerified:true,recoveryProcessKilledAfterReadback:true,reopened:true,confirmed:true,repeatWithoutWrite:true,
+    freshReadOnlyConnection:true,originalSealSha256:confirmed.sealSha256,sourceBundleSha256:confirmed.sourceBundleSha256,registryBefore:6,registryAfter:8,
+    databaseStatementsExecutedByStorage:confirmed.databaseStatementsExecuted,ddlReplays:0,productionAuthorized:false,persistentProductionStorageVerified:false,powerLossTested:false,hostBackupRestoreTested:false};
+  });
   await check('exact repeat performs zero DDL and preserves object identities, financial rows and grants',async()=>{const current=await state(observer);assert.deepEqual(await install(),{status:'already_installed',applied:0});assert.deepEqual(await state(observer),current);});
   for(const [version,name,expected] of [[source047RegistryVersion,bundle.receipt.name,/installation_source_missing/],[seal047RegistryVersion,checkout047SealRegistryName(committedSeal.digest),/installation_seal_missing/]])await check('missing receipt '+version+' cannot trigger reapplication',async()=>{
    await observer.query('DELETE FROM public.faolla_schema_migrations WHERE version=$1',[version]);try{const changed=await state(observer);await assert.rejects(install(),expected);assert.deepEqual(await state(observer),changed);}finally{await observer.query('INSERT INTO public.faolla_schema_migrations VALUES($1,$2)',[version,name]);}
@@ -219,7 +248,7 @@ test('independent 047 atomic installation, private seal and retained financial o
   });
   report.passed=report.checks.every(v=>v.passed);
  }catch(error){report.failure=safeError(error);throw error;}finally{
-  let failures=0;for(const db of [...clients])try{await close(db);}catch{failures++;}
+  let failures=0;try{evidenceStore?.close();}catch{failures++;}for(const db of [...clients])try{await close(db);}catch{failures++;}
   report.cleanupPassed=clients.size===0&&opened===closed&&failures===0;report.openedConnections=opened;report.closedConnections=closed;report.remainingConnections=clients.size;report.cleanupFailures=failures;
   if(!report.cleanupPassed)report.failure??={name:'Error',code:'OWNED_047_INSTALL_CLOSE_FAILED'};report.passed=report.passed&&report.cleanupPassed&&report.failure===null;
   await writeFile(path.join(evidence,'report.json'),JSON.stringify(report,null,2),{flag:'wx',mode:0o600});assert.equal(report.cleanupPassed,true);

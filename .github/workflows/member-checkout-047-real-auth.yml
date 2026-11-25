@@ -170,7 +170,7 @@ jobs:
           mkdir "$tools"
           npm install --prefix "$tools/pg-client" --ignore-scripts --no-audit --no-fund --save-exact pg@8.23.1
       - name: Validate Independent 047 Installation Contracts
-        run: node --test scripts/member-checkout-047-legacy-relations.test.mjs scripts/member-checkout-047-preinstall-review.test.mjs scripts/member-checkout-047-installation.test.mjs scripts/member-checkout-047-ci.test.mjs scripts/member-checkout-047-revision.test.mjs scripts/member-checkout-047-compatibility.test.mjs scripts/member-checkout-installation-plan.test.mjs scripts/member-checkout-installation-bundle.test.mjs scripts/member-checkout-installation-preflight.test.mjs scripts/member-checkout-installation-seal.test.mjs
+        run: node --test scripts/member-checkout-047-legacy-relations.test.mjs scripts/member-checkout-evidence-storage.test.mjs scripts/member-checkout-047-evidence.test.mjs scripts/member-checkout-047-preinstall-review.test.mjs scripts/member-checkout-047-installation.test.mjs scripts/member-checkout-047-ci.test.mjs scripts/member-checkout-047-revision.test.mjs scripts/member-checkout-047-compatibility.test.mjs scripts/member-checkout-installation-plan.test.mjs scripts/member-checkout-installation-bundle.test.mjs scripts/member-checkout-installation-preflight.test.mjs scripts/member-checkout-installation-seal.test.mjs
       - name: Rehearse Owned 047 Installation And Retention
         env:
           FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '1'
