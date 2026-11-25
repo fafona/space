@@ -18,6 +18,7 @@ test('new real original page has an explicit owned pilot prerequisite, default r
   assert.match(source, /select count\(\*\)::int n from faolla_checkout_design\.original_service_pilots/);
   assert.match(source, /insert into faolla_checkout_design\.original_service_pilots\(site_id,enabled\) values\(\$1,true\)'/);
   assert.doesNotMatch(source, /original_service_pilots[^\n]+on conflict/);
+  assert.match(source, /expected\['faolla_checkout_design\.original_service_pilots'\] = \[\{ r: \{ site_id: financial\.site, enabled: true \} \}\]/);
   assert.match(source, /delete from faolla_checkout_design\.original_service_pilots where site_id=\$1 and enabled=true/);
   assert.match(source, /assert\.equal\(removed\.rowCount, 1, 'owned_original_service_pilot_drift'\)/);
 });

@@ -131,7 +131,7 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
       assert.equal(denied.status, 409); assert.equal(denied.value.error, 'checkout_service_disabled'); assert.deepEqual(await financial.state(), before);
       await db.query('insert into faolla_checkout_design.original_service_pilots(site_id,enabled) values($1,true)', [financial.site]);
       originalServicePilotCreated = true;
-      const expected = structuredClone(before); expected['faolla_checkout_design.original_service_pilots'] = [{ site_id: financial.site, enabled: true }];
+      const expected = structuredClone(before); expected['faolla_checkout_design.original_service_pilots'] = [{ r: { site_id: financial.site, enabled: true } }];
       assert.deepEqual(await financial.state(), expected);
       const allowed = await call('/api/member-checkout/original-service/review', request);
       assert.equal(allowed.status, 200); assert.equal(allowed.value.readOnly, true); assert.deepEqual(await financial.state(), expected);
