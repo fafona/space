@@ -57,6 +57,18 @@ export function ownedStopRequest(name, profileName) {
   return name === 'postgrest' && profileName === 'legacy' ? 'SIGINT' : 'SIGTERM';
 }
 
+export function requestOwnedStop(child, name, profileName) {
+  // A child terminated by a signal has exitCode === null even AFTER exit.
+  // It must never be relabelled as a shutdown we requested ourselves.
+  if (child.exitCode !== null || child.signalCode !== null) return null;
+  const request = ownedStopRequest(name, profileName);
+  if (request === 'IPC-close') {
+    if (!child.connected) return null;
+    child.send('close'); return request;
+  }
+  return child.kill(request) ? request : null;
+}
+
 export function ownedCleanupSucceeded(profileName, processes, next) {
   if (!Object.hasOwn(compatibilityProfiles, profileName) || !Array.isArray(processes) || processes.length !== 3
     || JSON.stringify(processes.map(p => p.name).sort()) !== JSON.stringify(['auth', 'next', 'postgrest'])

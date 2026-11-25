@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { assertIsolatedCi, artifacts, branch, compatibilityProfiles, safeError, sanitizeStartupDiagnostic, ownedStopRequest, ownedCleanupSucceeded } from './member-checkout-real-auth-support.mjs';
+import { assertIsolatedCi, artifacts, branch, compatibilityProfiles, safeError, sanitizeStartupDiagnostic, ownedStopRequest, requestOwnedStop, ownedCleanupSucceeded } from './member-checkout-real-auth-support.mjs';
 import { assertOwnedLifecycleTarget } from './member-checkout-runtime-lifecycle-cases.mjs';
 
 const env = () => ({ GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted', GITHUB_REPOSITORY: 'fafona/space',
@@ -48,6 +48,16 @@ test('cleanup success requires owned requested signals, all three exits and Next
   assert.equal(ownedCleanupSucceeded('legacy', processes, { ...next, forbiddenFetches: 1 }), false);
   const runner = await readFile('scripts/member-checkout-real-auth-acceptance.mjs', 'utf8');
   assert.match(runner, /report\.passed = .*report\.cleanupPassed/);
+});
+test('a dead or unkillable child cannot be retrospectively labelled as our requested signal', () => {
+  const calls = [], child = { exitCode: null, signalCode: null, connected: false, kill: signal => { calls.push(signal); return true; } };
+  assert.equal(requestOwnedStop(child, 'postgrest', 'legacy'), 'SIGINT');
+  assert.deepEqual(calls, ['SIGINT']);
+  assert.equal(requestOwnedStop({ ...child, signalCode: 'SIGINT' }, 'postgrest', 'legacy'), null);
+  assert.deepEqual(calls, ['SIGINT']);
+  assert.equal(requestOwnedStop({ ...child, kill: () => false }, 'postgrest', 'legacy'), null);
+  assert.equal(requestOwnedStop({ ...child, exitCode: 1 }, 'auth', 'legacy'), null);
+  assert.equal(requestOwnedStop(child, 'next', 'legacy'), null);
 });
 test('capability lifecycle refuses non-owned endpoints and contains only fixed, reversible CI grant changes', async () => {
   const db = { connectionParameters: { host: '127.0.0.1', port: 56463, database: 'faolla_member_checkout_auth_test', user: 'checkout_ci_admin' } };

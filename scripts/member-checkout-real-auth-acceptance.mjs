@@ -13,7 +13,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { chromium } from 'playwright';
-import { assertIsolatedCi, verifyOwnedTools, safeError, sanitizeStartupDiagnostic, ownedStopRequest, ownedCleanupSucceeded, database, databasePort } from './member-checkout-real-auth-support.mjs';
+import { assertIsolatedCi, verifyOwnedTools, safeError, sanitizeStartupDiagnostic, requestOwnedStop, ownedCleanupSucceeded, database, databasePort } from './member-checkout-real-auth-support.mjs';
 import { installRealAuthCheckoutFixture } from './fixtures/member-checkout-real-auth-database.mjs';
 import { prepareOwnedNextFixture } from './member-checkout-next-session-cases.mjs';
 import { applicationFingerprint } from './member-checkout-compatibility-check.mjs';
@@ -70,10 +70,8 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     await browser?.close().catch(() => {});
     for (const entry of [...children].reverse()) {
       entry.requested = null; entry.forced = false;
-      if (entry.child.exitCode === null && !entry.spawnFailed) {
-        entry.requested = ownedStopRequest(entry.name, owned.profileName);
-        if (entry.requested === 'IPC-close') { if (entry.child.connected) entry.child.send('close'); }
-        else entry.child.kill(entry.requested);
+      if (entry.child.exitCode === null && entry.child.signalCode === null && !entry.spawnFailed) {
+        entry.requested = requestOwnedStop(entry.child, entry.name, owned.profileName);
         const result = await Promise.race([entry.exited, sleep(10000).then(() => null)]);
         if (!result) { entry.forced = true; entry.child.kill('SIGKILL'); await entry.exited; }
       }
