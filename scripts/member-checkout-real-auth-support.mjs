@@ -42,3 +42,12 @@ export function safeError(error) {
   // passwords, SQL dumps or process logs. Named assertion tests give context.
   return { name: error?.name ?? 'Error', code: /^[A-Z0-9_]{1,40}$/.test(error?.code ?? '') ? error.code : null };
 }
+
+export function sanitizeStartupDiagnostic(text, credentials = []) {
+  let value = String(text).slice(-4096);
+  for (const credential of credentials) if (credential) value = value.split(credential).join('[credential]');
+  return value.replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[jwt]')
+    .replace(/\b(?:postgres(?:ql)?|https?):\/\/[^\s"']+/g, '[endpoint]')
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[opaque]')
+    .replace(/(?:STATEMENT|QUERY):[^\n]*/gi, '[sql omitted]').slice(-2048);
+}

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { assertIsolatedCi, artifacts, branch, safeError } from './member-checkout-real-auth-support.mjs';
+import { assertIsolatedCi, artifacts, branch, safeError, sanitizeStartupDiagnostic } from './member-checkout-real-auth-support.mjs';
 
 const env = () => ({ GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted', GITHUB_REPOSITORY: 'fafona/space',
   GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/' + branch, GITHUB_SHA: 'a'.repeat(40),
@@ -34,4 +34,9 @@ test('artifact report excludes exception content and credentials; test source ha
   assert.match(runner, /\/api\/auth\/merchant-login/); assert.match(runner, /\/api\/auth\/merchant-session\?reauth=1/);
   assert.match(runner, /\/api\/auth\/merchant-logout/); assert.match(runner, /\/logout\?scope=global/);
   assert.match(runner, /await financial\.state\(\), replay/);
+});
+test('startup diagnostic redacts local secrets, JWTs, URLs and SQL instead of hiding startup failure behind cleanup', () => {
+  const value = sanitizeStartupDiagnostic('config failed: secret-sentinel eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature postgres://actor:password@127.0.0.1/test\nSTATEMENT: select private_data;', ['secret-sentinel']);
+  assert.match(value, /config failed:/);
+  assert.doesNotMatch(value, /secret-sentinel|eyJ|password|select private_data/);
 });

@@ -13,7 +13,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { chromium } from 'playwright';
-import { assertIsolatedCi, verifyOwnedTools, safeError, database, databasePort } from './member-checkout-real-auth-support.mjs';
+import { assertIsolatedCi, verifyOwnedTools, safeError, sanitizeStartupDiagnostic, database, databasePort } from './member-checkout-real-auth-support.mjs';
 import { installRealAuthCheckoutFixture } from './fixtures/member-checkout-real-auth-database.mjs';
 import { prepareOwnedNextFixture } from './member-checkout-next-session-cases.mjs';
 import { applicationFingerprint } from './member-checkout-compatibility-check.mjs';
@@ -34,12 +34,16 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     return data + '.' + createHmac('sha256', secret).update(data).digest('base64url');
   };
   const serviceJwt = token('service_role'), anonJwt = token('anon'), runtimeJwt = token('faolla_checkout_runtime');
+  const startupDiagnostics = {};
   const listen = server => new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', () => { servers.push(server); resolve(server.address().port); }); });
   const reservePort = async () => { const socket = net.createServer(); const port = await listen(socket); await new Promise(resolve => socket.close(resolve)); servers.splice(servers.indexOf(socket), 1); return port; };
   const spawnOwned = (name, executable, args, env, cwd) => {
     const log = createWriteStream(path.join(owned.evidence, name + '.private.log'), { flags: 'wx', mode: 0o600 }); logs.push(log);
     const child = spawn(executable, args, { cwd, env: { PATH: process.env.PATH, HOME: owned.evidence, TMPDIR: tmpdir(), ...env }, stdio: ['ignore', 'pipe', 'pipe', ...(name === 'next' ? ['ipc'] : [])] });
     child.stdout.pipe(log, { end: false }); child.stderr.pipe(log, { end: false });
+    // Startup only, never request traffic, credentials or bodies. Full private
+    // logs are not uploaded; bounded redaction is used only on startup failure.
+    if (name !== 'next') child.stderr.on('data', chunk => { startupDiagnostics[name] = ((startupDiagnostics[name] ?? '') + chunk.toString()).slice(-4096); });
     const entry = { name, child, exited: once(child, 'exit').then(([code, signal]) => ({ code, signal }), () => ({ code: -1, signal: null })) };
     child.on('error', () => { entry.spawnFailed = true; }); children.push(entry); return child;
   };
@@ -75,7 +79,7 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     const requirePg = createRequire(path.join(owned.tools, 'pg-client/package.json')), { Client } = requirePg('pg');
     db = new Client({ host: '127.0.0.1', port: databasePort, database, user: 'checkout_ci_admin', password: 'disposable-checkout-ci-only', ssl: false,
       connectionTimeoutMillis: 5000, statement_timeout: 15000, query_timeout: 20000, application_name: 'faolla-real-auth-owned-ci' });
-    await db.connect(); const financial = await installRealAuthCheckoutFixture(t, db);
+    await db.connect(); const financial = await installRealAuthCheckoutFixture({ test: (name, run) => caseOf(name, run) }, db);
     report.phase = 'auth-startup';
     const authPort = await reservePort(), restPort = await reservePort(); assert.notEqual(authPort, restPort);
     const authOrigin = `http://127.0.0.1:${authPort}`, restOrigin = `http://127.0.0.1:${restPort}`;
@@ -200,7 +204,12 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     });
     assert.deepEqual(await applicationFingerprint(fixture.root), await applicationFingerprint(fixture.app));
     success = report.checks.every(c => c.passed); report.phase = 'cleanup';
-  } catch (error) { report.failure = safeError(error); throw error; }
+  } catch (error) {
+    report.failure = safeError(error);
+    if (['auth-startup', 'postgrest-startup'].includes(report.phase)) report.startup = Object.fromEntries(Object.entries(startupDiagnostics).map(([name, value]) =>
+      [name, sanitizeStartupDiagnostic(value, [secret, serviceJwt, anonJwt, runtimeJwt, 'disposable-checkout-ci-only', 'disposable-gateway-ci-only'])]));
+    throw error;
+  }
   finally {
     await stop();
     t.signal.removeEventListener('abort', abort);
@@ -210,6 +219,6 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     // The ONLY uploaded artifact is this path/method/status-only report.
     await writeFile(path.join(owned.evidence, 'report.json'), JSON.stringify(report, null, 2), { flag: 'wx', mode: 0o600 });
     if (nextChild) { assert.ok(stopped, 'owned Next shutdown acknowledgement'); assert.equal(stopped.forbiddenFetches, 0); }
-    assert.ok(report.stopped.every(c => c.code === 0 || c.signal === 'SIGTERM'), 'all owned processes stopped cleanly');
+    if (success) assert.ok(report.stopped.every(c => c.code === 0 || c.signal === 'SIGTERM'), 'all owned processes stopped cleanly');
   }
 });
