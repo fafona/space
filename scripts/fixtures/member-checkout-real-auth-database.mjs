@@ -17,6 +17,7 @@ import { loadCompatibilityBaseline } from '../member-checkout-compatibility-chec
 import { checkoutCompatibilityCases } from '../member-checkout-compatibility-postgres-cases.mjs';
 import { installOwnedRuntimePrototype } from '../member-checkout-runtime-postgres-cases.mjs';
 import { database, databasePort } from '../member-checkout-real-auth-support.mjs';
+import {assertCheckout047CiOptIn,installOwnedCheckout047Revision} from '../member-checkout-047-ci-cases.mjs';
 
 export async function installRealAuthCheckoutFixture(t, db) {
   assert.equal(db.connectionParameters.host, '127.0.0.1');
@@ -37,6 +38,7 @@ export async function installRealAuthCheckoutFixture(t, db) {
   for (const source of baseline.manifest.sources) await db.query(await readFile(source.file, 'utf8'));
   await checkoutCompatibilityCases(t, { db });
   const runtimeCall = await installOwnedRuntimePrototype(t, { db });
+  const revision047=assertCheckout047CiOptIn()?await installOwnedCheckout047Revision(t,db):undefined;
   // Only ordinary reads needed by unchanged login/identity code. No fake rows.
   await db.query(`create table public.merchant_enterprise_employees(id text primary key,auth_user_id text not null);
     create table public.merchants(id text primary key,user_id text,auth_user_id text,owner_user_id text,owner_id text,auth_id text,created_by text,created_by_user_id text,email text,owner_email text,contact_email text,user_email text);
@@ -51,7 +53,8 @@ export async function installRealAuthCheckoutFixture(t, db) {
     create schema auth authorization checkout_ci_auth;
     grant create on database faolla_member_checkout_auth_test to checkout_ci_auth;
     alter role checkout_ci_auth set search_path=auth;`);
-  return createOwnedCheckoutData(db,runtimeCall);
+  const financial=await createOwnedCheckoutData(db,runtimeCall);
+  return {...financial,...(revision047?{revision047}:{})};
 }
 
 // Shared synthetic financial data only, after the caller's owned CI installation.

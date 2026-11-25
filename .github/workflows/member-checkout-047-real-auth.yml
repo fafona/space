@@ -1,0 +1,130 @@
+name: Isolated Member Checkout 047 Real Auth
+
+# Separate compatibility evidence. The old five-source workflow stays intact.
+on:
+  push:
+    branches:
+      - acceptance/member-checkout-real-auth-20261125
+
+permissions:
+  contents: read
+
+jobs:
+  real-auth-047:
+    name: Real Auth 047 (${{ matrix.profile }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: modern
+            postgres: '17.6'
+            auth: '2.198.0'
+            postgrest: '16.6'
+            postgrest_sha256: '335ea29f00145705fb569b1268b9c8e53d062f8f6f9188192e92ea3781d2dca1'
+          - profile: legacy
+            postgres: '15.8'
+            auth: '2.198.0'
+            postgrest: '14.5'
+            postgrest_sha256: 'ab5cc7e974d4940447991804588cfb8b3f7b2c57b691f0905df04d51ede69470'
+          - profile: current-auth
+            postgres: '15.8'
+            auth: '2.186.0'
+            postgrest: '14.5'
+            postgrest_sha256: 'ab5cc7e974d4940447991804588cfb8b3f7b2c57b691f0905df04d51ede69470'
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_DB: faolla_member_checkout_auth_test
+          POSTGRES_USER: checkout_ci_admin
+          POSTGRES_PASSWORD: disposable-checkout-ci-only
+        ports:
+          - 127.0.0.1:56463:5432
+        options: >-
+          --health-cmd "pg_isready -U checkout_ci_admin -d faolla_member_checkout_auth_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Read Pinned Old Application Source For Current Protocol Only
+        if: matrix.profile == 'current-auth'
+        uses: actions/checkout@v5
+        with:
+          ref: 98ce90e63c84e0da7747d0a14d2f5fc9d7f5f980
+          path: .owned-checkout-base
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.20.1
+          cache: npm
+      - name: Install Locked Application Test Dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prepare Disposable Test Tools
+        shell: bash
+        env:
+          TEST_AUTH_VERSION: ${{ matrix.auth }}
+          TEST_POSTGREST_VERSION: ${{ matrix.postgrest }}
+          TEST_POSTGREST_SHA256: ${{ matrix.postgrest_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_REF" = refs/heads/acceptance/member-checkout-real-auth-20261125
+          tools="$RUNNER_TEMP/faolla-real-auth-tools"
+          mkdir "$tools"
+          cd "$tools"
+          case "$TEST_AUTH_VERSION" in
+            2.198.0)
+              auth_archive=auth.tar.xz
+              auth_url=https://github.com/supabase/auth/releases/download/v2.198.0/auth-v2.198.0-amd64.tar.xz
+              auth_sha=4abe9134d7615faa9149cab514acada8e7133cd69d2ccd96fdcef0d795c05171
+              auth_commit=387e91f37e00b64b9060352988066bbb685f6e45
+              source_sha=99cdf807b817cf59da7ff10329898fbd32380e2e73231c3458660595e6ca679f
+              ;;
+            2.186.0)
+              auth_archive=auth.tar.gz
+              auth_url=https://github.com/supabase/auth/releases/download/v2.186.0/auth-v2.186.0-x86.tar.gz
+              auth_sha=2683b9549e922d0644621129fdabd7edb8b78c35274e133e61a3280ad9675161
+              auth_commit=effd66245bd981ba5a07aa6b7441ad37578f9b73
+              source_sha=ad95e1f30263cfeaec800d7ba2ecc039d2e209c14c5d6e45b5b824de9bbcbe26
+              ;;
+            *) exit 72 ;;
+          esac
+          curl --fail --location --retry 2 --max-time 120 -o "$auth_archive" "$auth_url"
+          printf '%s  %s\n' "$auth_sha" "$auth_archive" | sha256sum --check --strict
+          curl --fail --location --retry 2 --max-time 120 -o source.zip "https://codeload.github.com/supabase/auth/zip/$auth_commit"
+          printf '%s  source.zip\n' "$source_sha" | sha256sum --check --strict
+          case "$TEST_POSTGREST_VERSION:$TEST_POSTGREST_SHA256" in
+            '16.6:335ea29f00145705fb569b1268b9c8e53d062f8f6f9188192e92ea3781d2dca1'|'14.5:ab5cc7e974d4940447991804588cfb8b3f7b2c57b691f0905df04d51ede69470') ;;
+            *) exit 71 ;;
+          esac
+          curl --fail --location --retry 2 --max-time 120 -o postgrest.tar.xz "https://github.com/PostgREST/postgrest/releases/download/v$TEST_POSTGREST_VERSION/postgrest-v$TEST_POSTGREST_VERSION-linux-static-x86-64.tar.xz"
+          printf '%s  postgrest.tar.xz\n' "$TEST_POSTGREST_SHA256" | sha256sum --check --strict
+          mkdir auth-bin postgrest-bin
+          tar -xaf "$auth_archive" -C auth-bin
+          tar -xJf postgrest.tar.xz -C postgrest-bin
+          unzip -q source.zip
+          npm install --prefix "$tools/pg-client" --ignore-scripts --no-audit --no-fund --save-exact pg@8.23.1
+          cd "$GITHUB_WORKSPACE"
+          npx --no-install playwright install --with-deps chromium
+      - name: Validate Isolation Contracts
+        run: node --test scripts/member-checkout-real-auth.test.mjs scripts/member-checkout-version-cutover.test.mjs scripts/member-checkout-static-versions.test.mjs scripts/member-checkout-browser-policy.test.mjs scripts/member-checkout-047-revision.test.mjs scripts/member-checkout-047-compatibility.test.mjs scripts/member-checkout-047-ci.test.mjs
+      - name: Real Auth And Checkout Acceptance
+        env:
+          FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '1'
+          FAOLLA_CHECKOUT_NEXT_ACCEPTANCE: '1'
+          FAOLLA_CHECKOUT_047_REVISION_ACCEPTANCE: '1'
+          FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: ${{ matrix.profile }}
+          FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE: ${{ matrix.profile == 'current-auth' && '1' || '0' }}
+        run: node --import tsx --test scripts/member-checkout-real-auth-acceptance.mjs
+      - name: Preserve Sanitized Evidence Only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: member-checkout-047-real-auth-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/faolla-real-auth-evidence/report.json
+          if-no-files-found: warn
+          retention-days: 14

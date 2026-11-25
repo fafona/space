@@ -98,6 +98,7 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     await db.connect();
     assert.equal((await db.query('show server_version_num')).rows[0].server_version_num, owned.profile.serverVersion);
     const financial = await installRealAuthCheckoutFixture({ test: (name, run) => caseOf(name, run) }, db);
+    if(financial.revision047)report.revision047=financial.revision047;
     report.phase = 'auth-startup';
     const authPort = await reservePort(), restPort = await reservePort(); assert.notEqual(authPort, restPort);
     const authOrigin = `http://127.0.0.1:${authPort}`, restOrigin = `http://127.0.0.1:${restPort}`;

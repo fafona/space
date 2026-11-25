@@ -20,7 +20,7 @@ Stripe 对接延后到其他业务功能接近完成时再做，不作为当前�
 
 ## 状态与边界
 
-目前推进到**第七十一阶段：正式安装审阅清单、完整迁移来源固定及凭据交付边界通过独立验收**。已有只读证据在本地离线绑定 214 条登记／215 份准确本地 SQL，形成明确未批准、不可执行的私有清单；五条 CI 最小登记不冒充生产基线，旧未登记 SQL 不自动执行。本轮本地 93 项及五个完整隔离 CI 作业通过，证据见本阶段末尾。正式登记号、旧已安装 DDL 兼容、补充触发器／策略证据、生产权限与短期凭据交付／续期、完整 Supabase／Kong 拓扑及结算专属发布仍待完成，未访问／安装／授权／部署正式环境，Stripe 仍最后接入。
+目前推进到**第七十三阶段：047 独立兼容修订及私有积分写入适配通过本地真实 PostgreSQL 验证**。新建临时 PG 17.10 的 19 项测试验证购物车、单项预约／订单扣分与原单退还、全券兑换、不退积分／券政策、旧收银共存、延迟凭证拒绝及跨连接重放；另 37 项来源／安装／审阅契约和 12 项原 transport 测试通过。原 37 份冻结来源、线上函数与应用未替换，正式环境本轮未访问。该独立修订尚未进入真实 Auth／PG 15 与双构建 CI，原有五个成功 CI 作业也不能冒充本修订的验收。正式安装包、权限与凭据交付、完整 Supabase／Kong 拓扑及结算专属发布仍待完成；未安装／授权／部署，Stripe 仍最后接入。
 下文早期阶段保留的是当时状态；后续已补齐的验证以最新阶段及对应 CI 提交为准，不将本地合成、真实网关、生产构建和正式环境证据混为一谈。
 第四十七阶段预约原单的提交、恢复与取消验收保留。早期 SQL 验收已覆盖预约提交／取消，近期 intent 金融样本主要为商品订单；独立 owned TEMP PostgreSQL 使用实际预约配置、发布源、控制器、HTTP、可信规划器与原预约写入器验证积分／金额券及原政策取消。它不替代运行 Next.js／PostgREST 或真机验收。
 第四十六阶段旧完成赠分保护保留。已复现旧赠分准备器／旧 CAS 可对关联原单额外赠分；独立数据库触发器提案只拒绝账本关联商品原单的旧赠分／撤销赠分标记变化。它不替换旧函数，不给 API 角色私有权限，不按订单“完成”生成收款凭证，也不修改既有普通赠分政策。提案仍未安装或部署，不代表任意旧版本可安全回退。
@@ -2309,3 +2309,65 @@ git diff --check
 - 新增 **9 项**本地测试通过，覆盖原查询规划、只读／无业务行投影、地址注入、15 函数／3 守卫、正文／属性／重载漂移、同快照关联、网关不确定、输出／错误去敏及来源边界。两个真实隔离安装作业增加一组同查询语义核对，原 29 组检查保留；需完整 CI 通过后才进行本次线上采集。查询没有连接器、环境／密钥读取、DDL／授权／启用或正式发布入口。
 - 首次真实运行 [45652771787](https://github.com/fafona/space/actions/runs/45652771787) 的两个安装作业发现夹具错误：15 函数和 3 守卫实际全部匹配，但宿主 127.0.0.1 发布端口经过 Docker 转发，服务端看到的是桥接来源地址，硬编码 loopback 导致网关会话查询为空。两份失败报告已保留于 `C:/Users/User/AppData/Local/Temp/faolla-supplement-failed-2dd31e1d6328441a986d33bbd5f74579`，没有连接正式库。仅修夹具读取本 owned 连接的 `inet_client_addr()`，保持生产采集仍按已核对的网关容器共享网络地址精确筛选；另加错误保留地址必须得到 `not-observed`、正确地址必须匹配准确 CI 登录角色，不放宽谓词或删除断言。
 - 后续 [45653677339](https://github.com/fafona/space/actions/runs/45653677339) 在派发 SELECT 前被严格 IP 校验拦下：夹具把 inet 显式转为 text 会包含 `/32` 或 `/128`，不是允许的裸 IP。已按 [PostgreSQL 15 网络函数说明](https://www.postgresql.org/docs/15/functions-net.html)仅将夹具取值改为 `host(inet_client_addr())`；增加实际 IPv4／IPv6 文本转换回归，CIDR 仍必须被拒绝，不放宽参数。此过程仍未访问正式环境，原失败运行和日志保留。
+- 最终完整运行 [45654351186](https://github.com/fafona/space/actions/runs/45654351186) 在 `b7cb5159433d62e04dd8418d9088c1da8e824292` 的五个作业全部成功：正常安装／提交后错误恢复各 **30 组**、modern／legacy 各 **34 组**、现网协议双版本／实际页面 **47 组**。五份下载报告均逐项核对准确提交、全部检查、`passed:true／cleanupPassed:true／failure:null`；两条安装路径的 15 函数／3 守卫都匹配各自五份最小 CI 旧依赖，正确连接来源匹配准确 CI 登录角色，错误来源得到 `not-observed`。这不是 047 或完整生产 schema 的兼容结论。正常 35 个、提交后错误恢复 36 个连接均关闭、剩余 0，原财务与恢复断言保留。
+- 两版各五项原构建均退出 0、后端请求均 0；实际页面 **146** 次静态响应通过，浏览器错误／非预期请求／关闭时活动代理请求均 0，原单取消丢回复恢复、资源保留与切换回退通过。仍明确 `serviceWorkerCacheTested:false`，不冒充真机／PWA／完整 Supabase／Kong／生产路由验收。报告保留于 `C:/Users/User/AppData/Local/Temp/faolla-supplement-passed-6f15437dff884cbbb322b7cd5584a2cd`；第二轮失败证据另保留于 `C:/Users/User/AppData/Local/Temp/faolla-supplement-peer-failed-5b91dad1b5bc4de9a77aa581fbc87de8`，没有覆盖前轮。
+- 本地相关契约 **90 项**、原专用 transport **12 项**、私有采集器 **8 项**，合计 **110 项通过、0 失败／跳过**；相关 lint／语法／严格 UTF-8／diff 检查通过。采集器先核对五份成功 CI 报告、准确工具提交、旧目标／容器身份及冻结包；随后以独占、不可重用的单次许可文件锁定此次操作。容器仅查看身份与网络，不读取环境／连接串／密钥；SQL 只读、可重复读、5 秒语句超时／1 秒锁等待，结束回滚，不读取客户行。许可已使用，不能删除锁或复用此许可重连。
+- 获批补充采集已经完成：SSH 退出 0、stderr 0，前后公开应用版本均为原 `98ce90e63c84e0da7747d0a14d2f5fc9d7f5f980`，服务身份及原完整核心基线不变，**214 条迁移登记**未变；取得 **15 个函数、3 个预期守卫、8 个范围内触发器、6 个范围内策略**的元数据，并按已验证网关容器来源地址观察到一个数据库登录角色。该角色只是会话来源证据，不是连接配置证明，更不是 GRANT 或签发凭据许可。采集私有文件为 `output/checkout-production-supplement-20261125-9ce01b/report-2026-11-25T16-37-46-623Z.private.json`；单次许可、采集器和全部证据均保留，不提交公开仓库。
+
+### 047 真实来源差异与新结算兼容缺口
+
+- 对保存的补充元数据及全部 **215 份已固定本地 SQL**做离线比较，没有再次访问正式环境。唯一差异为 `public.faolla_commit_redemption_v1(text,jsonb)` 的正文 SHA-256，语言、参数、返回值、definer／搜索路径等受检调用属性都相同。它不匹配旧包中的 046，但**精确匹配已登记的后续 047**；047 文件 SHA-256 为 `683ad34e3df55ccb088d5f8b78eceea1c7e905db341f3e5d6ff16bc978e9485e`。这证明旧测试前置依赖不完整，不证明线上函数故障，也不能据登记名替代后续完整语义验收。离线结果保留于 `output/checkout-production-supplement-20261125-9ce01b/review-2026-11-25T16-39-08-056Z.private.json`。
+- 047 已将原 046 原子写入器改名为内部入口，并把旧公开名称限制为 `settings`／`coupons` 普通保存；携带 `operation`／`memberships` 的旧式财务请求会被 `redemption_checkout_context_required` 拒绝。原收银的 pending／cancelled／acknowledged 上下文是既有保护，不能通过恢复 046 公开写入器或给普通调用方内部函数执行权来绕过。
+- 另加仅在私有目录运行的 **4 项 PGlite 内存边界测试全部通过**：核对准确 047 文件、已保存正文摘要及原包不变；普通设置／券信封原样委托；会员／operation 财务信封及空值／标量／数组在委托前拒绝。被委托写入器明确是合成 stub，这四项只证明准确 wrapper 的分流／拒绝行为，不冒充真实旧收银、完整财务或线上验收。测试文件为 `output/checkout-production-supplement-20261125-9ce01b/registered-047-boundary.test.mjs`；本轮累计本地 **114 项通过**。
+- 静态核对发现六份新提案调用这个公开入口，需区分而不能笼统放行：
+
+  | 新提案路径 | 与 047 公开入口的关系 |
+  | --- | --- |
+  | `member_checkout_bundle`／`member_checkout_cart_submission` | 积分支付构造 `operation`／`memberships`，现有调用在 047 下会被拒绝 |
+  | `member_checkout_cancellation`／`member_checkout_cart_cancellation` | 退还积分时构造 `memberships`，现有调用在 047 下会被拒绝 |
+  | `member_checkout_on_site_pending`／`member_checkout_on_site_cancellation` | 当前此处仅传 `settings`／`coupons`，wrapper 允许委托，但这不证明完整生命周期兼容 |
+
+- 下一步在**独立修订的本地兼容来源集合**纳入准确 047，覆盖原收银的 staging／commit／cancel／ack、未知应答、原权限与触发器，再设计只供新结算、与自身原单／账本绑定的私有适配；不改原收银成功逻辑、不直接重授内部入口、不覆盖冻结的 37 份旧包或刷新其断言。四类积分扣减／返还、到店路径、券／库存／重复提交和旧财务状态需在真实隔离 PG 与原完整身份／双构建 CI 中共同重验后，才可提出正式来源更新。
+- 本轮到此没有安装、迁移登记、授权、签发／导出凭据、业务数据／配置变更、试点启用或部署；未改应用／依赖／SQL 提案／旧迁移／正式发布清单。原包仍为 `8f4cb6b006d464c2f20ddad7cacc68f169f7a80885dae3749ad3abb934453f72`；所有正式就绪和执行权限仍为 false，Stripe／邮件／新后台任务未启用。
+
+## 第七十三阶段：已登记 047 的独立兼容修订与新结算私有适配（2026-11-25，仅本地，未安装／部署）
+
+### 根因与实现边界
+
+- 前一阶段已经精确定位：047 的公开 `faolla_commit_redemption_v1` 只收普通 settings／coupons，而四个新积分提交／返还函数仍传 operation／memberships。解决方式不是退回 046、改旧公开入口、复用旧收银 pending／ack，或重授内部写入器，而是新结算拥有独立、与自身不可变原单绑定的私有适配；既有成功收银路径不改。
+- 新增纯本地编译器 `scripts/member-checkout-047-revision.mjs`，准确绑定旧计划 `4d8e71922c8c65b5bea46077240d9f52acdc4671fb5921a241a8dd67cada261d`、047 的原文件摘要和新适配 SQL 的独立摘要。它没有连接器、环境读取、文件写入或批准入口；旧 37 份兼容清单、32 份提案、runtime 夹具、完整 215 份迁移 inventory 及原包均不刷新。修订 scope 为 `owned-local-047-compatibility-revision-only`，`productionAuthorized:false`、`deploymentReady:false`。
+- 编译器仅从四个准确、原文件摘要已固定的新提案函数提取单条定义，精确替换各自唯一的旧写入调用，生成单独的 `CREATE OR REPLACE FUNCTION` 叠加语句：`commit_bundle`／`cancel_bundle`／`faolla_member_checkout_cart_commit_v1`／`faolla_member_checkout_cart_cancel_v1`。函数参数、原有报价／权限／CAS／期限／库存／券校验和其它语句不改；原提案文件仍不变。普通到店路径及另两份仅 settings／coupons 的原提案不需替换。
+- 新适配 `scripts/fixtures/member-checkout-047-adapter.sql` 仅供新建隔离库；摘要为 `8408d46f2c84816bd9a7123a7f3d2bb4d12272130e8a3b128fd5565a79ba909c`。它不在现有生产迁移／发布清单中，不登记版本、不创建角色、不授予网关成员关系、不配置密钥、不启用任何开关。私有 helper 为固定 `pg_catalog,pg_temp` 的 definer，API 角色与 runtime 均无其执行权；仅独立 NOLOGIN executor 获此 helper 的执行权，047 原内部函数对 executor 仍无 EXECUTE。helper 不是 dispatcher 的方法，不能由客户端提交任意函数名调用。
+- 无 memberships／operation 的普通保存仍原样委托 047 的公开入口。财务调用则验证准确商户／原单 key／principal／phase、目标会员归属与余额、其它会员不变、真实新交易差额；扣减必须使用新结算专属 operation 编号与原请求指纹，并拒绝已有旧收银上下文／旧结果碰撞。返还必须已有同一原单与同一 principal，不能携带新的 operation；停止新购买后仍可按原单返还。原外层函数仍负责完整定价、券与库存、原政策、原交易、取消资格及期限校验，helper 不把自身当作用户认证或定价 API。
+- 增加私有、强制 RLS、不可改删的 `redemption_047_audits`。每个原单／扣减或返还 phase 只允许一次，先写审计再调用原内部原子写入器；延迟外键及延迟约束触发器要求同事务内存在准确新原单／请求指纹／会员／真实扣减结果，返还还必须有原取消凭证及准确 pointsReturned。只调用 helper 而没有完成新原单，或最终原单被改成另一请求指纹，都不能提交；不使用可变会话变量放行、不做逆向补偿或吞错。
+
+### 本地真实数据库验收及保留证据
+
+- 新验收器 `scripts/member-checkout-047-postgres-acceptance.mjs` 只允许已安装且版本固定的 Windows 测试运行时，创建全新 owned TEMP PG 17.10 集群、随机回环端口、准确目录及测试管理员；拒绝继承的真实后端配置，运行期间任何 fetch 均拒绝。不会借用其它临时集群或配置中的数据库。安装的是准确六份旧前置（原五份加已登记 047）、原冻结新提案／runtime，以及单独的新适配和四条叠加；这是本地兼容设计，不是生产安装器，也不是完整 Supabase 克隆。
+- 最终 **19 项通过、0 失败／跳过（含外层）**：
+  - 所有新购买门控初始关闭；旧内部写入器对 anon／authenticated／service_role／runtime／executor 均无执行权；runtime 不能切到 executor。
+  - API 角色／runtime 无法直接调用私有 helper、读写审计，dispatcher 拒绝将 helper 当作方法；executor 也不能直接伪造审计，原有不可变触发器拒绝审计改删。
+  - 实际域构建器／购物车报价与提交规划器 → 实际受限 session／固定 dispatcher → 原 047 内部原子写入：200 积分减有效券 20、实扣 180、两项库存各减一次；重放不再扣。取消按原单退分、退原券、不延长 claim 有效期、库存释放一次。
+  - 商户关闭退分／退券时维持原扣减，仅按原单释放库存；两张券全额抵扣时积分扣 0、不生成虚假积分交易，取消只退原券；到店购物车不经过财务 helper、不改变会员积分。
+  - 单项预约和单项订单的私有组合分别扣 200、恢复原积分／库存；预约仍经过原 generation／revision 与控制行，取消走原单服务。此两项验证私有 SQL 组合，不冒充实际用户 HTTP／真实登录预约端到端验收。
+  - 旧收银 stage／commit／replay／get／ack 正常；另一个新结算不会改写、取消或确认已 staged 的旧收银上下文，旧过期 CAS 仍拒绝；旧编号碰撞也不能被新 helper 消费。
+  - 在原写入之后拒绝新结果，积分／券／库存／历史／审计完整回滚；最终请求指纹不匹配在延迟凭证检查拒绝。独立 helper 负例先确认已经到达写入器，再触发准确的延迟原单拒绝，不能拿较早的无效夹具错误冒充安全检查。
+  - 实际 COMMIT 原单并关闭连接，新连接查回与重放不会再扣；取消实际 COMMIT 后再换连接重放也不再退。此处刻意丢弃应用结果、正常关闭连接，不声称模拟 TCP 丢包、主机断电或未知 COMMIT。
+- 已核对最终私有报告 `C:/Users/User/AppData/Local/Temp/faolla-checkout-047-test-34zBwb/report.json`：18 个内层检查全部通过，`passed:true／cleanupPassed:true／failure:null`，`forbiddenFetches:0`；修订摘要 `37c91d3eb61e91b5f796e0b9405dc55b6812077861dff209ed83c3762238d83c`。集群按自己的 postmaster PID／目录／端口核验后停止，保留数据、日志和报告。
+- 初轮 `IJhd8J` 在业务用例前因测试选择器误把两个有意替换的新函数当作“旧函数不可变”而失败；只把选择器精确排除新结算函数族，并改为记录完整定义摘要避免大段 SQL 诊断。没有修改旧函数或删除不可变断言。失败及中间成功 `oCrylm`／`Fm8NbI`／`sWaCga`／`X3MvgP` 均保留、对应集群均已停止，最终验收以上一条为准。
+- 新修订契约 6 项，加原来源包／计划／审阅／补充观察契约，共 **37 项通过**；原专用 runtime transport **12 项通过**，连同最终 PG 19 项，本轮选定测试 **68 项通过、0 失败／跳过**。相关 ESLint、语法、严格 UTF-8／diff 检查通过。原应用／依赖指纹及冻结包未变；本轮未跑完整应用构建或真实 Auth CI，不能沿用上一阶段成功绿灯来替代本修订。
+
+### 下一步与正式边界
+
+- 下一步将这份独立修订接入真实 Auth／PG 15／PostgREST 兼容矩阵及双构建、全部旧财务生命周期验收，并独立修订安装来源、元数据与最小权限检查；不放宽旧安装器、兼容检查或 QR 发布通道。还需完成原来列明的正式持久凭证、运行能力交付与续期、完整 Supabase／Kong／发布回退路径。六份前置的隔离库也不能冒充正式 214 条登记的完整生产基线。
+- 没有重用已结束的只读采集许可，也没有访问正式数据库／服务器、修改用户资料／设置、正式权限／配置、应用源码、依赖或原 SQL。未 push／合并／部署、预留正式迁移号、签发或导出凭据、启用新结算／Stripe／邮件／后台任务。所有正式执行和就绪权限仍为 false；整体计划尚未全部完成。
+
+## 第七十四阶段：047 独立元数据和真实身份／双版本兼容矩阵（2026-11-25，隔离验收，未安装／部署）
+
+- 原五份前置的兼容断言和安装流程全部保留，不把其历史绿灯当作 047 的验收。另加 `member-checkout-047-real-auth.yml`，只在原独立证据分支的 GitHub-hosted owned 环境运行，内容只读权限、无正式凭据／SSH／部署入口；准确复用原三个 PG／Auth／PostgREST 版本组合、工具摘要、真实登录、受限网关、双生产构建／页面／回退及清理路径。
+- 新夹具先完成原 15 组兼容及 7 组 runtime 检查，再仅在显式 `FAOLLA_CHECKOUT_047_REVISION_ACCEPTANCE=1`、准确隔离管理员和空财务账本下，叠加已固定的 047、新私有适配及四条新结算函数修订。047 重建普通公开包装后，只恢复原 runtime 已要求的普通 v1 EXECUTE；原内部写入器仍不向 executor／runtime／API 授权。原工作流默认不开此修订，原 normal／commit-unknown 安装作业不变。
+- 独立来源期望覆盖 **93 个函数、24 张私有表、28 个守卫**；不改旧 inspector／旧 37 份来源包／冻结摘要。047 的 11 个函数、改名原写入器及新适配分别校验正文和调用属性；另用固定参数化元数据 SELECT 核对 12 个旧入口的默认参数、executor／runtime 有效执行权与精确 API 边界。该检查不读取业务行、不执行目标函数，不构成生产授权或安装就绪证明。
+- 新 CI 另外验证五类有意漂移均被拒绝且事务回滚后元数据完全恢复：helper 被授 API EXECUTE、旧内部写入器被授 executor EXECUTE、helper 改为 invoker、审计关闭 RLS、延迟原单守卫被关闭。任何必要检查失败立即终止该依赖链，不能继续生成成功报告；全部只发生于 owned 测试库。
+- 扩展后的本地 PG 17.10 验收 **20 项通过、0 失败／跳过（含外层）**，保留原财务和旧收银检查并增加完整独立元数据核对。初次报告 `C:/Users/User/AppData/Local/Temp/faolla-checkout-047-test-VcXAX6/report.json` 及最终复测 `C:/Users/User/AppData/Local/Temp/faolla-checkout-047-test-who4WB/report.json` 均保留，19 项内层全部通过，`passed:true／cleanupPassed:true／failure:null／forbiddenFetches:0`，修订仍为 `37c91d3eb61e91b5f796e0b9405dc55b6812077861dff209ed83c3762238d83c`；owned 集群已停止、证据保留。
+- 本地新修订／兼容／CI 编排及原来源包／安装／身份／双版本等契约 **106 项**、原专用 runtime transport **12 项**，连同 PG **20 项**，本轮选定 **138 项通过、0 失败／跳过**。相关 ESLint、严格编码、语法与 diff 检查通过。新增编排测试初轮误把“回滚负例里故意授予的权限”当成安装授权；只将来源断言明确区分安装段与独立负例，并保留该负例及事务恢复断言，最终全部通过。没有修改生产权限或 SQL。
+- 本阶段完整 CI 结果待下方补记，不提前声称真实 Auth／PG 15／双构建已通过。正式数据库、214 条登记、业务数据、正式权限、线上站点及旧来源包均未改；没有签发／导出正式能力、安装或部署，新结算／Stripe／邮件保持关闭。
