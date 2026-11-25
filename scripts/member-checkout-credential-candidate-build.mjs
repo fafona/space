@@ -33,11 +33,15 @@ export async function buildOwnedCredentialCandidate(fixture,signal,evidence){
    ['production-build',['node_modules/next/dist/bin/next','build','--webpack']],['admin-bundle-budget',['scripts/check-admin-bundle-budget.mjs']]];
   for(const [name,args] of stages){
    signal.throwIfAborted();const log=createWriteStream(path.join(fixture.evidence,name+'.private.log'),{flags:'wx',mode:0o600});
-   const child=spawn(process.execPath,args,{cwd:fixture.app,env:environment,stdio:['ignore','pipe','pipe']});child.stdout.pipe(log,{end:false});child.stderr.pipe(log,{end:false});
+   const unitEnvironment={PATH:process.env.PATH,HOME:fixture.evidence,TMPDIR:fixture.evidence,TEMP:fixture.evidence,TMP:fixture.evidence,NODE_ENV:'test',
+    NODE_OPTIONS:'--max-old-space-size=3072 --import='+pathToFileURL(path.join(process.cwd(),'scripts/fixtures/member-checkout-runtime-unit-network.mjs')).href,
+    FAOLLA_CHECKOUT_UNIT_LOCAL:'1',FAOLLA_CHECKOUT_UNIT_EVIDENCE_DIR:fixture.evidence};
+   const child=spawn(process.execPath,args,{cwd:fixture.app,env:name==='retained-env-tests'?unitEnvironment:environment,stdio:['ignore','pipe','pipe']});child.stdout.pipe(log,{end:false});child.stderr.pipe(log,{end:false});
    const stop=()=>child.kill('SIGTERM'),timer=setTimeout(stop,name==='production-build'?600000:30000);timer.unref();signal.addEventListener('abort',stop,{once:true});let code,exitSignal;
    try{[code,exitSignal]=await once(child,'exit');}finally{clearTimeout(timer);signal.removeEventListener('abort',stop);await new Promise(resolve=>log.end(resolve));}
    steps.push({name,code,signal:exitSignal});assert.equal(code,0,'credential_candidate_build_'+name);assert.equal(exitSignal,null);
-   if(name==='retained-env-tests'){const text=await readFile(path.join(fixture.evidence,name+'.private.log'),'utf8');for(const [label,count] of [['tests',12],['pass',12],['fail',0],['skipped',0]])assert.match(text,new RegExp('# '+label+' '+count+'\\b'));}
+   if(name==='retained-env-tests'){const text=await readFile(path.join(fixture.evidence,name+'.private.log'),'utf8');for(const [label,count] of [['tests',12],['pass',12],['fail',0],['skipped',0]])assert.match(text,new RegExp('# '+label+' '+count+'\\b'));
+    const audit=(await readFile(path.join(fixture.evidence,'unit-network.jsonl'),'utf8')).trim().split('\n').filter(Boolean).map(v=>JSON.parse(v));assert.ok(audit.every(v=>['owned-unit-tsx-ipc-refused','unit-loopback-fetch','unit-loopback-socket'].includes(v.kind)));assert.ok(audit.some(v=>v.kind==='unit-loopback-fetch'));assert.ok(audit.some(v=>v.kind==='unit-loopback-socket'));evidence.unitNetworkKinds=[...new Set(audit.map(v=>v.kind))].sort();}
   }
   let network=[];try{network=(await readFile(path.join(fixture.evidence,'network.jsonl'),'utf8')).trim().split('\n').filter(Boolean).map(v=>JSON.parse(v));}catch(error){if(error.code!=='ENOENT')throw error;}
   assert.ok(network.every(v=>['framework-version-refused','owned-tsx-ipc-refused'].includes(v.kind)));assert.equal(backendRequests,0);await stat(path.join(fixture.app,'.next/BUILD_ID'));
