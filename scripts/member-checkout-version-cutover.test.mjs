@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { createOwnedCutoverPolicy, rollbackCommit, rollbackApplication } from './member-checkout-version-cutover-support.mjs';
+import { createOwnedCutoverPolicy, ownedCompilerFailure, rollbackCommit, rollbackApplication } from './member-checkout-version-cutover-support.mjs';
+
+test('compiler diagnostics contain only named error codes and module identifiers, never raw bodies or credentials', () => {
+  assert.deepEqual(ownedCompilerFailure("Error: Cannot find module '@/lib/test' MODULE_NOT_FOUND secret-sentinel https://private.invalid?token=sentinel"), { codes: ['MODULE_NOT_FOUND'], modules: ['@/lib/test'] });
+  assert.deepEqual(ownedCompilerFailure('TypeError: secret-sentinel'), { codes: ['TypeError'], modules: [] });
+});
 
 test('cutover needs an exact generation and successful probe; failed probes leave routing unchanged', async () => {
   const policy = createOwnedCutoverPolicy(); assert.equal(policy.target('GET', '/api/auth/merchant-session'), 'old');

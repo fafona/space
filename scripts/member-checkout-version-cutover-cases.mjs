@@ -14,10 +14,11 @@ import { prepareOwnedNextFixture } from './member-checkout-next-session-cases.mj
 import { assertOwnedLifecycleTarget } from './member-checkout-runtime-lifecycle-cases.mjs';
 import { requestOwnedStop, safeError } from './member-checkout-real-auth-support.mjs';
 import { applicationFingerprint } from './member-checkout-compatibility-check.mjs';
-import { createOwnedCutoverPolicy, rollbackCommit, rollbackApplication } from './member-checkout-version-cutover-support.mjs';
+import { createOwnedCutoverPolicy, ownedCompilerFailure, rollbackCommit, rollbackApplication } from './member-checkout-version-cutover-support.mjs';
 
 export async function versionCutoverCases(caseOf, { db, financial, f, body, scope, source, candidate, appEnv, context, callCandidate, methods, report }) {
   assertOwnedLifecycleTarget(db);
+  assert.equal(process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE, '1'); assert.equal(process.env.FAOLLA_CHECKOUT_AUTH_TEST_PROFILE, 'current-auth');
   assert.equal(source, path.join(process.cwd(), '.owned-checkout-base')); assert.equal(await realpath(source), source);
   assert.deepEqual(await applicationFingerprint(source), rollbackApplication);
   const fixture = await prepareOwnedNextFixture({ sourceRoot: source, dependencyRoot: process.cwd() });
@@ -33,6 +34,8 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
     cwd: fixture.app, env: { PATH: process.env.PATH, HOME: fixture.evidence, TMPDIR: tmpdir(), ...oldEnv }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   const exited = once(child, 'exit').then(([code, signal]) => ({ code, signal }), () => ({ code: -1, signal: null }));
   child.on('error', () => { evidence.spawnFailed = true; }); child.on('message', message => events.push(message));
+  let compilerOutput = '';
+  for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { compilerOutput = (compilerOutput + chunk.toString()).slice(-32768); });
   child.stdout.pipe(log, { end: false }); child.stderr.pipe(log, { end: false });
   let proxy, forced = false, completed = false; const upstreams = new Set();
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -49,7 +52,9 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
     const oldOrigin = `https://portal.checkout-auth.test:${listening.port}`; await allow(oldOrigin);
     const oldView = await context.newPage(); views.push(oldView);
     await caseOf('pinned old application independently serves the same real authenticated session without a new runtime credential', async () => {
-      assert.equal((await oldView.goto(oldOrigin + '/api/auth/merchant-session?reauth=1', { timeout: 90000 })).status(), 200);
+      const response = await oldView.goto(oldOrigin + '/api/auth/merchant-session?reauth=1', { timeout: 90000 });
+      if (response.status() !== 200) evidence.compilerFailure = ownedCompilerFailure(compilerOutput + await response.text());
+      assert.equal(response.status(), 200);
       assert.equal((await browserCall(oldView, '/api/auth/merchant-session?reauth=1', undefined, {})).status, 200);
       assert.deepEqual(await applicationFingerprint(fixture.app), rollbackApplication);
     });

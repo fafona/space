@@ -11,6 +11,15 @@ export const rollbackCommit = '98ce90e63c84e0da7747d0a14d2f5fc9d7f5f980';
 export const rollbackApplication = Object.freeze({ algorithm: 'sha256-lf-path-content-v1', files: 2704,
   sha256: '2d06a39614aca1c6bb424be5492ee42dbe3ed27b8e21756ec88031617bea8699' });
 
+export function ownedCompilerFailure(text) {
+  // No log excerpt, response body, request, URL, env or arbitrary exception
+  // message may enter the public CI report. Module identifiers come only from
+  // the pinned source/compiler and cannot contain a token or query string.
+  const codes = [...new Set(String(text).match(/\b(?:ERR_[A-Z_]{1,60}|MODULE_NOT_FOUND|TypeError|ReferenceError|SyntaxError)\b/g) ?? [])];
+  const modules = [...String(text).matchAll(/(?:Can't resolve|Cannot find module) ['"]((?:@|\.\.?\/)[a-zA-Z0-9_./@-]{1,150})['"]/g)].map(m => m[1]);
+  return { codes, modules: [...new Set(modules)] };
+}
+
 export async function verifyOwnedRollbackSource() {
   const owned = assertIsolatedCi(); assert.equal(owned.profileName, 'current-auth');
   assert.equal(process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE, '1');
