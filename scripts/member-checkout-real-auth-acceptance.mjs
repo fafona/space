@@ -23,7 +23,7 @@ import { runtimeLifecycleCases } from './member-checkout-runtime-lifecycle-cases
 import { versionCutoverCases } from './member-checkout-version-cutover-cases.mjs';
 import { verifyOwnedRollbackSource } from './member-checkout-version-cutover-support.mjs';
 
-test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> points/coupon booking', { timeout: process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1' ? 480000 : 360000 }, async t => {
+test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> points/coupon booking', { timeout: process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1' ? 900000 : 360000 }, async t => {
   const owned = assertIsolatedCi(); await verifyOwnedTools(owned.tools, owned.profileName);
   // Check the old source while the inherited environment is still required to
   // contain no backend credential, before this harness creates its local JWTs.
@@ -229,7 +229,7 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     });
     if (process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1') {
       report.phase = 'two-version-api-cutover';
-      await versionCutoverCases(caseOf, { db, financial, f, body, scope, source: rollbackSource, candidate: { port: listening.port, evidence: fixture.evidence }, appEnv, context, callCandidate: call, methods, report });
+      await versionCutoverCases(caseOf, { db, financial, f, body, scope, source: rollbackSource, candidate: { port: listening.port, evidence: fixture.evidence }, appEnv, context, callCandidate: call, methods, report, signal: t.signal });
     }
     report.phase = 'actual-auth-rejections';
     await caseOf('fresh Auth pause or forged account scope rejects before financial RPC and leaves ledger unchanged', async () => {

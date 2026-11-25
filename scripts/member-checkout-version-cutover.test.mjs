@@ -42,8 +42,18 @@ test('source and workflow pins have no production transport, mutation implementa
   assert.doesNotMatch(support, /git (?:fetch|push|merge)|\.env\.local|ssh |scp |\.query\(|writeFile|SUPABASE_SERVICE_ROLE_KEY/);
   const cases = await readFile('scripts/member-checkout-version-cutover-cases.mjs', 'utf8');
   assert.match(cases, /assertOwnedLifecycleTarget\(db\)/); assert.match(cases, /ca: certificate/);
+  assert.match(cases, /servername: 'portal\.checkout-auth\.test'/);
   assert.doesNotMatch(cases, /rejectUnauthorized:\s*false|DROP\s+(?:TABLE|SCHEMA|ROLE)|TRUNCATE|set[A-Za-z]+ForTest|addCookies|sessionFor/);
   const workflow = await readFile('.github/workflows/member-checkout-real-auth.yml', 'utf8');
   assert.match(workflow, new RegExp('ref: ' + rollbackCommit)); assert.match(workflow, /path: \.owned-checkout-base/);
   assert.match(workflow, /FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE:/);
+});
+test('old production build keeps all normal stages, original source and network refusal; synthetic TLS has an exact SAN', async () => {
+  const build = await readFile('scripts/member-checkout-rollback-build.mjs', 'utf8');
+  for (const name of ['environment', 'deployment-config', 'pinned-wasm', 'production-build', 'admin-bundle-budget']) assert.ok(build.includes(name));
+  assert.match(build, /assert\.equal\(backendRequests, 0/); assert.match(build, /rollbackApplication/);
+  assert.doesNotMatch(build, /SUPABASE_SERVICE_ROLE_KEY|FAOLLA_CHECKOUT_RUNTIME_JWT|writeFile|replace\(/);
+  const launcher = await readFile('scripts/fixtures/member-checkout-rollback-local-server.mjs', 'utf8');
+  assert.match(launcher, /NODE_ENV, 'production'/); assert.match(launcher, /\.next\/BUILD_ID/); assert.match(launcher, /dev: false/);
+  const fixture = await readFile('scripts/member-checkout-next-session-cases.mjs', 'utf8'); assert.match(fixture, /type: 2, value: 'portal\.checkout-auth\.test'/);
 });

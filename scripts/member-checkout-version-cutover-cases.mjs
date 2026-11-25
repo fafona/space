@@ -1,5 +1,6 @@
-// Two REAL, fingerprint-pinned Next dev applications behind owned loopback TLS.
-// HTTP API cutover evidence only: not production builds, UI asset switching,
+// Two REAL, fingerprint-pinned Next applications behind owned loopback TLS.
+// Old production build + candidate dev router. HTTP API evidence, NOT candidate
+// production-build cutover, UI asset switching,
 // Supabase/Kong topology, installation, a release tool or production recovery.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -14,23 +15,27 @@ import { prepareOwnedNextFixture } from './member-checkout-next-session-cases.mj
 import { assertOwnedLifecycleTarget } from './member-checkout-runtime-lifecycle-cases.mjs';
 import { requestOwnedStop, safeError } from './member-checkout-real-auth-support.mjs';
 import { applicationFingerprint } from './member-checkout-compatibility-check.mjs';
+import { buildOwnedRollback } from './member-checkout-rollback-build.mjs';
 import { createOwnedCutoverPolicy, ownedCompilerFailure, rollbackCommit, rollbackApplication } from './member-checkout-version-cutover-support.mjs';
 
-export async function versionCutoverCases(caseOf, { db, financial, f, body, scope, source, candidate, appEnv, context, callCandidate, methods, report }) {
+export async function versionCutoverCases(caseOf, { db, financial, f, body, scope, source, candidate, appEnv, context, callCandidate, methods, report, signal }) {
   assertOwnedLifecycleTarget(db);
   assert.equal(process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE, '1'); assert.equal(process.env.FAOLLA_CHECKOUT_AUTH_TEST_PROFILE, 'current-auth');
   assert.equal(source, path.join(process.cwd(), '.owned-checkout-base')); assert.equal(await realpath(source), source);
   assert.deepEqual(await applicationFingerprint(source), rollbackApplication);
-  const fixture = await prepareOwnedNextFixture({ sourceRoot: source, dependencyRoot: process.cwd() });
+  const fixture = await prepareOwnedNextFixture({ sourceRoot: source, dependencyRoot: process.cwd(), productionBuild: true });
   const evidence = report.cutover = { scope: 'owned-two-version-http-api-only', rollbackCommit, rollbackApplication,
     candidateCommit: process.env.GITHUB_SHA, candidateApplication: await applicationFingerprint(), transitions: [], requests: [], cleanupPassed: false };
   assert.notDeepEqual(evidence.candidateApplication, rollbackApplication);
+  await caseOf('pinned old source builds in production mode with all five normal stages and no backend credentials or network requests', async () => {
+    evidence.oldBuild = {}; await buildOwnedRollback(fixture, signal, evidence.oldBuild);
+  });
   const policy = createOwnedCutoverPolicy(), events = [], pilots = [], views = [], routes = [];
   const log = createWriteStream(path.join(fixture.evidence, 'old-next.private.log'), { flags: 'wx', mode: 0o600 });
   // Old ordinary paths do NOT inherit new purchase scopes or a runtime token.
-  const oldEnv = { ...appEnv, FAOLLA_CHECKOUT_RUNTIME_JWT: '' };
+  const oldEnv = { ...appEnv, NODE_ENV: 'production', FAOLLA_CHECKOUT_RUNTIME_JWT: '' };
   for (const key of Object.keys(oldEnv)) if (key.startsWith('MERCHANT_MEMBER_CHECKOUT_')) oldEnv[key] = '';
-  const child = spawn(process.execPath, [path.join(process.cwd(), 'scripts/fixtures/member-checkout-next-local-server.mjs'), fixture.app], {
+  const child = spawn(process.execPath, [path.join(process.cwd(), 'scripts/fixtures/member-checkout-rollback-local-server.mjs'), fixture.app], {
     cwd: fixture.app, env: { PATH: process.env.PATH, HOME: fixture.evidence, TMPDIR: tmpdir(), ...oldEnv }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   const exited = once(child, 'exit').then(([code, signal]) => ({ code, signal }), () => ({ code: -1, signal: null }));
   child.on('error', () => { evidence.spawnFailed = true; }); child.on('message', message => events.push(message));
@@ -67,7 +72,7 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
       const fail = status => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end('{"error":"owned_cutover_unavailable"}'); };
       if (!name || failRetained && name === 'candidate') { fail(503); return; }
       const { port, certificate, version } = destinations[name];
-      const upstream = https.request({ hostname: '127.0.0.1', port, ca: certificate, method: req.method, path: req.url,
+      const upstream = https.request({ hostname: '127.0.0.1', servername: 'portal.checkout-auth.test', port, ca: certificate, method: req.method, path: req.url,
         headers: { ...req.headers, connection: 'close' }, agent: false, timeout: 60000 }, reply => {
         if (loseCancellationReply && pathname === '/api/member-checkout/original-service/cancel') {
           loseCancellationReply = false; reply.resume(); reply.on('end', () => fail(503));
