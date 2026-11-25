@@ -19,18 +19,19 @@ import { prepareOwnedNextFixture } from './member-checkout-next-session-cases.mj
 import { applicationFingerprint } from './member-checkout-compatibility-check.mjs';
 import runtime from '../src/lib/merchantCheckoutRuntime.server.ts';
 import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
+import { runtimeLifecycleCases } from './member-checkout-runtime-lifecycle-cases.mjs';
 
 test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> points/coupon booking', { timeout: 360000 }, async t => {
-  const owned = assertIsolatedCi(); await verifyOwnedTools(owned.tools);
+  const owned = assertIsolatedCi(); await verifyOwnedTools(owned.tools, owned.profileName);
   await mkdir(owned.evidence); // Existing evidence must never be overwritten.
-  const report = { version: 1, commit: process.env.GITHUB_SHA, scope: 'isolated-real-auth-not-production', phase: 'database', checks: [], stopped: [], paths: [], methods: [], failure: null, passed: false };
+  const report = { version: 1, commit: process.env.GITHUB_SHA, scope: 'isolated-real-auth-not-production', profile: owned.profileName, testedVersions: owned.profile, productionVersionsObserved: false, phase: 'database', checks: [], stopped: [], paths: [], methods: [], failure: null, passed: false };
   const children = [], servers = [], logs = [], methods = report.methods;
   let db, browser, fixture, nextChild, nextEvents, success = false;
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const nativeFetch = globalThis.fetch;
   const secret = randomBytes(48).toString('base64url'), audience = 'checkout-owned-local-only';
-  const token = role => {
-    const data = [{ alg: 'HS256', typ: 'JWT' }, { role, aud: audience, exp: Math.floor(Date.now() / 1000) + 900 }].map(v => Buffer.from(JSON.stringify(v)).toString('base64url')).join('.');
+  const token = (role, expires = Math.floor(Date.now() / 1000) + 900) => {
+    const data = [{ alg: 'HS256', typ: 'JWT' }, { role, aud: audience, exp: expires, jti: randomUUID() }].map(v => Buffer.from(JSON.stringify(v)).toString('base64url')).join('.');
     return data + '.' + createHmac('sha256', secret).update(data).digest('base64url');
   };
   const serviceJwt = token('service_role'), anonJwt = token('anon'), runtimeJwt = token('faolla_checkout_runtime');
@@ -85,7 +86,9 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     const requirePg = createRequire(path.join(owned.tools, 'pg-client/package.json')), { Client } = requirePg('pg');
     db = new Client({ host: '127.0.0.1', port: databasePort, database, user: 'checkout_ci_admin', password: 'disposable-checkout-ci-only', ssl: false,
       connectionTimeoutMillis: 5000, statement_timeout: 15000, query_timeout: 20000, application_name: 'faolla-real-auth-owned-ci' });
-    await db.connect(); const financial = await installRealAuthCheckoutFixture({ test: (name, run) => caseOf(name, run) }, db);
+    await db.connect();
+    assert.equal((await db.query('show server_version_num')).rows[0].server_version_num, owned.profile.serverVersion);
+    const financial = await installRealAuthCheckoutFixture({ test: (name, run) => caseOf(name, run) }, db);
     report.phase = 'auth-startup';
     const authPort = await reservePort(), restPort = await reservePort(); assert.notEqual(authPort, restPort);
     const authOrigin = `http://127.0.0.1:${authPort}`, restOrigin = `http://127.0.0.1:${restPort}`;
@@ -197,6 +200,20 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
       const committed = await financial.state(), replay = await call(route, body, scope); assert.equal(replay.status, 200); assert.equal(replay.value.replayed, true); assert.deepEqual(await financial.state(), committed);
       assert.ok(report.paths.includes('GET /auth/v1/admin/users')); // Actual paginated fallback, NOT a claim about getUserById.
     });
+    report.phase = 'runtime-lifecycle';
+    await runtimeLifecycleCases(caseOf, {
+      db, site: financial.site, state: financial.state, currentRuntime: runtimeJwt, mintRuntime: expires => token('faolla_checkout_runtime', expires),
+      rawCatalog: async jwt => {
+        const response = await nativeFetch(gatewayOrigin + '/rest/v1/rpc/faolla_checkout_runtime_v1', { method: 'POST',
+          headers: { authorization: 'Bearer ' + (jwt === 'ordinary-service' ? serviceJwt : jwt), 'content-type': 'application/json' },
+          body: JSON.stringify({ p_function: 'faolla_member_checkout_catalog_snapshot_v1', p_arguments: { p_site_id: financial.site } }), signal: AbortSignal.timeout(5000) });
+        await response.arrayBuffer(); return { status: response.status };
+      },
+      ordinaryRead: async () => { const response = await nativeFetch(gatewayOrigin + '/rest/v1/merchants?select=id', { headers: { authorization: 'Bearer ' + serviceJwt }, signal: AbortSignal.timeout(5000) }); await response.arrayBuffer(); return response.status; },
+      activeSession: async () => (await call('/api/auth/merchant-session?reauth=1')).status,
+      replay: () => call(route, body, scope), newSubmission: nonce => call(route, { ...body, nonce }, scope),
+    });
+    report.phase = 'actual-auth-rejections';
     await caseOf('fresh Auth pause or forged account scope rejects before financial RPC and leaves ledger unchanged', async () => {
       for (const paused of [true, false]) {
         const update = await authCall('/admin/users/' + userId, { app_metadata: { ...metadata, personal_service_paused: paused } }, serviceJwt, 'PUT'); assert.equal(update.status, 200);

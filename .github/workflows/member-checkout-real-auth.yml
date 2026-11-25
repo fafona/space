@@ -11,11 +11,24 @@ permissions:
 
 jobs:
   real-auth:
+    name: Real Auth (${{ matrix.profile }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: modern
+            postgres: '17.6'
+            postgrest: '16.6'
+            postgrest_sha256: '335ea29f00145705fb569b1268b9c8e53d062f8f6f9188192e92ea3781d2dca1'
+          - profile: legacy
+            postgres: '15.8'
+            postgrest: '14.5'
+            postgrest_sha256: 'ab5cc7e974d4940447991804588cfb8b3f7b2c57b691f0905df04d51ede69470'
     services:
       postgres:
-        image: postgres:17.6
+        image: postgres:${{ matrix.postgres }}
         env:
           POSTGRES_DB: faolla_member_checkout_auth_test
           POSTGRES_USER: checkout_ci_admin
@@ -37,6 +50,9 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Prepare Disposable Test Tools
         shell: bash
+        env:
+          TEST_POSTGREST_VERSION: ${{ matrix.postgrest }}
+          TEST_POSTGREST_SHA256: ${{ matrix.postgrest_sha256 }}
         run: |
           set -euo pipefail
           test "$GITHUB_ACTIONS" = true
@@ -49,8 +65,12 @@ jobs:
           echo '4abe9134d7615faa9149cab514acada8e7133cd69d2ccd96fdcef0d795c05171  auth.tar.xz' | sha256sum --check --strict
           curl --fail --location --retry 2 --max-time 120 -o source.zip https://codeload.github.com/supabase/auth/zip/387e91f37e00b64b9060352988066bbb685f6e45
           echo '99cdf807b817cf59da7ff10329898fbd32380e2e73231c3458660595e6ca679f  source.zip' | sha256sum --check --strict
-          curl --fail --location --retry 2 --max-time 120 -o postgrest.tar.xz https://github.com/PostgREST/postgrest/releases/download/v16.6/postgrest-v16.6-linux-static-x86-64.tar.xz
-          echo '335ea29f00145705fb569b1268b9c8e53d062f8f6f9188192e92ea3781d2dca1  postgrest.tar.xz' | sha256sum --check --strict
+          case "$TEST_POSTGREST_VERSION:$TEST_POSTGREST_SHA256" in
+            '16.6:335ea29f00145705fb569b1268b9c8e53d062f8f6f9188192e92ea3781d2dca1'|'14.5:ab5cc7e974d4940447991804588cfb8b3f7b2c57b691f0905df04d51ede69470') ;;
+            *) exit 71 ;;
+          esac
+          curl --fail --location --retry 2 --max-time 120 -o postgrest.tar.xz "https://github.com/PostgREST/postgrest/releases/download/v$TEST_POSTGREST_VERSION/postgrest-v$TEST_POSTGREST_VERSION-linux-static-x86-64.tar.xz"
+          printf '%s  postgrest.tar.xz\n' "$TEST_POSTGREST_SHA256" | sha256sum --check --strict
           mkdir auth-bin postgrest-bin
           tar -xJf auth.tar.xz -C auth-bin
           tar -xJf postgrest.tar.xz -C postgrest-bin
@@ -64,12 +84,13 @@ jobs:
         env:
           FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '1'
           FAOLLA_CHECKOUT_NEXT_ACCEPTANCE: '1'
+          FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: ${{ matrix.profile }}
         run: node --import tsx --test scripts/member-checkout-real-auth-acceptance.mjs
       - name: Preserve Sanitized Evidence Only
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: member-checkout-real-auth-${{ github.run_id }}-${{ github.run_attempt }}
+          name: member-checkout-real-auth-${{ matrix.profile }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/faolla-real-auth-evidence/report.json
           if-no-files-found: warn
           retention-days: 14

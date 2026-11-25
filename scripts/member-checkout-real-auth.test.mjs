@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { assertIsolatedCi, artifacts, branch, safeError, sanitizeStartupDiagnostic } from './member-checkout-real-auth-support.mjs';
+import { assertIsolatedCi, artifacts, branch, compatibilityProfiles, safeError, sanitizeStartupDiagnostic } from './member-checkout-real-auth-support.mjs';
+import { assertOwnedLifecycleTarget } from './member-checkout-runtime-lifecycle-cases.mjs';
 
 const env = () => ({ GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted', GITHUB_REPOSITORY: 'fafona/space',
   GITHUB_EVENT_NAME: 'push', GITHUB_REF: 'refs/heads/' + branch, GITHUB_SHA: 'a'.repeat(40),
@@ -11,6 +12,7 @@ test('real Auth harness refuses implicit, Windows, self-hosted, main and configu
   for (const patch of [{ FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '' }, { GITHUB_ACTIONS: '' }, { RUNNER_ENVIRONMENT: 'self-hosted' },
     { GITHUB_EVENT_NAME: 'workflow_dispatch' }, { GITHUB_REPOSITORY: 'another/repo' }, { GITHUB_REF: 'refs/heads/main' },
     { GITHUB_SHA: 'not-a-sha' }, { RUNNER_TEMP: '' }, { SUPABASE_SERVICE_ROLE_KEY: 'sentinel' }, { DATABASE_URL: 'postgres://sentinel' },
+    { FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: 'unreviewed' }, { FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: '__proto__' },
     { PGHOST: '127.0.0.1' }, { STRIPE_SECRET_KEY: 'sentinel' }, { FAOLLA_CHECKOUT_RUNTIME_JWT: 'sentinel' }])
     assert.throws(() => assertIsolatedCi({ ...env(), ...patch }, 'linux', 'x64'));
   assert.throws(() => assertIsolatedCi(env(), 'win32', 'x64'));
@@ -25,6 +27,25 @@ test('workflow is branch-only, read-only and has no production secrets or releas
   assert.match(workflow, /path: \$\{\{ runner\.temp \}\}\/faolla-real-auth-evidence\/report\.json/);
   assert.doesNotMatch(workflow, /secrets\.|id-token:|contents: write|workflow_run:|workflow_dispatch:|pull_request:|environment:|ssh |scp |deploy-production|production-deploy|git push|git merge/);
   for (const hash of Object.values(artifacts)) assert.ok(workflow.includes(hash));
+  for (const profile of Object.values(compatibilityProfiles)) { assert.ok(workflow.includes(profile.postgres)); assert.ok(workflow.includes(profile.postgrestSha256)); }
+  assert.match(workflow, /fail-fast: false/); assert.match(workflow, /member-checkout-real-auth-\$\{\{ matrix\.profile \}\}/);
+});
+test('compatibility matrix pins two separate protocols without treating either as observed production state', () => {
+  assert.equal(assertIsolatedCi({ ...env(), FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: 'legacy' }, 'linux', 'x64').profile.serverVersion, '150008');
+  assert.equal(assertIsolatedCi(env(), 'linux', 'x64').profile.serverVersion, '170006');
+  assert.deepEqual(Object.keys(compatibilityProfiles), ['modern', 'legacy']);
+});
+test('capability lifecycle refuses non-owned endpoints and contains only fixed, reversible CI grant changes', async () => {
+  const db = { connectionParameters: { host: '127.0.0.1', port: 56463, database: 'faolla_member_checkout_auth_test', user: 'checkout_ci_admin' } };
+  assert.doesNotThrow(() => assertOwnedLifecycleTarget(db, env()));
+  for (const patch of [{ host: 'production.invalid' }, { database: 'postgres' }, { port: 5432 }, { user: 'postgres' }])
+    assert.throws(() => assertOwnedLifecycleTarget({ connectionParameters: { ...db.connectionParameters, ...patch } }, env()));
+  assert.throws(() => assertOwnedLifecycleTarget(db, { ...env(), RUNNER_ENVIRONMENT: 'self-hosted' }));
+  const source = await readFile('scripts/member-checkout-runtime-lifecycle-cases.mjs', 'utf8');
+  assert.doesNotMatch(source, /\b(?:drop\s+(?:role|table|schema|function)|truncate|alter\s+role|disable\s+trigger)\b/i);
+  assert.match(source, /finally \{ await db\.query\('grant execute/);
+  assert.match(source, /finally \{ await db\.query\('grant faolla_checkout_runtime/);
+  assert.match(source, /checkout_disabled/);
 });
 test('artifact report excludes exception content and credentials; test source has no auth/route override', async () => {
   assert.deepEqual(safeError({ name: 'Error', message: 'secret-sentinel', code: 'EPIPE', stack: 'secret-sentinel' }), { name: 'Error', code: 'EPIPE' });
