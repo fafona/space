@@ -125,7 +125,7 @@ test('owned atomic installation, interruption, idempotency and retained financia
    const contract=await loadInstallationSupplement(bundle);
    // Docker's published loopback port does not imply that PostgreSQL sees a
    // loopback peer. Read OUR owned connection's server-observed address only.
-   const peer=(await observer.query('select inet_client_addr()::text address')).rows[0].address;
+   const peer=(await observer.query('select pg_catalog.host(inet_client_addr()) address')).rows[0].address;
    await observer.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
    try{await observer.query("SET LOCAL statement_timeout='5s';SET LOCAL lock_timeout='1s';SET LOCAL search_path=pg_catalog,public");
     const supplement=await observeInstallationSupplement(sql=>observer.query(sql),contract,bundle,[peer]);

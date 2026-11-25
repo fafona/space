@@ -24,10 +24,15 @@ test('supplement plans one SELECT, hashes bodies inside SQL and never selects SQ
  assert.doesNotMatch(sql,/rolpassword|auth\.users|a\.query\b|a\.query_id|SELECT\s+\*\s+FROM\s+public\.pages/i);
  assert.match(sql,/pg_catalog\.pg_stat_activity/);assert.match(sql,/a\.client_addr=ANY/);assert.match(sql,/p\.prosrc/);
  const db=new PGlite();try{await db.exec('create table public.faolla_schema_migrations(version bigint primary key,name text not null)');
+  for(const [address,encoded] of [['192.0.2.2','192.0.2.2/32'],['::1','::1/128']]){
+   const value=(await db.query('select $1::inet::text encoded,pg_catalog.host($1::inet) address',[address])).rows[0];
+   assert.deepEqual(value,{encoded,address});assert.throws(()=>installationSupplementSql(contract,[value.encoded]),/addresses_invalid/);
+   assert.ok(installationSupplementSql(contract,[value.address]).includes("'"+address+"'::pg_catalog.inet"));
+  }
   assert.ok((await db.query('EXPLAIN '+sql)).rows.length>0);}finally{await db.close();}
 });
 test('gateway address parameters are validated as literals and cannot add SQL, zones, duplicates or unbounded input',()=>{
- for(const value of [[],['127.0.0.1','127.0.0.1'],["127.0.0.1');select 1--"],['host.example'],['fe80::1%eth0'],Array(9).fill('::1'),[null]])
+ for(const value of [[],['127.0.0.1','127.0.0.1'],["127.0.0.1');select 1--"],['host.example'],['127.0.0.1/32'],['::1/128'],['fe80::1%eth0'],Array(9).fill('::1'),[null]])
   assert.throws(()=>installationSupplementSql(contract,value),/addresses_invalid/);
  assert.match(installationSupplementSql(contract,['::1','192.0.2.2']),/'192\.0\.2\.2'::pg_catalog\.inet/);
  assert.throws(()=>installationSupplementSql({...contract},addresses),/contract_unverified/);
@@ -79,7 +84,7 @@ test('query module has no production transport, credentials, metadata mutation o
  assert.doesNotMatch(source,/process\.env|child_process|fetch\(|writeFile\(|spawn\(|\.Config\.Env|PGRST_DB_URI|JWT_SECRET|DATABASE_URL/);
  const harness=await readFile('scripts/member-checkout-installation-acceptance.mjs','utf8');
  assert.match(harness,/read-only supplement matches all original function definitions and guards on the real owned PG/);
- assert.match(harness,/select inet_client_addr\(\)::text address/);assert.match(harness,/contract,bundle,\[peer\]/);
+ assert.match(harness,/select pg_catalog\.host\(inet_client_addr\(\)\) address/);assert.match(harness,/contract,bundle,\[peer\]/);
  assert.match(harness,/gatewayStatus,'not-observed'/);assert.match(harness,/wrongPeerRefused=true/);
  const workflow=await readFile('.github/workflows/member-checkout-real-auth.yml','utf8');assert.match(workflow,/member-checkout-installation-supplement\.test\.mjs/);
 });
