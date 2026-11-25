@@ -44,6 +44,7 @@ test('owned atomic installation, interruption, idempotency and retained financia
    join pg_roles a on a.oid=m.roleid join pg_roles b on b.oid=m.member order by parent,child`).then(r=>r.rows);
   const catalogue=db=>readCompatibilityCatalog(sql=>db.query(sql));
   const state=async db=>({catalogue:await catalogue(db),registry:await registry(db),roles:await roleState(db),memberships:await memberships(db),
+   defaultAcls:(await db.query('select to_jsonb(d) value from pg_default_acl d order by oid')).rows,
    identities:(await db.query(`select 'relation' kind,c.oid::text oid,n.nspname::text namespace,c.relname::text name from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in ('public','faolla_checkout_design')
     union all select 'function',p.oid::text,n.nspname::text,p.proname::text from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','faolla_checkout_design')
     union all select 'trigger',t.oid::text,n.nspname::text,t.tgname::text from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname in ('public','faolla_checkout_design') order by kind,namespace,name,oid`)).rows,
@@ -61,6 +62,20 @@ test('owned atomic installation, interruption, idempotency and retained financia
    }
    for(const table of [...plan.expected.tables,'public.pages','public.faolla_booking_atomic_control'])
     assert.equal((await db.query("select has_table_privilege('faolla_checkout_runtime',$1,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') allowed",[table])).rows[0].allowed,false);
+   for(const role of ['faolla_checkout_runtime','faolla_checkout_executor'])
+    assert.equal((await db.query("select has_schema_privilege($1,'public','CREATE') allowed",[role])).rows[0].allowed,false);
+   // Do not mistake API-role-only inspection for complete ACL inspection.
+   // An unrelated global default grantee must also fail the atomic install.
+   const unexpected=(await db.query(`with allowed as (select oid from pg_roles where rolname in ('checkout_ci_admin','faolla_checkout_executor')),
+    grants as (
+     select a.grantee from pg_namespace n cross join lateral aclexplode(coalesce(n.nspacl,acldefault('n',n.nspowner))) a where n.nspname='faolla_checkout_design'
+     union all select a.grantee from pg_class c join pg_namespace n on n.oid=c.relnamespace cross join lateral aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a where n.nspname='faolla_checkout_design' and c.relkind='r'
+     union all select a.grantee from pg_attribute v join pg_class c on c.oid=v.attrelid join pg_namespace n on n.oid=c.relnamespace cross join lateral aclexplode(v.attacl) a where n.nspname='faolla_checkout_design'
+     union all select a.grantee from pg_proc p join pg_namespace n on n.oid=p.pronamespace cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+      where (n.nspname='faolla_checkout_design' or n.nspname='public' and (p.proname like 'faolla_member_checkout_%' or p.proname like 'faolla_checkout_%'))
+       and not (p.oid='public.faolla_checkout_runtime_v1(text,jsonb)'::regprocedure and a.grantee=(select oid from pg_roles where rolname='faolla_checkout_runtime')))
+    select count(*)::int n from grants where grantee not in (select oid from allowed)`)).rows[0].n;
+   assert.equal(unexpected,0,'installation_unapproved_grantee');
   };
   await check('fresh owned old-schema fixture contains only the five pinned legacy prerequisites',async()=>{
    assert.equal((await observer.query("select count(*)::int n from pg_tables where schemaname not in ('pg_catalog','information_schema')")).rows[0].n,0);
@@ -106,6 +121,12 @@ test('owned atomic installation, interruption, idempotency and retained financia
    try{await assert.rejects(install(),/installation_busy/);}finally{await observer.query('ROLLBACK');}
    assert.deepEqual(await state(observer),baseline);
   });
+  await check('unrelated global default function grantee is detected before commit and never silently revoked',async()=>{
+   await observer.query('alter default privileges grant execute on functions to pg_read_all_data');
+   try{const before=await state(observer);await assert.rejects(install(),/installation_unapproved_grantee/);assert.deepEqual(await state(observer),before);}
+   finally{await observer.query('alter default privileges revoke execute on functions from pg_read_all_data');}
+   assert.deepEqual(await state(observer),baseline);
+  });
   await check('single committed installation preserves old data and API roles, keeps pilots off and records exact source digest',async()=>{
    assert.deepEqual(await install(),{status:'installed',applied:33});await installed(observer);
    assert.deepEqual((await roleState(observer)).filter(r=>!r.name.startsWith('faolla_checkout_')),oldRoles);
@@ -131,6 +152,11 @@ test('owned atomic installation, interruption, idempotency and retained financia
    await observer.query('grant execute on function public.faolla_checkout_runtime_v1(text,jsonb) to PUBLIC');
    try{const before=await state(observer);await assert.rejects(install());assert.deepEqual(await state(observer),before);}
    finally{await observer.query('revoke execute on function public.faolla_checkout_runtime_v1(text,jsonb) from PUBLIC');}
+  });
+  await check('an unrelated role cannot receive dispatcher execution behind the original API-role checks',async()=>{
+   await observer.query('grant execute on function public.faolla_checkout_runtime_v1(text,jsonb) to pg_read_all_data');
+   try{const before=await state(observer);await assert.rejects(install(),/installation_unapproved_grantee/);assert.deepEqual(await state(observer),before);}
+   finally{await observer.query('revoke execute on function public.faolla_checkout_runtime_v1(text,jsonb) from pg_read_all_data');}
   });
   const runtimeCall=async(name,args)=>{
    const db=await open();try{await db.query('BEGIN');await db.query('SET LOCAL SESSION AUTHORIZATION faolla_checkout_runtime');
@@ -161,8 +187,11 @@ test('owned atomic installation, interruption, idempotency and retained financia
   report.passed=report.checks.every(c=>c.passed);
  }catch(error){report.failure=safeError(error);throw error;}
  finally{
-  for(const client of [...clients])await close(client);
-  report.cleanupPassed=clients.size===0&&opened===closed;report.openedConnections=opened;report.closedConnections=closed;
+  let cleanupFailures=0;
+  for(const client of [...clients])try{await close(client);}catch{cleanupFailures++;}
+  report.cleanupPassed=clients.size===0&&opened===closed&&cleanupFailures===0;
+  report.openedConnections=opened;report.closedConnections=closed;report.cleanupFailures=cleanupFailures;report.remainingConnections=clients.size;
+  if(!report.cleanupPassed)report.failure??={name:'Error',code:'OWNED_INSTALL_CLOSE_FAILED'};
   report.passed=report.passed&&report.cleanupPassed&&report.failure===null;
   await writeFile(path.join(evidence,'report.json'),JSON.stringify(report,null,2),{flag:'wx',mode:0o600});
   assert.equal(report.cleanupPassed,true);

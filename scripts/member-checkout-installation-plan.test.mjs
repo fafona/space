@@ -27,6 +27,10 @@ test('mutating rehearsal is hosted-CI-only, fresh-connection-owned and absent fr
  assert.match(source,/scope:'owned-ci-atomic-installation-not-production'/);assert.match(source,/markerVersion='999999990001'/);
  assert.match(source,/ci_only_checkout_bundle_/);assert.match(source,/pg_try_advisory_xact_lock/);
  assert.match(source,/await db\.query\('ROLLBACK'\)\.catch/);assert.match(source,/finally\{await close\(db\);\}/);
+ assert.match(source,/for\(const client of \[\.\.\.clients\]\)try\{await close\(client\);\}catch\{cleanupFailures\+\+;\}/);
+ assert.match(source,/report\.passed=report\.passed&&report\.cleanupPassed&&report\.failure===null/);
+ assert.match(source,/installation_unapproved_grantee/);assert.match(source,/pg_default_acl/);assert.match(source,/aclexplode\(v\.attacl\)/);
+ assert.ok(source.indexOf("await writeFile(path.join(evidence,'report.json')")>source.indexOf('report.cleanupPassed=clients.size'));
  assert.doesNotMatch(source,/\.env\.local|SSH_|PRIVATE_KEY|SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|drop\s+(?:table|schema|role)|truncate\s+(?:table|public\.)/i);
  const workflow=await readFile('.github/workflows/member-checkout-real-auth.yml','utf8');
  assert.match(workflow,/installation:\s+name: Atomic Installation \(isolated PG 15\.8\)/);
