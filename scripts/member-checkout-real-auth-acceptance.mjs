@@ -21,9 +21,13 @@ import runtime from '../src/lib/merchantCheckoutRuntime.server.ts';
 import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
 import { runtimeLifecycleCases } from './member-checkout-runtime-lifecycle-cases.mjs';
 import { versionCutoverCases } from './member-checkout-version-cutover-cases.mjs';
+import { verifyOwnedRollbackSource } from './member-checkout-version-cutover-support.mjs';
 
 test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> points/coupon booking', { timeout: process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1' ? 480000 : 360000 }, async t => {
   const owned = assertIsolatedCi(); await verifyOwnedTools(owned.tools, owned.profileName);
+  // Check the old source while the inherited environment is still required to
+  // contain no backend credential, before this harness creates its local JWTs.
+  const rollbackSource = process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1' ? await verifyOwnedRollbackSource() : undefined;
   await mkdir(owned.evidence); // Existing evidence must never be overwritten.
   const report = { version: 1, commit: process.env.GITHUB_SHA, scope: 'isolated-real-auth-not-production', profile: owned.profileName, testedVersions: owned.profile, productionVersionsObserved: false, phase: 'database', checks: [], stopped: [], paths: [], methods: [], failure: null, passed: false };
   const children = [], servers = [], logs = [], methods = report.methods;
@@ -225,7 +229,7 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     });
     if (process.env.FAOLLA_CHECKOUT_VERSION_CUTOVER_ACCEPTANCE === '1') {
       report.phase = 'two-version-api-cutover';
-      await versionCutoverCases(caseOf, { db, financial, f, body, scope, candidate: { port: listening.port, evidence: fixture.evidence }, appEnv, context, callCandidate: call, methods, report });
+      await versionCutoverCases(caseOf, { db, financial, f, body, scope, source: rollbackSource, candidate: { port: listening.port, evidence: fixture.evidence }, appEnv, context, callCandidate: call, methods, report });
     }
     report.phase = 'actual-auth-rejections';
     await caseOf('fresh Auth pause or forged account scope rejects before financial RPC and leaves ledger unchanged', async () => {

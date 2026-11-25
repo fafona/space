@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createWriteStream } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import https from 'node:https';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -14,11 +14,13 @@ import { prepareOwnedNextFixture } from './member-checkout-next-session-cases.mj
 import { assertOwnedLifecycleTarget } from './member-checkout-runtime-lifecycle-cases.mjs';
 import { requestOwnedStop, safeError } from './member-checkout-real-auth-support.mjs';
 import { applicationFingerprint } from './member-checkout-compatibility-check.mjs';
-import { createOwnedCutoverPolicy, verifyOwnedRollbackSource, rollbackCommit, rollbackApplication } from './member-checkout-version-cutover-support.mjs';
+import { createOwnedCutoverPolicy, rollbackCommit, rollbackApplication } from './member-checkout-version-cutover-support.mjs';
 
-export async function versionCutoverCases(caseOf, { db, financial, f, body, scope, candidate, appEnv, context, callCandidate, methods, report }) {
+export async function versionCutoverCases(caseOf, { db, financial, f, body, scope, source, candidate, appEnv, context, callCandidate, methods, report }) {
   assertOwnedLifecycleTarget(db);
-  const source = await verifyOwnedRollbackSource(), fixture = await prepareOwnedNextFixture({ sourceRoot: source, dependencyRoot: process.cwd() });
+  assert.equal(source, path.join(process.cwd(), '.owned-checkout-base')); assert.equal(await realpath(source), source);
+  assert.deepEqual(await applicationFingerprint(source), rollbackApplication);
+  const fixture = await prepareOwnedNextFixture({ sourceRoot: source, dependencyRoot: process.cwd() });
   const evidence = report.cutover = { scope: 'owned-two-version-http-api-only', rollbackCommit, rollbackApplication,
     candidateCommit: process.env.GITHUB_SHA, candidateApplication: await applicationFingerprint(), transitions: [], requests: [], cleanupPassed: false };
   assert.notDeepEqual(evidence.candidateApplication, rollbackApplication);
