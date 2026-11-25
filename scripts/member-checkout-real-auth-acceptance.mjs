@@ -13,7 +13,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { chromium } from 'playwright';
-import { assertIsolatedCi, verifyOwnedTools, safeError, sanitizeStartupDiagnostic, database, databasePort } from './member-checkout-real-auth-support.mjs';
+import { assertIsolatedCi, verifyOwnedTools, safeError, sanitizeStartupDiagnostic, ownedStopRequest, ownedCleanupSucceeded, database, databasePort } from './member-checkout-real-auth-support.mjs';
 import { installRealAuthCheckoutFixture } from './fixtures/member-checkout-real-auth-database.mjs';
 import { prepareOwnedNextFixture } from './member-checkout-next-session-cases.mjs';
 import { applicationFingerprint } from './member-checkout-compatibility-check.mjs';
@@ -69,12 +69,15 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
   const stop = async () => {
     await browser?.close().catch(() => {});
     for (const entry of [...children].reverse()) {
+      entry.requested = null; entry.forced = false;
       if (entry.child.exitCode === null && !entry.spawnFailed) {
-        if (entry.child.connected) entry.child.send('close'); else entry.child.kill('SIGTERM');
+        entry.requested = ownedStopRequest(entry.name, owned.profileName);
+        if (entry.requested === 'IPC-close') { if (entry.child.connected) entry.child.send('close'); }
+        else entry.child.kill(entry.requested);
         const result = await Promise.race([entry.exited, sleep(10000).then(() => null)]);
-        if (!result) { entry.child.kill('SIGKILL'); await entry.exited; }
+        if (!result) { entry.forced = true; entry.child.kill('SIGKILL'); await entry.exited; }
       }
-      report.stopped.push({ name: entry.name, ...await entry.exited });
+      report.stopped.push({ name: entry.name, requested: entry.requested, forced: entry.forced, ...await entry.exited });
     }
     for (const server of servers.reverse()) { server.closeAllConnections(); if (server.listening) await new Promise(resolve => server.close(resolve)); }
     await db?.end().catch(() => {});
@@ -245,10 +248,12 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     t.signal.removeEventListener('abort', abort);
     const stopped = nextEvents?.find(v => v.type === 'stopped');
     report.nextShutdown = stopped ? { acknowledged: true, forbiddenFetches: stopped.forbiddenFetches } : { acknowledged: false };
-    report.passed = success && report.checks.every(c => c.passed) && report.failure === null && !!stopped && stopped.forbiddenFetches === 0;
+    report.cleanupPassed = ownedCleanupSucceeded(owned.profileName, report.stopped, report.nextShutdown);
+    if (!report.cleanupPassed) report.failure ??= { name: 'Error', code: 'OWNED_PROCESS_STOP_FAILED' };
+    report.passed = success && report.checks.every(c => c.passed) && report.failure === null && report.cleanupPassed;
     // The ONLY uploaded artifact is this path/method/status-only report.
     await writeFile(path.join(owned.evidence, 'report.json'), JSON.stringify(report, null, 2), { flag: 'wx', mode: 0o600 });
     if (nextChild) { assert.ok(stopped, 'owned Next shutdown acknowledgement'); assert.equal(stopped.forbiddenFetches, 0); }
-    if (success) assert.ok(report.stopped.every(c => c.code === 0 || c.signal === 'SIGTERM'), 'all owned processes stopped cleanly');
+    if (success) assert.equal(report.cleanupPassed, true, 'all owned processes stopped cleanly');
   }
 });

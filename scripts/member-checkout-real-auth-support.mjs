@@ -47,6 +47,27 @@ export async function verifyOwnedTools(directory, profileName = 'modern') {
   assert.equal(pg.version, '8.23.1');
 }
 
+export function ownedStopRequest(name, profileName) {
+  assert.ok(Object.hasOwn(compatibilityProfiles, profileName));
+  assert.ok(['auth', 'postgrest', 'next'].includes(name));
+  if (name === 'next') return 'IPC-close';
+  // v14.5 Unix.installSignalHandlers maps SIGINT and SIGTERM to
+  // UserInterrupt. Request SIGINT explicitly and require that exact owned
+  // request/observed termination pairing, never accept unsolicited interrupts.
+  return name === 'postgrest' && profileName === 'legacy' ? 'SIGINT' : 'SIGTERM';
+}
+
+export function ownedCleanupSucceeded(profileName, processes, next) {
+  if (!Object.hasOwn(compatibilityProfiles, profileName) || !Array.isArray(processes) || processes.length !== 3
+    || JSON.stringify(processes.map(p => p.name).sort()) !== JSON.stringify(['auth', 'next', 'postgrest'])
+    || next?.acknowledged !== true || next.forbiddenFetches !== 0) return false;
+  return processes.every(p => {
+    const expected = ownedStopRequest(p.name, profileName);
+    if (p.forced || p.requested !== expected) return false;
+    return p.code === 0 && p.signal === null || expected !== 'IPC-close' && p.code === null && p.signal === expected;
+  });
+}
+
 export function safeError(error) {
   // Do NOT upload exception messages, request/response bodies, tokens, env,
   // passwords, SQL dumps or process logs. Named assertion tests give context.

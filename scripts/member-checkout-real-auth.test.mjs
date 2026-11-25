@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { assertIsolatedCi, artifacts, branch, compatibilityProfiles, safeError, sanitizeStartupDiagnostic } from './member-checkout-real-auth-support.mjs';
+import { assertIsolatedCi, artifacts, branch, compatibilityProfiles, safeError, sanitizeStartupDiagnostic, ownedStopRequest, ownedCleanupSucceeded } from './member-checkout-real-auth-support.mjs';
 import { assertOwnedLifecycleTarget } from './member-checkout-runtime-lifecycle-cases.mjs';
 
 const env = () => ({ GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted', GITHUB_REPOSITORY: 'fafona/space',
@@ -34,6 +34,20 @@ test('compatibility matrix pins two separate protocols without treating either a
   assert.equal(assertIsolatedCi({ ...env(), FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: 'legacy' }, 'linux', 'x64').profile.serverVersion, '150008');
   assert.equal(assertIsolatedCi(env(), 'linux', 'x64').profile.serverVersion, '170006');
   assert.deepEqual(Object.keys(compatibilityProfiles), ['modern', 'legacy']);
+});
+test('cleanup success requires owned requested signals, all three exits and Next acknowledgement before report success', async () => {
+  const next = { acknowledged: true, forbiddenFetches: 0 };
+  const processes = ['auth', 'postgrest', 'next'].map(name => ({ name, code: 0, signal: null, forced: false, requested: ownedStopRequest(name, 'legacy') }));
+  processes[1] = { ...processes[1], code: null, signal: 'SIGINT' };
+  assert.equal(ownedCleanupSucceeded('legacy', processes, next), true);
+  for (const patch of [{ requested: null }, { requested: 'SIGTERM' }, { forced: true }, { signal: 'SIGKILL' }, { code: 1, signal: null }])
+    assert.equal(ownedCleanupSucceeded('legacy', processes.map(p => p.name === 'postgrest' ? { ...p, ...patch } : p), next), false);
+  assert.equal(ownedCleanupSucceeded('modern', processes, next), false);
+  assert.equal(ownedCleanupSucceeded('legacy', processes.slice(1), next), false);
+  assert.equal(ownedCleanupSucceeded('legacy', processes, { ...next, acknowledged: false }), false);
+  assert.equal(ownedCleanupSucceeded('legacy', processes, { ...next, forbiddenFetches: 1 }), false);
+  const runner = await readFile('scripts/member-checkout-real-auth-acceptance.mjs', 'utf8');
+  assert.match(runner, /report\.passed = .*report\.cleanupPassed/);
 });
 test('capability lifecycle refuses non-owned endpoints and contains only fixed, reversible CI grant changes', async () => {
   const db = { connectionParameters: { host: '127.0.0.1', port: 56463, database: 'faolla_member_checkout_auth_test', user: 'checkout_ci_admin' } };
