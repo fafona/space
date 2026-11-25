@@ -3,24 +3,23 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { canonicalStaticPath } from './member-checkout-static-versions.mjs';
+import { ownedPageRequest } from './member-checkout-browser-policy.mjs';
 
 export async function createOwnedPageChecks({ context, origin, servicePath, assets, evidence, extraContexts, ownedViews }) {
   const guest = await context.browser().newContext({ ignoreHTTPSErrors: true, serviceWorkers: 'block', locale: 'zh-CN', viewport: { width: 1280, height: 1000 } });
   extraContexts.push(guest);
-  const unexpected = [], errors = [], responses = [];
+  const unexpected = [], errors = [], responses = [], blockedTranslations = [];
   // Keep safe request identity on failure too, never headers, query or body.
-  evidence.browserPolicy = { unexpectedRequests: unexpected, pageErrors: errors };
-  const external = (kind, value) => {
-    const url = new URL(value);
-    unexpected.push({ kind, origin: url.origin, pathname: url.pathname.slice(0, 200) });
-  };
-  await guest.route('**/*', route => {
-    if (new URL(route.request().url()).origin !== origin) { external('guest-external-request', route.request().url()); return route.abort(); }
-    return route.continue();
-  });
-  const track = page => {
+  evidence.browserPolicy = { unexpectedRequests: unexpected, pageErrors: errors, blockedTranslations };
+  const track = async page => {
     ownedViews.push(page);
-    page.on('request', request => { const url = new URL(request.url()); if (['http:', 'https:'].includes(url.protocol) && url.origin !== origin) external('page-external-request', request.url()); });
+    await page.route('**/*', route => {
+      const record = ownedPageRequest(route.request().url(), origin, route.request().method());
+      if (record.kind === 'owned') return route.continue();
+      if (record.kind === 'translation-refused') blockedTranslations.push(record);
+      else unexpected.push(record);
+      return route.abort(); // No external connection or synthetic translation.
+    });
     page.on('pageerror', error => errors.push({ name: error.name }));
     page.on('response', response => {
       const url = new URL(response.url()); if (url.pathname.startsWith('/_next/static/')) responses.push({ path: canonicalStaticPath(url.pathname), status: response.status() });
@@ -28,7 +27,7 @@ export async function createOwnedPageChecks({ context, origin, servicePath, asse
     page.on('requestfailed', request => { if (new URL(request.url()).pathname.startsWith('/_next/static/')) errors.push({ name: 'StaticRequestFailed' }); });
     return page;
   };
-  const oldTab = track(await guest.newPage()); let serviceView;
+  const oldTab = await track(await guest.newPage()); let serviceView;
   const assertHealthy = () => {
     assert.deepEqual(errors, [], 'production_page_errors'); assert.deepEqual(unexpected, [], 'production_page_external_requests');
     assert.ok(responses.length > 0); assert.ok(responses.every(v => v.path && v.status === 200), 'production_asset_response_failed');
@@ -42,7 +41,7 @@ export async function createOwnedPageChecks({ context, origin, servicePath, asse
     assert.match(response.cache, /immutable/);
   };
   const login = async (version, width = 1280, keep = false) => {
-    const page = keep ? oldTab : track(await guest.newPage()); await page.setViewportSize({ width, height: 1000 }); await page.bringToFront();
+    const page = keep ? oldTab : await track(await guest.newPage()); await page.setViewportSize({ width, height: 1000 }); await page.bringToFront();
     const response = await page.goto(origin + '/login?accountType=personal&loggedOut=1&uiLocale=zh-CN', { timeout: 90000, waitUntil: 'domcontentloaded' });
     assert.equal(response.status(), 200); assert.equal(response.headers()['x-owned-source-version'], version);
     const input = page.locator('input[autocomplete="username"]'); await input.waitFor({ state: 'visible', timeout: 20000 });
@@ -52,7 +51,7 @@ export async function createOwnedPageChecks({ context, origin, servicePath, asse
   };
   const original = async (version, width = 390, closed = false) => {
     if (serviceView && !serviceView.isClosed()) await serviceView.close();
-    serviceView = track(await context.newPage()); await serviceView.setViewportSize({ width, height: 1000 }); await serviceView.bringToFront();
+    serviceView = await track(await context.newPage()); await serviceView.setViewportSize({ width, height: 1000 }); await serviceView.bringToFront();
     const response = await serviceView.goto(origin + servicePath + '?uiLocale=zh-CN', { timeout: 90000, waitUntil: 'domcontentloaded' });
     assert.equal(response.status(), 200); assert.equal(response.headers()['x-owned-source-version'], version);
     const panel = serviceView.locator('[data-original-service]'); await panel.locator('article').waitFor({ state: 'visible', timeout: 20000 });

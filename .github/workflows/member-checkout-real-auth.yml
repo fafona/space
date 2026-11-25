@@ -111,7 +111,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           npx --no-install playwright install --with-deps chromium
       - name: Validate Isolation Contracts
-        run: node --test scripts/member-checkout-real-auth.test.mjs scripts/member-checkout-version-cutover.test.mjs scripts/member-checkout-static-versions.test.mjs
+        run: node --test scripts/member-checkout-real-auth.test.mjs scripts/member-checkout-version-cutover.test.mjs scripts/member-checkout-static-versions.test.mjs scripts/member-checkout-browser-policy.test.mjs
       - name: Real Auth And Checkout Acceptance
         env:
           FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '1'
