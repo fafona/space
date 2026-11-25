@@ -49,7 +49,7 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
   let compilerOutput = '';
   for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { compilerOutput = (compilerOutput + chunk.toString()).slice(-32768); });
   child.stdout.pipe(log, { end: false }); child.stderr.pipe(log, { end: false });
-  let proxy, forced = false, completed = false; const upstreams = new Set();
+  let proxy, forced = false, completed = false, originalServicePilotCreated = false; const upstreams = new Set();
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   const allow = async origin => { const match = origin + '/**', handler = route => route.continue(); await context.route(match, handler); routes.push([match, handler]); };
   const browserCall = (view, route, value, headers = scope) => view.evaluate(async ({ route, value, headers }) => {
@@ -124,6 +124,18 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
       const replay = await call(submit, body); assert.equal(replay.status, 200); assert.equal(replay.value.replayed, true);
       assert.equal(replay.version, process.env.GITHUB_SHA); assert.deepEqual(await financial.state(), before);
     });
+    await caseOf('original service is separately refused by default, then only the owned CI site is enabled before its real page opens', async () => {
+      assert.equal((await db.query('select count(*)::int n from faolla_checkout_design.original_service_pilots')).rows[0].n, 0);
+      const before = await financial.state(), request = { siteId: financial.site, operationKey: original.operationKey };
+      const denied = await call('/api/member-checkout/original-service/review', request);
+      assert.equal(denied.status, 409); assert.equal(denied.value.error, 'checkout_service_disabled'); assert.deepEqual(await financial.state(), before);
+      await db.query('insert into faolla_checkout_design.original_service_pilots(site_id,enabled) values($1,true)', [financial.site]);
+      originalServicePilotCreated = true;
+      const expected = structuredClone(before); expected['faolla_checkout_design.original_service_pilots'] = [{ site_id: financial.site, enabled: true }];
+      assert.deepEqual(await financial.state(), expected);
+      const allowed = await call('/api/member-checkout/original-service/review', request);
+      assert.equal(allowed.status, 200); assert.equal(allowed.value.readOnly, true); assert.deepEqual(await financial.state(), expected);
+    });
     await caseOf('candidate production pages hydrate on mobile/desktop while the loaded old tab and old immutable scripts remain intact', async () => {
       const before = await financial.state(); await pages.candidateEntered(process.env.GITHUB_SHA); assert.deepEqual(await financial.state(), before);
     });
@@ -135,7 +147,7 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
         const row = (await db.query(`select enabled from faolla_checkout_design.${tablename} where site_id=$1`, [financial.site])).rows[0];
         if (row) { pilots.push([tablename, row.enabled]); await db.query(`update faolla_checkout_design.${tablename} set enabled=false where site_id=$1`, [financial.site]); }
       }
-      await db.query('insert into faolla_checkout_design.original_service_pilots(site_id,enabled) values($1,true) on conflict(site_id) do update set enabled=true', [financial.site]);
+      assert.deepEqual((await db.query('select enabled from faolla_checkout_design.original_service_pilots where site_id=$1', [financial.site])).rows, [{ enabled: true }]);
       const before = await financial.state();
       await transition('retained', async () => (await browserCall(oldView, '/api/auth/merchant-session?reauth=1')).status === 200 && (await callCandidate(resource, undefined, scope)).status === 200);
       assert.equal((await call('/api/auth/merchant-session?reauth=1')).version, rollbackCommit);
@@ -200,6 +212,10 @@ export async function versionCutoverCases(caseOf, { db, financial, f, body, scop
     for (const upstream of upstreams) upstream.destroy();
     if (proxy) await cleanup(async () => { proxy.closeAllConnections(); if (proxy.listening) await new Promise(resolve => proxy.close(resolve)); });
     for (const [table, enabled] of pilots) await cleanup(() => db.query(`update faolla_checkout_design.${table} set enabled=$2 where site_id=$1`, [financial.site, enabled]));
+    if (originalServicePilotCreated) await cleanup(async () => {
+      const removed = await db.query('delete from faolla_checkout_design.original_service_pilots where site_id=$1 and enabled=true', [financial.site]);
+      assert.equal(removed.rowCount, 1, 'owned_original_service_pilot_drift');
+    });
     const requested = requestOwnedStop(child, 'next', 'current-auth');
     const stopped = await Promise.race([exited, wait(10000).then(() => null)]);
     if (!stopped) { forced = true; child.kill('SIGKILL'); await exited; }

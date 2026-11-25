@@ -9,6 +9,18 @@ test('compiler diagnostics contain only named error codes and module identifiers
   assert.deepEqual(ownedCompilerFailure("Error: Cannot find module '@/lib/test' MODULE_NOT_FOUND secret-sentinel https://private.invalid?token=sentinel"), { codes: ['MODULE_NOT_FOUND'], modules: ['@/lib/test'] });
   assert.deepEqual(ownedCompilerFailure('TypeError: secret-sentinel'), { codes: ['TypeError'], modules: [] });
 });
+
+test('new real original page has an explicit owned pilot prerequisite, default refusal and exact-row cleanup', async () => {
+  const source = await readFile(new URL('./member-checkout-version-cutover-cases.mjs', import.meta.url), 'utf8');
+  const prerequisite = source.indexOf("await caseOf('original service is separately refused by default");
+  assert.ok(prerequisite > 0 && prerequisite < source.indexOf('await pages.candidateEntered('));
+  assert.match(source, /assert\.equal\(denied\.status, 409\); assert\.equal\(denied\.value\.error, 'checkout_service_disabled'\)/);
+  assert.match(source, /select count\(\*\)::int n from faolla_checkout_design\.original_service_pilots/);
+  assert.match(source, /insert into faolla_checkout_design\.original_service_pilots\(site_id,enabled\) values\(\$1,true\)'/);
+  assert.doesNotMatch(source, /original_service_pilots[^\n]+on conflict/);
+  assert.match(source, /delete from faolla_checkout_design\.original_service_pilots where site_id=\$1 and enabled=true/);
+  assert.match(source, /assert\.equal\(removed\.rowCount, 1, 'owned_original_service_pilot_drift'\)/);
+});
 test('native loopback TLS verifies exact canonical SNI and rejects a different name without weakening certificate checks', { timeout: 10000 }, async () => {
   const keys = forge.pki.rsa.generateKeyPair(2048), cert = forge.pki.createCertificate(); cert.publicKey = keys.publicKey; cert.serialNumber = '01';
   cert.validity.notBefore = new Date(Date.now() - 60000); cert.validity.notAfter = new Date(Date.now() + 60000);
