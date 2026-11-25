@@ -43,9 +43,14 @@ export async function installRealAuthCheckoutFixture(t, db) {
     grant select on public.merchant_enterprise_employees,public.merchants to service_role;
     create role checkout_local_gateway login noinherit nosuperuser nocreatedb nocreaterole nobypassrls password 'disposable-gateway-ci-only';
     grant faolla_checkout_runtime,anon,authenticated,service_role to checkout_local_gateway;
-    -- Official Auth expects its namespace to exist before its own migrator runs.
-    -- This is a NEW empty CI namespace, not an edit to Auth tables or migrations.
-    create schema auth;`);
+    -- Official hack/init_postgres.sql precreates the namespace/owner and sets
+    -- auth search_path. Later original migrations grant SELECT to postgres.
+    -- Reproduce those prerequisites ONLY in this fresh disposable CI database.
+    create role postgres nologin nosuperuser nocreatedb nocreaterole nobypassrls;
+    create role checkout_ci_auth login noinherit nosuperuser nocreatedb nocreaterole nobypassrls password 'disposable-auth-ci-only';
+    create schema auth authorization checkout_ci_auth;
+    grant create on database faolla_member_checkout_auth_test to checkout_ci_auth;
+    alter role checkout_ci_auth set search_path=auth;`);
   const site = '10909992';
   for (const table of ['bundle_pilots', 'intent_pilots']) await db.query(`insert into faolla_checkout_design.${table}(site_id,enabled) values($1,true)`, [site]);
   await db.query('update public.faolla_booking_atomic_control set active=true where singleton');

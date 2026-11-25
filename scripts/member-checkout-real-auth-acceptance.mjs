@@ -85,7 +85,7 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
     const authOrigin = `http://127.0.0.1:${authPort}`, restOrigin = `http://127.0.0.1:${restPort}`;
     const authChild = spawnOwned('auth', path.join(owned.tools, 'auth-bin/auth'), [], {
       GOTRUE_API_HOST: '127.0.0.1', PORT: String(authPort), API_EXTERNAL_URL: authOrigin, GOTRUE_SITE_URL: 'https://127.0.0.1',
-      GOTRUE_DB_DRIVER: 'postgres', GOTRUE_DB_DATABASE_URL: `postgresql://checkout_ci_admin:disposable-checkout-ci-only@127.0.0.1:${databasePort}/${database}?sslmode=disable`,
+      GOTRUE_DB_DRIVER: 'postgres', GOTRUE_DB_DATABASE_URL: `postgresql://checkout_ci_auth:disposable-auth-ci-only@127.0.0.1:${databasePort}/${database}?sslmode=disable`,
       GOTRUE_DB_NAMESPACE: 'auth', GOTRUE_DB_MIGRATIONS_PATH: path.join(owned.tools, 'auth-387e91f37e00b64b9060352988066bbb685f6e45/migrations'),
       GOTRUE_JWT_SECRET: secret, GOTRUE_JWT_AUD: audience, GOTRUE_JWT_EXP: '3600', GOTRUE_JWT_DEFAULT_GROUP_NAME: 'authenticated',
       GOTRUE_JWT_ADMIN_ROLES: 'service_role', GOTRUE_EXTERNAL_EMAIL_ENABLED: 'true', GOTRUE_EXTERNAL_PHONE_ENABLED: 'false',
@@ -207,7 +207,7 @@ test('isolated real Auth -> actual Next cookies -> restricted PostgREST -> point
   } catch (error) {
     report.failure = safeError(error);
     if (['auth-startup', 'postgrest-startup'].includes(report.phase)) report.startup = Object.fromEntries(Object.entries(startupDiagnostics).map(([name, value]) =>
-      [name, sanitizeStartupDiagnostic(value, [secret, serviceJwt, anonJwt, runtimeJwt, 'disposable-checkout-ci-only', 'disposable-gateway-ci-only'])]));
+      [name, sanitizeStartupDiagnostic(value, [secret, serviceJwt, anonJwt, runtimeJwt, 'disposable-checkout-ci-only', 'disposable-gateway-ci-only', 'disposable-auth-ci-only'])]));
     throw error;
   }
   finally {
