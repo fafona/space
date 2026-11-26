@@ -5,7 +5,10 @@
 import {createHash} from 'node:crypto';
 import {isProxy} from 'node:util/types';
 import path from 'node:path';
-import {validateCredentialEnvelope} from './fixtures/merchant-checkout-credential-file.ts';
+import * as credentialFile from './fixtures/merchant-checkout-credential-file.ts';
+// Native Node strip-types uses named exports; the existing tsx/CommonJS test
+// path exposes the same trusted fixture through default. Neither is user input.
+const validateCredentialEnvelope=credentialFile.validateCredentialEnvelope??credentialFile.default?.validateCredentialEnvelope;
 const reject=()=>{throw Error('isolated_delivery_unavailable');};
 const need=v=>{if(!v)reject();};
 const data=v=>v&&typeof v==='object'&&!Array.isArray(v)&&!isProxy(v)&&[Object.prototype,null].includes(Object.getPrototypeOf(v))&&!Object.getOwnPropertySymbols(v).length&&Object.values(Object.getOwnPropertyDescriptors(v)).every(d=>d.enumerable&&Object.hasOwn(d,'value'));
