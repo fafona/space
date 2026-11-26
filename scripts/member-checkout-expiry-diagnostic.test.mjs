@@ -44,3 +44,8 @@ test('dedicated branch workflow has no application build, deploy authority, secr
   for(const file of ['.github/workflows/member-checkout-real-auth.yml','.github/workflows/member-checkout-047-real-auth.yml','.github/workflows/member-checkout-full-registry-evidence.yml'])
     assert.doesNotMatch(await readFile(file,'utf8'),/expiry-diagnostic/);
 });
+test('transport diagnosis records only fixed phases, socket identities and codes, never request headers or tokens',async()=>{
+  const s=await readFile('scripts/member-checkout-expiry-diagnostic-acceptance.mjs','utf8');
+  for(const marker of ["requestPhase='wrong-signature'","requestPhase='wrong-audience'",'socketIds=new WeakMap()','trace.reusedSocket=req.reusedSocket','trace.errorCode=','report.transport.push(trace)'])assert.ok(s.includes(marker),marker);
+  assert.doesNotMatch(s,/trace\.(?:jwt|token|headers|secret|key|request|body)\s*=/);
+});

@@ -19,7 +19,7 @@ test('measure real PostgREST expiry clock without changing old assertions or pro
   const executable=path.join(owned.tools,'postgrest-bin/postgrest'),version=execFileSync(executable,['--version'],{encoding:'utf8',timeout:5000});
   assert.match(version,/PostgREST 14\.5/);
   const report={version:1,commit:process.env.GITHUB_SHA,scope:'isolated-expiry-clock-diagnosis-not-acceptance',gatewayVersion:'14.5',postgresVersion:'150008',
-    archiveSha256:expiryDiagnosticArchiveSha256,checks:[],rounds:[],passed:false,cleanupPassed:false,originalGateChanged:false,originalGatePassed:false,
+    archiveSha256:expiryDiagnosticArchiveSha256,nodeVersion:process.version,transport:[],checks:[],rounds:[],passed:false,cleanupPassed:false,originalGateChanged:false,originalGatePassed:false,
     originalFailureClockCaptured:false,productionReadPerformed:false,productionAuthorized:false,deploymentReady:false,stripeEnabled:false};
   const check=async(name,fn)=>{let passed=false;await t.test(name,async()=>{await fn();passed=true;});report.checks.push({name,passed});assert.equal(passed,true,'diagnostic_stage_failed');};
   const requirePg=createRequire(path.join(owned.tools,'pg-client/package.json')),{Client}=requirePg('pg');
@@ -27,13 +27,16 @@ test('measure real PostgREST expiry clock without changing old assertions or pro
     ssl:false,connectionTimeoutMillis:5000,statement_timeout:5000,query_timeout:6000,application_name:'faolla-owned-expiry-clock-diagnosis'});
   const socketPath=path.join(owned.evidence,'rest.sock'),key=randomBytes(48),secret=key.toString('base64url'),audience='owned-expiry-diagnostic';let child,exited,dbConnected=false,dbClosed=false,stopped,outputBytes=0,success=false;
   const sign=(claims,signingKey=secret)=>{const wire=[{alg:'HS256',typ:'JWT'},{role:'expiry_observer',aud:audience,...claims}].map(v=>Buffer.from(JSON.stringify(v)).toString('base64url')).join('.');return wire+'.'+createHmac('sha256',signingKey).update(wire).digest('base64url');};
-  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms)),socketIds=new WeakMap();let nextSocketId=0,requestPhase='readiness';
   const request=jwt=>new Promise((resolve,reject)=>{
-    const startedAt=Date.now(),mono=performance.now(),req=http.request({socketPath,path:'/rpc/observe_clock',method:'GET',headers:{authorization:'Bearer '+jwt,connection:'close'}},res=>{
+    const trace={phase:requestPhase,socketId:null,reusedSocket:false,status:null,errorCode:null},startedAt=Date.now(),mono=performance.now();report.transport.push(trace);
+    const req=http.request({socketPath,path:'/rpc/observe_clock',method:'GET',headers:{authorization:'Bearer '+jwt,connection:'close'}},res=>{
+      trace.status=res.statusCode;
       const chunks=[];let bytes=0;res.on('data',b=>{bytes+=b.length;if(bytes>16384)res.destroy(Error('diagnostic_body_limit'));else chunks.push(b);});
       res.on('error',reject);res.on('end',()=>{try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8')),endedAt=Date.now();assert.ok(Math.abs((endedAt-startedAt)-(performance.now()-mono))<200);
         resolve({status:res.statusCode,value,startedAt,endedAt});}catch(error){reject(error);}});
-    });req.setTimeout(3000,()=>req.destroy(Error('diagnostic_request_timeout')));req.on('error',reject);req.end();
+    });req.on('socket',socket=>{if(!socketIds.has(socket))socketIds.set(socket,++nextSocketId);trace.socketId=socketIds.get(socket);trace.reusedSocket=req.reusedSocket;});
+    req.setTimeout(3000,()=>req.destroy(Error('diagnostic_request_timeout')));req.on('error',error=>{trace.errorCode=/^[A-Z0-9_]{1,40}$/.test(error?.code??'')?error.code:'OTHER';trace.reusedSocket=req.reusedSocket;trace.socketDestroyed=req.socket?.destroyed??null;reject(error);});req.end();
   });
   const valid=()=>sign({exp:Math.floor(Date.now()/1000)+3600,iat:Math.floor(Date.now()/1000)-60});
   const accepted=r=>{assert.equal(r.status,200);assert.equal(r.value.role,'expiry_observer');assert.equal(r.value.transactionReadOnly,'on');assert.ok(Number.isSafeInteger(r.value.dbNowMs));assert.ok(r.value.dbNowMs>=r.startedAt-200&&r.value.dbNowMs<=r.endedAt+200);return r;};
@@ -70,24 +73,24 @@ test('measure real PostgREST expiry clock without changing old assertions or pro
       report.readinessStatuses=[];let warm;
       while(performance.now()<deadline){warm=await request(valid());report.readinessStatuses.push(warm.status);if(warm.status===200)break;assert.equal(warm.status,503);await sleep(50);}
       accepted(warm);
-      const bad=await request(sign({exp:Math.floor(Date.now()/1000)+3600},randomBytes(48)));assert.equal(bad.status,401);
-      const wrongAudience=await request(sign({exp:Math.floor(Date.now()/1000)+3600,aud:'incorrect-owned-audience'}));assert.equal(wrongAudience.status,401);
+      requestPhase='wrong-signature';const bad=await request(sign({exp:Math.floor(Date.now()/1000)+3600},randomBytes(48)));assert.equal(bad.status,401);
+      requestPhase='wrong-audience';const wrongAudience=await request(sign({exp:Math.floor(Date.now()/1000)+3600,aud:'incorrect-owned-audience'}));assert.equal(wrongAudience.status,401);
     });
     await check('three bounded real-clock rounds record exact integer validation windows and late 200s',async()=>{
       for(let round=0;round<3;round++){
         const exp=Math.floor(Date.now()/1000)-29,claims=expiryClockOracleClaims(exp),oracle=sign(claims),expiryOnly=sign({exp,iat:exp-30}),samples=[],deadline=performance.now()+5000;
         while(Date.now()<exp*1000+33400){
           t.signal.throwIfAborted();assert.ok(performance.now()<deadline);assert.ok(samples.length<200);
-          const r=await request(oracle);assert.ok([200,401].includes(r.status));
+          requestPhase='clock-oracle';const r=await request(oracle);assert.ok([200,401].includes(r.status));
           const sample={startedPastExpiryMs:r.startedAt-exp*1000,endedPastExpiryMs:r.endedAt-exp*1000,status:r.status};
           if(r.status===200){accepted(r);assert.equal(r.value.exp,exp);assert.equal(r.value.nbf,exp+60);assert.equal(r.value.iat,exp+60);
             sample.inferredValidationSecond=exp+30;sample.dbPastExpiryMs=r.value.dbNowMs-exp*1000;sample.dbVsValidationMs=r.value.dbNowMs-(exp+30)*1000;
           }else{assert.equal(r.value.code,'PGRST303');assert.ok(['JWT expired','JWT not yet valid'].includes(r.value.message));sample.error=r.value.message==='JWT expired'?'expired':'not-yet-valid';}
-          const plain=await request(expiryOnly);sample.expiryOnlyStatus=plain.status;sample.expiryOnlyStartedPastExpiryMs=plain.startedAt-exp*1000;
+          requestPhase='expiry-only';const plain=await request(expiryOnly);sample.expiryOnlyStatus=plain.status;sample.expiryOnlyStartedPastExpiryMs=plain.startedAt-exp*1000;
           if(plain.status===200)accepted(plain);else expired(plain);
           samples.push(sample);await sleep(25);
         }
-        expired(await request(expiryOnly));expired(await request(oracle));accepted(await request(valid()));
+        requestPhase='post-window-expiry';expired(await request(expiryOnly));expired(await request(oracle));requestPhase='control';accepted(await request(valid()));
         const late=samples.filter(s=>s.status===200&&s.startedPastExpiryMs>=31000),plainLate=samples.filter(s=>s.expiryOnlyStatus===200&&s.expiryOnlyStartedPastExpiryMs>=31000);
         assert.ok(samples.some(s=>s.status===200),'oracle_window_was_observed');assert.ok(samples.some(s=>s.status===401&&s.error==='expired'));
         report.rounds.push({round:round+1,exp,expectedValidationSecond:exp+30,samples,lateAcceptedCount:late.length,expiryOnlyLateAcceptedCount:plainLate.length,
