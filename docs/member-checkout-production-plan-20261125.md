@@ -316,6 +316,14 @@ root supervisor、Next、issuer 正常退出 0，未强杀，Next IPC-close 已�
 
 报告 SHA `176820d7f9bdf5422c1bb2e6ca730b92663ad010297e4145360a1d684a469f3e`，离线 review SHA `54125868a23e04b2dc68936d8d0c0b2e7969592b1572f9502f6a988368dd3306`，私有证据在 `output/checkout-active-app-approved-20261126-d31a6c/`，旧证据未变。应用／SQL／CI 源未修改，未读客户记录、完整环境、cmdline 或密钥，未修改正式配置／权限／数据／服务，未安装／部署，Stripe／邮件仍关闭。该次许可已结束，不能复用。
 
+### 固定 proc 表修正通过，正式活动应用元数据已绑定（未安装／部署）
+
+批准 `call_a9cd1311ccd344bab0f21b1a19941c59` 的范围已完成。仅为准确两个 proc 网络表新增自身 FD／procfs 校验与路径时间戳语义；同一 FD 的九字段、普通文件的完整身份／时间、PID/start-time、CWD、LISTEN／进程 FD/socket 约束保留。独立提交 `67f274679e753fce458b948a2a4bfef525b5ad74` 的 CI `45798324231`：64 单测＋8 真实隔离 Linux 场景通过，实际自然时间戳差异复现，tmpfs FD／inode／权限／PID／socket 负例拒绝，唯一 owned 容器清理成功。首轮失败及原诊断缺项如实保留，不倒填成功或原因。
+
+71 项私有组合本地检查通过后，唯一批准 SSH 在 10:10 UTC 成功，准确活动记录、目标进程／UID／GID／CWD／exe 元数据及前后实际 LISTEN/socket 绑定一致。详细运行字段仅私有保存，未证明公网流量／PM2 监督或 signer 隔离；本次不自动改变应用运行身份。签发隔离的部署决策仍需明确，不能以同机文件权限替代独立信任边界，目录／签发服务、有效签发来源和备份恢复仍未交付。
+
+私有证据 `output/checkout-proc-table-approved-20261126-a9cd13/`：报告 SHA `0ef10d2b82327aad8d427392d803e31e1ed2e31b0a95e2707492c6805a972967`，review SHA `bc4fc4c8c884b3d6fc9c1eb37efcccd1858544b4950854f83e9cee2ed03145de`。旧证据哈希复核未变；本轮仅四个新增采集／验收文件，原应用、SQL、依赖、旧工作流不变，不重跑或累计原 524 应用场景。网关／数据库／客户／完整环境／密钥／cmdline 读取、正式变更、安装／部署均无操作，Stripe／邮件仍关闭；一次许可已结束，不自动重连。
+
 ## 最初方案核对记录（保留，后续结果见上文与实施记录）
 
 - 代码定位：`src/lib/merchantCheckoutRuntime.server.ts`、其 12 项测试、`scripts/member-checkout-runtime-lifecycle-cases.mjs`、`scripts/member-checkout-047-installation-journal.mjs` 及独立来源／seal 模块。
