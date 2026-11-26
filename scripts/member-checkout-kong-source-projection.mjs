@@ -10,7 +10,9 @@ export function checkoutKongSourceProjection(kind,scope={serviceIds:[],routeIds:
  if(!kinds.includes(kind)||!exact(scope,['serviceIds','routeIds'])||!ids(scope.serviceIds)||!ids(scope.routeIds))throw Error('kong_projection_scope_invalid');
  if(kind==='plugins'&&(!scope.serviceIds.length||!scope.routeIds.length))throw Error('kong_projection_scope_invalid');
  const map=a=>'{'+a.map(v=>'["'+v+'"]=true').join(',')+'}';
- return `local cjson=require('cjson.safe')
+ return `package.path='/usr/local/openresty/lualib/?.lua;/usr/local/openresty/lualib/?/init.lua'
+package.cpath='/usr/local/openresty/lualib/?.so'
+local cjson=require('cjson.safe')
 local kind=${JSON.stringify(kind)}
 local service_ids=${map(scope.serviceIds)}
 local route_ids=${map(scope.routeIds)}
