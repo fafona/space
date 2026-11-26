@@ -2692,3 +2692,10 @@ git diff --check
 - 09:39 UTC 唯一一次受信 SSH 完成，退出 0／stderr 0。只在已知 Kong 源端内存中临时处理响应，进一步在序列化前去掉服务 host／port／path 和路由 paths／protocols 等字段，只保留名称、enabled 与绑定 ID；不访问 consumer／凭据端点，不导出或落盘完整响应／config。有效固定明文监听确认，5 个服务、5 条路由、9 项启用插件绑定前后稳定，来源身份／镜像／挂载稳定。`rest-v1` 和 `auth-v1` 各有 acl／key-auth／cors；三个公开 Auth 服务分别有 cors。
 - 应用分支未完成：`active_process_before` 阶段 `metadata_file_changed`。采集器未保留具体文件标签和变化字段名，因此现有证据不能确认实际运行身份，也不能认定是 `/proc` 时间字段或线上业务异常；不放宽检查、不猜 root／UID／GID、不安装。网关观察独立保留，不重复读取；下一步仅补应用诊断并本地验证，再申请新的单次应用只读许可。此次许可已消耗，不自动重连。
 - 原始报告 SHA `5c8cb6750f7f55936950085effdb82cfb0d9311ba936042517ff9f5e584feab5`，准确发送源 SHA `b65e6b6c62d5c1429247cad7a7db3e60b391e8b0d1fd6b5add554404447ded9c`，离线 review SHA `6440c4c3bfc58bd15a373f3a71f4c71ea55c67bd70ff7cc026f9306a41dfa312`，私有保留于 `output/checkout-missing-runtime-approved-20261126-c8274f/`。本地 attempt／源／测试／报告与旧证据均保留，不覆盖失败；未读取数据库、客户记录、完整环境或密钥，未改正式配置、权限、数据、目录或服务，未签发／安装／部署，不启用 Stripe／邮件。
+
+## 第九十九阶段：应用专用诊断定位内核网络表时间字段（2026-11-26，未上线）
+
+- 用户批准 `call_34f45735dda9482babda2b14b4a4040b` 后，独立应用采集器先通过 60 项本地检查（保留纯组件 36＋新增诊断 24）。不包含任何远端子进程、Kong、数据库或网络客户端；原九字段／owner／mode／inode／大小及 PID/socket 拒绝条件不改，只增加固定资源、检查阶段、变化字段名。任意错误正文、值、额外路径不导出；早期本地准备曾因测试总数断言写成 48 而拒绝，纠正为实际 60 后才执行首次正式连接，没有消耗或重试正式窗口。
+- 09:49 UTC 唯一 SSH 退出 0／stderr 0。诊断精确到 `tcp4_before / after_path_identity / [mtimeNs,ctimeNs]`，对应固定 `/proc/net/tcp`；打开句柄的前后九字段检查通过，路径重查的设备、inode、链接数、UID、GID、mode、bytes 均一致，仅两时间字段不同。确认采集器拒绝原因，但完整应用身份尚未绑定，不推断业务故障／root／公网身份或签发隔离。
+- 下一项提出仅两份准确 proc 网络表的专用读取语义，先核对 procfs 类型及打开句柄、保留设备／inode／权限和前后 PID/start-time／LISTEN／FD/socket 约束；普通 active／PID／exe 文件仍完整比较时间字段。先真实隔离 Linux 与拒绝回归验收，再另获新应用读取许可；本轮未修改已使用规则，不自动重试，也不重新读取已确认网关。上游内核伪文件时间戳机制仅参考，不冒充正式内核版本或确切生命周期证明。
+- 报告 SHA `176820d7f9bdf5422c1bb2e6ca730b92663ad010297e4145360a1d684a469f3e`，发送源 SHA `f4ce8605e0b46597375357d0a379872dfcc2c2ddccd81db9e334cd1087da1c48`，离线 review SHA `54125868a23e04b2dc68936d8d0c0b2e7969592b1572f9502f6a988368dd3306`，私有证据在 `output/checkout-active-app-approved-20261126-d31a6c/`。旧报告／源／review／CI 复核未变；未读网关、数据库、客户记录、完整环境、cmdline 或密钥，未改正式配置／权限／数据／服务，不安装／部署，不启用 Stripe／邮件。新诊断测试不加到原 524 应用场景；单次许可已经结束。

@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | 网关实际鉴权链 | 09:39 UTC 已确认固定明文监听可用、5 个相关 service／5 个 route／9 项已启用插件绑定，前后元数据一致 | 绑定元数据缺口已补；有效 JWT 签发／验证配置及端到端调用能力仍需单独交付，不能由插件名称推断 |
 | 签发信任 | Auth／REST 的 secret 环境项存在，值未读；显式 audience 等部分已知 | 有效算法／issuer／audience／kid 和可用受信签发入口的配置来源证明；不能因环境项同名就认定钥匙相同，不能导出钥匙来比较 |
-| 应用身份 | 09:39 UTC 的精确活动记录采集在 `active_process_before` 的文件一致性检查退出；实际 UID／GID／socket 绑定仍未知 | 先补具体资源标签／变化字段名诊断并本地验证，再另获一次仅应用元数据的读取许可；不重复采网关，不读完整 PM2 环境、cmdline 或 environ |
+| 应用身份 | 09:49 UTC 的独立应用诊断确认：固定 `/proc/net/tcp` 读取后路径重查仅 `mtimeNs`／`ctimeNs` 不同，打开句柄前后身份检查已通过；完整绑定仍未知 | 提出仅固定内核网络表的读取语义修正，先真实隔离 Linux 验证，再另获新的应用只读许可；普通文件保护、PID/start-time／FD/socket 绑定不变 |
 | 持久目录与服务 | 拟用根目录及子目录、指定 issuer unit 不存在 | 批准后的准确 OS 身份、目录 owner／mode、签发服务生命周期、短期交付和暂停／撤销机制；不能把 stat 目录当作已经完成这些交付 |
 | 独立备份恢复 | 指定演练凭证不存在；结算路径覆盖未知 | 明确覆盖清单、独立加密备份位置／保留规则／恢复者及可验证恢复边界；“有备份文件”不等于恢复验证通过 |
 
@@ -59,6 +59,18 @@ Kong 2.8.1 的生成代码会用逗号序列化 table 值；该参考仅用于�
 应用分支在 `active_process_before` 返回 `metadata_file_changed`，没有得到完整身份绑定；报告没有保留具体路径标签和变化字段名，故无法从现有证据认定是 `/proc` 时间字段、PID 变化还是其他原因。**这是采集器的一致性检查拒绝，不是应用故障证据。**不放宽检查、不猜 UID／GID／root、不据此安装。网关结果可独立保留，不因应用失败而重复采集。
 
 报告 SHA `5c8cb6750f7f55936950085effdb82cfb0d9311ba936042517ff9f5e584feab5`，离线 review SHA `6440c4c3bfc58bd15a373f3a71f4c71ea55c67bd70ff7cc026f9306a41dfa312`，实际发送源 SHA `b65e6b6c62d5c1429247cad7a7db3e60b391e8b0d1fd6b5add554404447ded9c`。证据在 `output/checkout-missing-runtime-approved-20261126-c8274f/` 私有保留，原报告和原采集器不覆盖。数据库查询、客户记录读取、远程写入／目录创建、权限修改、安装／部署均为 0；Stripe／邮件不启用。本次许可已消耗，下一次应用诊断必须另获明确许可，不能重跑这份 runner；原 524 应用场景／来源准备 53 项 CI 不重新累计。
+
+### 09:49 UTC 应用专用诊断：准确定位到内核网络表的路径时间戳
+
+新批准 `call_34f45735dda9482babda2b14b4a4040b` 仅用于应用。保留上一采集器原字节；新采集器无远端子进程／网络／网关／数据库入口。先通过 60 项本地检查（原纯组件 36＋私有诊断 24），逐字段故障注入验证原九字段比较、文件大小、owner／mode／inode、重复 PID、错误 socket 等拒绝不变。只增加固定资源标签、检查阶段和变化字段名，不返回任意错误正文、字段值或额外路径。
+
+唯一 SSH 在 09:49 UTC 退出 0／stderr 0，未重试。准确诊断为 `tcp4_before / after_path_identity / metadata_file_changed / [mtimeNs,ctimeNs]`：文件打开前后、读取后 FD 的全部九字段检查均已通过；路径重新 lstat 时 dev／ino／nlink／uid／gid／mode／bytes 一致，仅上述两时间字段不同。确认的是**采集器拒绝的具体原因**，没有取得完整应用身份，也没有发现或证明网站业务故障；不报告 UID／GID／root、PM2 监督或公网绑定已就绪。
+
+机制参考：Linux 的 `/proc` 是内核数据接口，`proc_get_inode` 的伪 inode 可在构建时赋当前时间；不能把这份上游源码冒充正式主机的实际内核版本或本次 dentry 生命周期证明。[内核 proc 文档](https://docs.kernel.org/filesystems/proc.html)、[Linux v4.18 proc_get_inode](https://github.com/torvalds/linux/blob/v4.18/fs/proc/inode.c#L420)。本次记录没有采集或扩大读取内核版本。
+
+下一项仅为提案，尚未修改已使用规则：将准确 `/proc/net/tcp`、`/proc/net/tcp6` 与普通持久文件区分，先确认 procfs 类型及打开句柄身份，仍核对设备／inode／owner／mode／大小、前后 PID/start-time、目标 LISTEN 行及进程 FD/socket；普通 active／PID／exe 文件仍完整核对时间戳。须先补拒绝回归与真实隔离 Linux 验收；不得将任意文件或所有 `/proc` 都列入时间字段例外，不放行非 procfs、inode／权限／进程／socket 变化，也不拿本次诊断直接重试。新规则及新应用读取窗口需另行明确批准，不再读取已确认网关。
+
+原报告 SHA `176820d7f9bdf5422c1bb2e6ca730b92663ad010297e4145360a1d684a469f3e`，发送源 SHA `f4ce8605e0b46597375357d0a379872dfcc2c2ddccd81db9e334cd1087da1c48`，独立离线 review SHA `54125868a23e04b2dc68936d8d0c0b2e7969592b1572f9502f6a988368dd3306`，证据私有保留于 `output/checkout-active-app-approved-20261126-d31a6c/`；上一报告、发送源、review 和采集器哈希复核未变。正式网关／数据库查询／客户数据／完整环境／密钥／cmdline 读取为 0，远程写入、目录／权限／服务变更、安装／部署均无操作，Stripe 不启用。本次单次许可已消耗。
 
 ## 4. 身份与目录的提案，不自动落地
 

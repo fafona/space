@@ -308,6 +308,14 @@ root supervisor、Next、issuer 正常退出 0，未强杀，Next IPC-close 已�
 
 私有报告 SHA `5c8cb6750f7f55936950085effdb82cfb0d9311ba936042517ff9f5e584feab5`／review SHA `6440c4c3bfc58bd15a373f3a71f4c71ea55c67bd70ff7cc026f9306a41dfa312`，证据位于 `output/checkout-missing-runtime-approved-20261126-c8274f/`；旧证据不变，本次许可已消耗。数据库／客户记录／完整环境／密钥读取、远程写入／授权／安装／部署均无操作；Stripe／邮件保持关闭。签发来源、准确应用身份、目录／服务及独立备份恢复尚未就绪，原应用／SQL／524 场景及来源 53 项 CI 不变。
 
+### 应用单次诊断已定位拒绝字段，规则修正尚未获准
+
+按新许可 `call_34f45735dda9482babda2b14b4a4040b`，60 项本地测试（36 原纯组件＋24 私有诊断）通过后只连接一次，不重复读 Kong，不查数据库。09:49 UTC 的准确结果是固定网络表 `/proc/net/tcp` 在读取后的路径重查，仅 `mtimeNs`／`ctimeNs` 与最初不同；同一打开 FD 的前后九字段检查以及路径 dev／ino／nlink／uid／gid／mode／bytes 均已通过。原采集器未区分这种伪文件与普通文件，因此拒绝；本次不改原规则、不自动重试，也不把这次拒绝当作业务故障或完整身份已确认。
+
+下一步仅提议为两份准确 proc 网络表增加 procfs／句柄绑定的专用读取语义，普通文件、PID/start-time、LISTEN／进程 FD/socket 守卫全部保留；先本地与真实隔离 Linux 验证，再另获新的单次应用读取许可。实际内核版本、时间字段变化的具体内核生命周期并未采集，不从上游源码反推正式值；签发隔离、独立备份与安装／试点权限仍未就绪。
+
+报告 SHA `176820d7f9bdf5422c1bb2e6ca730b92663ad010297e4145360a1d684a469f3e`，离线 review SHA `54125868a23e04b2dc68936d8d0c0b2e7969592b1572f9502f6a988368dd3306`，私有证据在 `output/checkout-active-app-approved-20261126-d31a6c/`，旧证据未变。应用／SQL／CI 源未修改，未读客户记录、完整环境、cmdline 或密钥，未修改正式配置／权限／数据／服务，未安装／部署，Stripe／邮件仍关闭。该次许可已结束，不能复用。
+
 ## 最初方案核对记录（保留，后续结果见上文与实施记录）
 
 - 代码定位：`src/lib/merchantCheckoutRuntime.server.ts`、其 12 项测试、`scripts/member-checkout-runtime-lifecycle-cases.mjs`、`scripts/member-checkout-047-installation-journal.mjs` 及独立来源／seal 模块。
