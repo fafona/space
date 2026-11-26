@@ -16,7 +16,13 @@ let child=null,container=null,imageId=null,childExited=false,containerRemoved=fa
 const checks=[],observations={},sha=v=>createHash('sha256').update(v).digest('hex');
 const run=(args,{optional=false,timeout=15000}={})=>{const r=spawnSync('docker',args,{encoding:'utf8',timeout,maxBuffer:262144,shell:false});if(r.error||r.signal||r.status!==0){lastCommandFailure={phase,verb:args[0],status:r.status,signal:r.signal??null,errorCode:r.error?.code??null,stderr:(r.stderr??'').slice(-4000)};if(optional)return null;throw Error('owned_docker_command_failed');}return r.stdout.trim();};
 const mark=(name,fn)=>{fn();checks.push(name);};
-const inspect=()=>JSON.parse(run(['inspect','--type=container','--format','{"id":{{json .Id}},"image":{{json .Image}},"owner":{{json (index .Config.Labels "io.faolla.checkout-metadata-owner")}},"ports":{{json .HostConfig.PortBindings}},"networkMode":{{json .HostConfig.NetworkMode}},"binds":{{json .HostConfig.Binds}},"readonly":{{json .HostConfig.ReadonlyRootfs}},"running":{{json .State.Running}}}',container]));
+const inspect=()=>JSON.parse(run(['inspect','--type=container','--format','{"id":{{json .Id}},"image":{{json .Image}},"owner":{{json (index .Config.Labels "io.faolla.checkout-metadata-owner")}},"ports":{{json .HostConfig.PortBindings}},"networkMode":{{json .HostConfig.NetworkMode}},"binds":{{json .HostConfig.Binds}},"readonly":{{json .HostConfig.ReadonlyRootfs}},"running":{{json .State.Running}},"exitCode":{{json .State.ExitCode}}}',container]));
+function ownedFailureLogs(){
+ // This is the exact already-created credential-free fixture, not a host scan.
+ const c=inspect();assert.equal(c.id,container);assert.equal(c.image,imageId);assert.equal(c.owner,nonce);assert.equal(c.networkMode,'none');
+ const r=spawnSync('docker',['logs','--tail','20',container],{encoding:'utf8',timeout:10000,maxBuffer:16384,shell:false});
+ return {running:c.running,exitCode:c.exitCode,logExit:r.status,stdout:(r.stdout??'').slice(-6000),stderr:(r.stderr??'').slice(-6000)};
+}
 let failure=null;
 try{
  phase='owned-process';child=spawn(process.execPath,['-e',"process.title='next-server (v15)';process.send({ready:true,pid:process.pid});setInterval(()=>{},1000)"],{stdio:['ignore','ignore','ignore','ipc'],shell:false});
@@ -42,7 +48,7 @@ try{
 }catch(e){failure=/^[a-z_]+$/.test(e?.message??'')?e.message:'owned_metadata_acceptance_failed';observations.failure={phase,code:failure,lastCommandFailure};}
 finally{
  if(child&&!childExited){child.kill('SIGTERM');await new Promise(resolve=>{if(childExited)return resolve();const timer=setTimeout(resolve,5000);child.once('exit',()=>{clearTimeout(timer);resolve();});});}
- if(container){try{const c=inspect();assert.equal(c.id,container);assert.equal(c.image,imageId);assert.equal(c.owner,nonce);assert.equal(c.networkMode,'none');if(failure)observations.ownedContainerLogs=run(['logs','--tail','20',container],{optional:true})?.slice(-6000)??null;phase='owned-cleanup';run(['rm','--force',container]);containerRemoved=run(['inspect','--type=container',container],{optional:true})===null;}catch{failure??='owned_container_cleanup_failed';}}
+ if(container){try{const c=inspect();assert.equal(c.id,container);assert.equal(c.image,imageId);assert.equal(c.owner,nonce);assert.equal(c.networkMode,'none');if(failure)observations.ownedContainerLogs=ownedFailureLogs();phase='owned-cleanup';run(['rm','--force',container]);containerRemoved=run(['inspect','--type=container',container],{optional:true})===null;}catch{failure??='owned_container_cleanup_failed';}}
 }
 const cleanupPassed=childExited&&containerRemoved,report={version:1,kind:'owned-linux-runtime-metadata-acceptance',commit:process.env.GITHUB_SHA,branch,passed:failure===null&&cleanupPassed,checks,observations,cleanup:{childExited,containerRemoved,passed:cleanupPassed},error:failure,productionConnected:false,oldEvidenceChanged:false,productionSourcePromoted:false,productionAuthorized:false,installationAuthorized:false,deploymentAuthorized:false,stripeEnabled:false};
 fs.writeFileSync(path.join(temporary,'checkout-runtime-metadata-owned.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx',mode:0o600});
