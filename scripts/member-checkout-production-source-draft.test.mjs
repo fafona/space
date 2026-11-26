@@ -52,3 +52,9 @@ test('canonical verification reconstructs sources and rejects self-rehashed auth
 test('new preparation source cannot connect, issue credentials, execute SQL, write state or weaken any prior installer',async()=>{
  const source=await readFile('scripts/member-checkout-production-source-draft.mjs','utf8');assert.doesNotMatch(source,/child_process|process\.env|\bfetch\s*\(|writeFile|appendFile|mkdir|from ['"]pg['"]|execFile|spawnSync|productionAuthorized:\s*true|deploymentReady:\s*true/);assert.equal(bundle.material.registration.sourceVersion,'999999990047');assert.equal(bundle.material.registration.sealVersion,'999999990048');assert.equal(bundle.material.scope,'owned-ci-only-not-production');assert.equal(bundle.material.application.files,2971);
 });
+test('all six classified refusals use fixed Error instances, not runtime-dependent assertion formatting',async()=>{
+ const text=await readFile('scripts/member-checkout-production-source-draft.mjs','utf8');
+ const labels=['reference_changed','capture_chain_changed','container_chain_changed','saved_role_changed','requires_full_registry','baseline_capture_changed'];
+ for(const label of labels)assert.equal(text.split("new Error('checkout_source_draft_"+label+"')").length-1,1);
+ assert.throws(()=>assert.equal('same-prefix-'.repeat(1000)+'A','same-prefix-'.repeat(1000)+'B',new Error('fixed-reason')),e=>e.message==='fixed-reason');
+});

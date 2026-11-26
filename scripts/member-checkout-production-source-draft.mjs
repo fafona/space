@@ -22,13 +22,13 @@ const blocked=Object.freeze(['formal-source-approval-and-version-reservation','f
 
 function decodeReference(wire,expectedSha256){
  hash(expectedSha256);assert.equal(typeof wire,'string');assert.ok(Buffer.byteLength(wire)>0&&Buffer.byteLength(wire)<=1024*1024);
- assert.equal(sha(wire),expectedSha256,'checkout_source_draft_reference_changed');
+ assert.equal(sha(wire),expectedSha256,new Error('checkout_source_draft_reference_changed'));
  return JSON.parse(wire);
 }
 
 function gatewayReference(wire,digest,observation,priorCapture,priorCaptureSha256){
  const r=decodeReference(wire,digest),v=r.remote;
- assert.equal(r.previousCaptureSha256,priorCaptureSha256,'checkout_source_draft_capture_chain_changed');
+ assert.equal(r.previousCaptureSha256,priorCaptureSha256,new Error('checkout_source_draft_capture_chain_changed'));
  assert.equal(r.scope,'user-approved-once-gateway-nonsecret-repeat-20261126');
  assert.equal(r.exactApprovedDelta,true);assert.equal(r.previousApprovalReused,false);assert.equal(r.oneShotPermissionConsumed,true);assert.equal(r.repeatProductionReadAuthorized,false);
  assert.equal(r.transport.code,0);assert.equal(r.transport.signal,null);assert.equal(r.transport.stderrBytes,0);assert.equal(r.transport.oversize,false);
@@ -39,7 +39,7 @@ function gatewayReference(wire,digest,observation,priorCapture,priorCaptureSha25
  const images=[['supabase-db','supabase/postgres:15.8.1.085'],['supabase-rest','postgrest/postgrest:v14.5'],['supabase-auth','supabase/gotrue:v2.186.0'],['supabase-kong','kong:2.8.1']];
  assert.deepEqual(v.containers.map(c=>[c.name,c.image]),images);
  for(const c of v.containers){hash(c.identitySha256);assert.match(c.imageId,/^sha256:[a-f0-9]{64}$/);assert.equal(c.state,'running');}
- for(const c of priorCapture.remote.containers){const next=v.containers.filter(n=>n.name===c.name);assert.equal(next.length,1);assert.equal(next[0].image,c.image);assert.equal(next[0].identitySha256,c.identitySha256,'checkout_source_draft_container_chain_changed');}
+ for(const c of priorCapture.remote.containers){const next=v.containers.filter(n=>n.name===c.name);assert.equal(next.length,1);assert.equal(next[0].image,c.image);assert.equal(next[0].identitySha256,c.identitySha256,new Error('checkout_source_draft_container_chain_changed'));}
  assert.equal(v.database.readOnly,true);assert.equal(v.database.isolation,'repeatable read');assert.equal(v.database.database,'postgres');assert.equal(v.database.currentRole,'supabase_admin');assert.equal(v.database.serverVersionNum,150008);
  assert.equal(observation.seal.data.core.target.serverVersion,'150008');assert.deepEqual(v.database.settings,[]);
  for(const [component,role] of [['supabase-rest','authenticator'],['supabase-auth','supabase_auth_admin']]){
@@ -47,7 +47,7 @@ function gatewayReference(wire,digest,observation,priorCapture,priorCaptureSha25
   assert.equal(v.roleSources[component].source,component==='supabase-rest'?'container.env:PGRST_DB_URI:username-only':'container.env:GOTRUE_DB_DATABASE_URL:username-only');
   const current=v.database.configuredRoles.filter(c=>c.component===component),prior=observation.seal.data.core.roles.filter(c=>c.rolname===role);
   assert.equal(current.length,1);assert.equal(prior.length,1);assert.equal(current[0].role,role);assert.equal(current[0].present,true);
-  for(const [key,oldKey,wanted]of [['login','rolcanlogin',true],['inherit','rolinherit',false],['superuser','rolsuper',false],['bypassRls','rolbypassrls',false]]){assert.equal(current[0][key],wanted);assert.equal(prior[0][oldKey],wanted,'checkout_source_draft_saved_role_changed');}
+  for(const [key,oldKey,wanted]of [['login','rolcanlogin',true],['inherit','rolinherit',false],['superuser','rolsuper',false],['bypassRls','rolbypassrls',false]]){assert.equal(current[0][key],wanted);assert.equal(prior[0][oldKey],wanted,new Error('checkout_source_draft_saved_role_changed'));}
  }
  assert.equal(v.database.configuredRoles.length,2);
  const sessions=v.database.sessions.filter(s=>s.component==='supabase-rest');assert.equal(sessions.length,1);assert.equal(sessions[0].role,'authenticator');assert.ok(Number.isSafeInteger(sessions[0].connections)&&sessions[0].connections>0);
@@ -91,7 +91,7 @@ async function prepareSourceDraft(input){
  assert.equal(prior.sha256,hash(references.preinstallReviewSha256));assert.deepEqual(inspection.issues,[]);assert.equal(inspection.legacyDefinitionsMatch,true);
  assert.equal(source.sha256,'f34249f74c0311323fac2f7779fe14ea3151ffacc74d3b5cacf75de8d41d839e');
  assert.equal(review.material.evidence.observationSha256,observation.sha256);assert.equal(review.material.evidence.targetSha256,observation.seal.targetSha256);assert.equal(prior.sourceBundleSha256,source.sha256);
- assert.equal(prior.registeredSources,214,'checkout_source_draft_requires_full_registry');assert.equal(prior.unregisteredSources,1);assert.equal(prior.proposedSteps,38);
+ assert.equal(prior.registeredSources,214,new Error('checkout_source_draft_requires_full_registry'));assert.equal(prior.unregisteredSources,1);assert.equal(prior.proposedSteps,38);
  assert.equal(review.material.status,'draft-unapproved-not-executable');assert.ok(Object.values(review.material.authority).every(v=>v===false));
  for(const k of ['legacySourcesToExecute','unregisteredSourcesToExecute'])assert.deepEqual(review.material.sourceReview[k],[]);assert.deepEqual(review.material.sourceReview.unregisteredSources.map(v=>v.file),[excluded]);
  const core=observation.seal.data.core;assert.equal(core.context.readOnly,true);assert.equal(core.context.isolation,'repeatable read');assert.equal(core.registry.count,214);
@@ -101,7 +101,7 @@ async function prepareSourceDraft(input){
  const priorCapture=decodeReference(preinstallCaptureWire,references.preinstallCaptureSha256);
  for(const k of ['productionMutations','businessRowsRead','installationAuthorized','deploymentAuthorized','originalApprovalReused'])assert.equal(priorCapture[k],false);
  assert.equal(priorCapture.transport.code,0);assert.equal(priorCapture.transport.signal,null);assert.equal(priorCapture.transport.stderrBytes,0);assert.equal(priorCapture.transport.oversize,false);
- assert.equal(priorCapture.remote.mode,'metadata_read_only_047_preinstall');assert.equal(canonical(priorCapture.remote.metadata),canonical(observation.data),'checkout_source_draft_baseline_capture_changed');
+ assert.equal(priorCapture.remote.mode,'metadata_read_only_047_preinstall');assert.equal(canonical(priorCapture.remote.metadata),canonical(observation.data),new Error('checkout_source_draft_baseline_capture_changed'));
  assert.equal(sha(JSON.stringify(priorCapture.remote)),review.material.evidence.captureSha256);assert.equal(priorCapture.remote.containers.length,3);
  assert.equal(priorCapture.publicVersion.after.buildId,review.material.evidence.publicBuild);assert.deepEqual(priorCapture.publicVersion.before,priorCapture.publicVersion.after);
  const {revision:candidate}=await loadCredentialCandidateSources(),renewal=await loadCredentialRenewalRevision(),group=await loadGroupNextRevision();
