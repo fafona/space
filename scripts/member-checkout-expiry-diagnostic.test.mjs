@@ -49,3 +49,11 @@ test('transport diagnosis records only fixed phases, socket identities and codes
   for(const marker of ["requestPhase='wrong-signature'","requestPhase='wrong-audience'",'socketIds=new WeakMap()','trace.reusedSocket=req.reusedSocket','trace.errorCode=','report.transport.push(trace)'])assert.ok(s.includes(marker),marker);
   assert.doesNotMatch(s,/trace\.(?:jwt|token|headers|secret|key|request|body)\s*=/);
 });
+test('each native time sample owns a fresh socket and errors cannot become a retry or accepted sample',async()=>{
+  const s=await readFile('scripts/member-checkout-expiry-diagnostic-acceptance.mjs','utf8');
+  assert.match(s,/http.request\(\{socketPath,path:'\/rpc\/observe_clock',method:'GET',agent:false,/);
+  assert.match(s,/report.transport.every\(r=>r.reusedSocket===false&&r.errorCode===null\)/);
+  assert.match(s,/new Set\(report.transport.map\(r=>r.socketId\)\).size,report.transport.length/);
+  assert.match(s,/trace.socketDestroyed=req.socket\?\.destroyed\?\?null;reject\(error\)/);
+  assert.doesNotMatch(s,/if\(.*?EPIPE.*?\).*?request\(|catch\s*\(error\)\s*\{[^}]*?request\(jwt\)/s);
+});

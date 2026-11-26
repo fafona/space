@@ -30,7 +30,10 @@ test('measure real PostgREST expiry clock without changing old assertions or pro
   const sleep=ms=>new Promise(r=>setTimeout(r,ms)),socketIds=new WeakMap();let nextSocketId=0,requestPhase='readiness';
   const request=jwt=>new Promise((resolve,reject)=>{
     const trace={phase:requestPhase,socketId:null,reusedSocket:false,status:null,errorCode:null},startedAt=Date.now(),mono=performance.now();report.transport.push(trace);
-    const req=http.request({socketPath,path:'/rpc/observe_clock',method:'GET',headers:{authorization:'Bearer '+jwt,connection:'close'}},res=>{
+    // Every clock sample owns a new socket: Node 20's pooled socket can be
+    // selected again before the server's Connection: close is processed.
+    // Do not retry a failed sample or hide its observed status.
+    const req=http.request({socketPath,path:'/rpc/observe_clock',method:'GET',agent:false,headers:{authorization:'Bearer '+jwt,connection:'close'}},res=>{
       trace.status=res.statusCode;
       const chunks=[];let bytes=0;res.on('data',b=>{bytes+=b.length;if(bytes>16384)res.destroy(Error('diagnostic_body_limit'));else chunks.push(b);});
       res.on('error',reject);res.on('end',()=>{try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8')),endedAt=Date.now();assert.ok(Math.abs((endedAt-startedAt)-(performance.now()-mono))<200);
@@ -100,6 +103,8 @@ test('measure real PostgREST expiry clock without changing old assertions or pro
       report.expiryOnlyLateAcceptedCount=report.rounds.reduce((n,r)=>n+r.expiryOnlyLateAcceptedCount,0);
       report.boundaryAssumptionReproduced=report.lateAcceptedCount>0&&report.expiryOnlyLateAcceptedCount>0;
       assert.equal(report.boundaryAssumptionReproduced,true,'fixed_rounds_did_not_reproduce_old_boundary_assumption');
+      assert.ok(report.transport.every(r=>r.reusedSocket===false&&r.errorCode===null));assert.equal(new Set(report.transport.map(r=>r.socketId)).size,report.transport.length);
+      report.transportReusedSockets=0;
       // This experiment cannot recover a clock sample from the old failed run.
       report.freshClockVsCachedIntegerDifferenceProved=true;
     });
