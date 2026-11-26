@@ -12,11 +12,19 @@ const sha=v=>createHash('sha256').update(v).digest('hex');
 const canonical=v=>JSON.stringify(v,(_,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,x[k]])):x);
 const freeze=v=>{if(v&&typeof v==='object'){for(const x of Object.values(v))freeze(x);Object.freeze(v);}return v;};
 const verified=new WeakSet();
+export const sourceV2HistoricalIdentity=freeze({sha256:'b80fe4d38210806f349cf2215ce6118b351b616acba68aabd49d16c76135debc',
+ wireSha256:'be7665b02bd00ea5bcf7e59c94f4b3d0ef2f473b63e6bd727799b72489e183f1'});
 export async function createCheckoutProductionSourceV2(input){
  try{
   assert.ok(input&&Object.getPrototypeOf(input)===Object.prototype);assert.deepEqual(Object.keys(input).sort(),['acceptance','baseDraft']);const {baseDraft,acceptance}=input;
   const base=checkoutProductionSourceDraftSummary(baseDraft),proof=reviewedCheckoutAcceptanceSummary(acceptance),old=baseDraft.material;
   assert.equal(base.status,'draft-unapproved-not-executable');assert.equal(base.productionAuthorized,false);assert.equal(base.productionSourcePromoted,false);
+  // A reference-kind label is NOT provenance. Saved preparation must retain
+  // the exact independently held historical draft, never a self-classified
+  // synthetic or newly selected target, even with genuine owned-CI proof.
+  if(base.referenceKind==='saved-production-evidence'){
+   assert.equal(base.sha256,sourceV2HistoricalIdentity.sha256);assert.equal(sha(baseDraft.wire),sourceV2HistoricalIdentity.wireSha256);
+  }
   assert.equal(proof.referenceKind,base.referenceKind==='saved-production-evidence'?'saved-reviewed-owned-ci-evidence':'owned-synthetic-evidence');
   assert.equal(old.sources.combinedRevisionSha256,'a476794f63fec4151027e416b410d0bb94b971f08edc1fa0882654eae0f774f2');
   const {revision:candidate}=await loadCredentialCandidateSources(),renewal=await loadCredentialRenewalRevision(),group=await loadGroupNextRevision();

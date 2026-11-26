@@ -6,7 +6,7 @@ import {createOwnedProductionSourceInputs} from './fixtures/member-checkout-prod
 import {ownedReviewedAcceptanceInputs} from './fixtures/member-checkout-reviewed-acceptance-fixture.mjs';
 import {createCheckoutProductionSourceDraft,checkoutProductionSourceDraftSummary} from './member-checkout-production-source-draft.mjs';
 import {verifyReviewedCheckoutAcceptance} from './member-checkout-reviewed-acceptance.mjs';
-import {createCheckoutProductionSourceV2,verifyCheckoutProductionSourceV2,checkoutProductionSourceV2Summary} from './member-checkout-production-source-v2.mjs';
+import {createCheckoutProductionSourceV2,verifyCheckoutProductionSourceV2,checkoutProductionSourceV2Summary,sourceV2HistoricalIdentity} from './member-checkout-production-source-v2.mjs';
 import {checkoutFullRegistryBaselineBinding} from './member-checkout-full-registry-result.mjs';
 const canonical=v=>JSON.stringify(v,(_,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,x[k]])):x),sha=v=>createHash('sha256').update(v).digest('hex');
 const baseInputs=await createOwnedProductionSourceInputs(),baseDraft=await createCheckoutProductionSourceDraft(baseInputs),acceptance=await verifyReviewedCheckoutAcceptance(ownedReviewedAcceptanceInputs()),input={baseDraft,acceptance},draft=await createCheckoutProductionSourceV2(input);
@@ -34,6 +34,7 @@ test('preparation cannot grant, reserve, install, execute SQL, enable merchants,
 test('branded v1 and reviewed proof are independently required; copied, swapped or synthetic claimed saved proofs refuse',async()=>{
  for(const next of [null,undefined,{...input,install:true},{...input,baseDraft:{...baseDraft}},{...input,acceptance:{...acceptance}},{baseDraft:acceptance,acceptance:baseDraft},{baseDraft:draft,acceptance}])await assert.rejects(createCheckoutProductionSourceV2(next),/source_v2_unavailable/);
  const savedBase=await createCheckoutProductionSourceDraft({...baseInputs,references:{...baseInputs.references,kind:'saved-production-evidence'}});await assert.rejects(createCheckoutProductionSourceV2({baseDraft:savedBase,acceptance}),/source_v2_unavailable/);
+ assert.notEqual(savedBase.digest,sourceV2HistoricalIdentity.sha256);assert.deepEqual(sourceV2HistoricalIdentity,{sha256:'b80fe4d38210806f349cf2215ce6118b351b616acba68aabd49d16c76135debc',wireSha256:'be7665b02bd00ea5bcf7e59c94f4b3d0ef2f473b63e6bd727799b72489e183f1'});assert.equal(Object.isFrozen(sourceV2HistoricalIdentity),true);
 });
 
 test('new v2 cannot be supplied to old v1 result/install guards or downgrade back into an execution token',()=>{
@@ -58,6 +59,7 @@ test('both preparation source hashes are bound by LF and errors/summary never in
 test('new module only reads its two fixed local preparation sources and cannot connect, write state or expand production scope',async()=>{
  const text=await readFile(new URL('./member-checkout-production-source-v2.mjs',import.meta.url),'utf8');assert.doesNotMatch(text,/process\.env|\bfetch\s*\(|child_process|writeFile|appendFile|mkdir|from ['"]pg['"]|productionAuthorized:\s*true|deploymentReady:\s*true/);
  assert.match(text,/readFile\(new URL\('\.\/'\+file,import.meta.url\)/);assert.match(text,/member-checkout-production-source-v2.mjs','member-checkout-reviewed-acceptance.mjs/);assert.match(text,/TextDecoder\('utf-8',\{fatal:true\}\)/);
+ assert.ok(text.indexOf("if(base.referenceKind==='saved-production-evidence')")<text.indexOf('assert.equal(proof.referenceKind,'));assert.match(text,/assert.equal\(base.sha256,sourceV2HistoricalIdentity.sha256\)/);assert.match(text,/assert.equal\(sha\(baseDraft.wire\),sourceV2HistoricalIdentity.wireSha256\)/);
 });
 
 test('preparation CI stays on a separate evidence-only branch with no database, production secrets, deploy permission or old-workflow edits',async()=>{
