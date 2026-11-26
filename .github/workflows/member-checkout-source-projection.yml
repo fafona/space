@@ -1,0 +1,38 @@
+name: Owned Checkout Source Projection
+
+on:
+  push:
+    branches:
+      - acceptance/member-checkout-source-projection-20261126
+
+permissions:
+  contents: read
+
+jobs:
+  source-projection:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.20.1
+      - name: New projections and retained metadata refusals
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test --test-reporter=tap scripts/member-checkout-kong-source-projection.test.mjs scripts/member-checkout-active-runtime.test.mjs scripts/member-checkout-runtime-metadata.test.mjs | tee "$RUNNER_TEMP/checkout-source-projection.tap"
+      - name: Created Kong and application containers only
+        run: node scripts/member-checkout-source-projection-owned.mjs
+      - name: Retain synthetic metadata results only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkout-source-projection-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/checkout-source-projection.tap
+            ${{ runner.temp }}/checkout-source-projection-owned.json
+          if-no-files-found: warn
+          retention-days: 14
