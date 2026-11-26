@@ -1,0 +1,38 @@
+name: Owned Checkout Proc Table Reader
+
+on:
+  push:
+    branches:
+      - acceptance/member-checkout-proc-table-20261126
+
+permissions:
+  contents: read
+
+jobs:
+  proc-table:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.20.1
+      - name: Narrow reader and retained identity guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test --test-reporter=tap scripts/member-checkout-proc-table-reader.test.mjs scripts/member-checkout-active-runtime.test.mjs scripts/member-checkout-runtime-metadata.test.mjs | tee "$RUNNER_TEMP/checkout-proc-table.tap"
+      - name: Created isolated Linux container only
+        run: node scripts/member-checkout-proc-table-owned.mjs
+      - name: Preserve synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkout-proc-table-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/checkout-proc-table.tap
+            ${{ runner.temp }}/checkout-proc-table-owned.json
+          if-no-files-found: warn
+          retention-days: 14
