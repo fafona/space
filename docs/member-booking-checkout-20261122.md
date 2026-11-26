@@ -2676,3 +2676,12 @@ git diff --check
 - 修正提交 `bb6e73edb780bbc189ea7a3feeb640222b1d833e` 将 owned 工作 prefix 放入 `/tmp/faolla-kong-prefix`，不挂载覆盖安装目录，并实测原 libyaml 文件存在。独立 CI `45787507433` 的 **24 项检查和 6 项 owned 场景全部成功**：实际 UID／GID／Name 与 stat 一致、owned CWD 不当作正式路径、容器隔离、安装库不遮挡、真实生成监听格式及旧正则拒绝复现；child／容器退出清理均通过。没有调用 Admin API 或读插件配置；Kong 镜像与正式环境是否等价仍 false，不能冒称完整正式拓扑。
 - 三轮的报告、TAP、准确运行身份和完整日志已下载并复核；独立 review SHA `77477e16b062a33a86904de5d0dfaf284f28dbbb263cadb049f414f240a6a76a`，私有证据在 `output/checkout-runtime-plan-owned-20261126/`。与前一阶段比较只有四个独立新增文件，原应用、依赖、SQL、协议和旧工作流未改；v2 原 wire、原 CI review 及正式只读证据 SHA 均复核不变。原 524 应用／53 来源 CI 不重新累计，本地 24 项和本轮 CI 另记。
 - 新[正式运行准备清单](member-checkout-runtime-preparation-20261126.md) 列明五个运行缺口、角色／目录／issuer 提案、生命周期、备份边界和执行顺序。实际公网活动进程与插件绑定的可靠源端投影仍待完成；不因为解析成功就把 unknown 改 observed。数字 UID、钥匙／算法、版本、目录创建、角色／授权、备份写入、安装、商户试点和发布均未批准；本轮正式连接／数据修改／权限变更／签发／安装／部署 0，不启用 Stripe／邮件。
+
+## 第九十七阶段：源端插件白名单与活动应用实际监听绑定（2026-11-26，未上线）
+
+- 新增源端投影生成器和纯活动运行绑定器，保留旧组件及其工作流。Kong 只用固定 loopback GET、HTTP/1.0 close、3 秒期限和有界响应，不用 DNS／代理、不跟随重定向。插件响应在源端内存中临时处理，只导出相关 id／name／enabled／route／service／scope，拒绝分页；配置／consumer／凭据值不导出，错误不回显原响应。这不是“完全没有处理配置”，不能沿用前一单次许可，正式执行仍需新的明确同意。
+- 活动运行绑定准确 canonical 发布记录及对应 PID 文件／owner／mode／inode／时间，绑定进程 start-time／Name／CWD、Node exe 元数据和前后目标 LISTEN inode／FD；64 位 inode 保留字符串，不选择最新旧 PID。root 如实返回但 signer 隔离保持 false；不证明 executable bytes、PM2 管理者、公网入口或正式权限。
+- 初版 `4d784f7e1b3fbeb6c864ef63b06de8d686dbb991`／CI `45790210819` 的 50 项检查通过，但 owned 在镜像缺少 curl 时失败；清理成功。`dfb5035d6b6394ca4f6c0acbd6dc29e64d7f4075`／`45791117833` 的 52 项检查通过，但独立 LuaJIT 无 OpenResty 模块路径，明确记录 cjson.safe 加载失败；清理成功。这些是新增测试／工具的兼容问题，不是线上业务故障；失败不回填成功。改用 bundled LuaJIT Linux loopback sockets、声明式合成启动配置及准确 bundled 模块路径，不安装工具或修改正式服务。
+- 准确修正提交 `8924b724bd92941e50fdaca2f49b9e1eca6d1b2a` 的新 CI `45791564416`，**53 项检查（新 29＋保留 24）和 7 项 owned 场景全部通过**。真实 Kong 2.8.1 处理两个服务／两个路由、全局／服务／路由三种插件，私有合成占位值不进入导出或报告；重复元数据一致、分页／异常绑定拒绝。镜像内 curl 确实不存在，新方法无需安装工具。受控 Node 容器实际绑定文件／进程／exe 元数据与监听 socket，错误 FD 拒绝、listener 正常关闭，受控 root 不冒充隔离。随机 owner label／image／ID 核验后移除两个容器，无 host 挂载／公开端口或生产网络。
+- 三轮报告、TAP、完整日志与运行身份已下载复核，review SHA `0f54acbf7855f11849b17df809a66a1f0fb69651c72c526f46130218e8176b3f`，私有证据在 `output/checkout-source-projection-20261126/`。相较前阶段仅六个独立新增文件；原应用／SQL／依赖／协议／旧工作流、v2 清单及既有正式报告原字节均未变。不把本轮 53 项加到原 524 应用场景；旧来源准备的 53 项 CI 仍单独引用。
+- 已更新运行准备清单：下一项是本地验证采集器后，另行申请一次“源端临时解析但只回传白名单”的新只读窗口，及活动记录所指应用的限定内核身份核对；不自动重连。当前仍无正式插件／运行身份新观察，旧 unknown 保留，公网入口／签发提供者／独立备份恢复不被自动补全。未改正式配置、权限、业务数据或目录，不安装、签发、试点、部署或启用 Stripe／邮件。
