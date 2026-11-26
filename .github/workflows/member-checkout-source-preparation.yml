@@ -1,0 +1,42 @@
+name: Offline Checkout Source Preparation
+
+on:
+  push:
+    branches:
+      - acceptance/member-checkout-source-v2-20261126
+
+permissions:
+  contents: read
+
+jobs:
+  source-preparation:
+    name: Offline Current Source And Retained Guards
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.20.1
+          cache: npm
+      - name: Install Locked Test Dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify New Offline Preparation And Retained Refusals
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_REPOSITORY" = fafona/space
+          test "$GITHUB_REF" = refs/heads/acceptance/member-checkout-source-v2-20261126
+          node --test --test-reporter=tap scripts/member-checkout-reviewed-acceptance.test.mjs scripts/member-checkout-production-source-v2.test.mjs scripts/member-checkout-production-source-draft.test.mjs scripts/member-checkout-full-registry-result.test.mjs | tee "$RUNNER_TEMP/checkout-source-preparation.tap"
+      - name: Retain Test Results Only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkout-source-preparation-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/checkout-source-preparation.tap
+          if-no-files-found: warn
+          retention-days: 14
