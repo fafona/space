@@ -20,6 +20,13 @@ process.on('message',v=>{if(v==='fail-issuer'&&setup.role==='writer'){failed=tru
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const denied=async fn=>{let passed=false;try{const handle=await fn();await handle?.close?.();}catch(e){assert.ok(['EACCES','EPERM'].includes(e.code));passed=true;}assert.equal(passed,true);};
 try{
+ if(setup.role==='outsider'){
+  // This identity is deliberately outside the runner's group, so it also
+  // cannot load that group's npm tree. Test kernel denial with builtins first;
+  // do not grant it dependency/workspace access merely to exercise rejection.
+  stage='outsider-access';assert.notEqual(process.getuid(),p.ownerUid);assert.equal(process.getgroups().includes(p.ownerGid),false);
+  await denied(()=>readFile(path.join(p.directory,'runtime.json')));send({kind:'outsider-denied',uid:identity.uid,gid:identity.gid});
+ }else{
  stage='loader-registration';const {register}=await import('tsx/esm/api');unregister=register({tsconfig:false});
  stage='component-import';const imported=await import('./merchant-checkout-credential-file.ts');
  const {publishCredentialFile,createCredentialFileReader}=imported.default??imported;
@@ -47,8 +54,6 @@ try{
    }catch{if(!closed){closed=true;send({kind:'reader-closed',at:Date.now(),generation:last});}}
    await wait(100);
   }send({kind:'stopped'});
- }else{
-  stage='outsider-access';
-  await denied(()=>readFile(path.join(p.directory,'runtime.json')));assert.throws(()=>createCredentialFileReader(p));send({kind:'outsider-denied',uid:identity.uid,gid:identity.gid});
+ }
  }
 }catch(error){send({kind:'worker-failed',stage,code:/^[A-Z0-9_]{1,40}$/.test(error?.code??'')?error.code:null,syscall:['open','mkdir','read','write','connect','stat','lstat','access'].includes(error?.syscall)?error.syscall:null});process.exitCode=1;}finally{await controller?.stop();await unregister?.();process.disconnect();}
