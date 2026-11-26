@@ -1,45 +1,42 @@
 // Explicit owned CI only. No production connector, host mounts or public ports.
-// Only synthetic fixture setup may POST to the CREATED Kong; source projections
-// use fixed GETs. Full source responses never leave that container's pipeline.
+// Synthetic configuration is supplied at creation. Source projections use only
+// fixed GETs. Full source responses never leave that container's process.
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
-import {checkoutKongSourceProjection,validateCheckoutKongProjection,checkoutKongMetadataEndpoints} from './member-checkout-kong-source-projection.mjs';
+import {checkoutKongSourceProjection,checkoutKongHttpSourceProjection,validateCheckoutKongProjection} from './member-checkout-kong-source-projection.mjs';
 const branch='refs/heads/acceptance/member-checkout-source-projection-20261126';
 assert.equal(process.platform,'linux');assert.equal(process.version,'v20.20.1');assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.RUNNER_ENVIRONMENT,'github-hosted');assert.equal(process.env.GITHUB_REPOSITORY,'fafona/space');assert.equal(process.env.GITHUB_REF,branch);
 assert.match(process.env.GITHUB_SHA??'',/^[a-f0-9]{40}$/);assert.match(process.env.GITHUB_RUN_ID??'',/^[0-9]+$/);
 const temp=fs.realpathSync(process.env.RUNNER_TEMP);assert.ok(temp.startsWith('/home/runner/work/_temp'));
 const nonce=randomUUID(),canary='OWNED_PRIVATE_'+randomUUID(),ownerLabel='io.faolla.source-projection-owner',created=[],checks=[],observations={};let phase='start',error=null,lastDiagnostic=null;
 const hash=v=>createHash('sha256').update(v).digest('hex');
-function run(args,{input,optional=false,timeout=15000}={}){const r=spawnSync('docker',args,{input,encoding:'utf8',timeout,maxBuffer:262144,shell:false});if(r.error||r.signal||r.status!==0){lastDiagnostic={phase,verb:args[0],status:r.status,signal:r.signal??null,code:r.error?.code??null,stderr:(r.stderr??'').replaceAll(canary,'[OWNED-REDACTED]').slice(-4000)};if(optional)return null;throw Error('owned_docker_command_failed');}return r.stdout.trim();}
+function run(args,{input,optional=false,timeout=15000}={}){const r=spawnSync('docker',args,{input,encoding:'utf8',timeout,maxBuffer:262144,shell:false});if(r.error||r.signal||r.status!==0){lastDiagnostic={phase,verb:args[0],status:r.status,signal:r.signal??null,code:r.error?.code??null,stdout:(r.stdout??'').replaceAll(canary,'[OWNED-REDACTED]').slice(-4000),stderr:(r.stderr??'').replaceAll(canary,'[OWNED-REDACTED]').slice(-4000)};if(optional)return null;throw Error('owned_docker_command_failed');}return r.stdout.trim();}
 const inspect=id=>JSON.parse(run(['inspect','--type=container','--format','{"id":{{json .Id}},"image":{{json .Image}},"owner":{{json (index .Config.Labels "io.faolla.source-projection-owner")}},"network":{{json .HostConfig.NetworkMode}},"ports":{{json .HostConfig.PortBindings}},"binds":{{json .HostConfig.Binds}},"readonly":{{json .HostConfig.ReadonlyRootfs}},"running":{{json .State.Running}},"exitCode":{{json .State.ExitCode}}}',id]));
 function owned(c){const s=inspect(c.id);assert.equal(s.id,c.id);assert.equal(s.image,c.image);assert.equal(s.owner,nonce);assert.equal(s.network,'none');assert.equal(s.readonly,true);assert.ok(s.ports===null||Object.keys(s.ports).length===0);assert.ok(s.binds===null||s.binds.length===0);return s;}
 function create(image,args,command=[]){const id=run(['create','--label',ownerLabel+'='+nonce,'--network','none','--read-only',...args,image,...command]);assert.match(id,/^[a-f0-9]{64}$/);const c={id,image,removed:false};created.push(c);owned(c);return c;}
 const mark=(name,fn)=>{fn();checks.push(name);};
-const curl=['curl','--disable','--silent','--show-error','--fail','--max-time','3','--connect-timeout','1','--noproxy','*'];
+const luaBinary='/usr/local/openresty/luajit/bin/luajit';
 try{
- phase='kong-image';run(['pull','kong:2.8.1'],{timeout:120000});const kongImage=run(['image','inspect','--format','{{.Id}}','kong:2.8.1']);assert.match(kongImage,/^sha256:[a-f0-9]{64}$/);
- phase='kong-create';const kong=create(kongImage,['--name','faolla-projection-kong-'+nonce.slice(0,8),'--user','0:0','--tmpfs','/tmp:rw,nosuid,nodev,size=134217728','--env','KONG_PREFIX=/tmp/faolla-kong-prefix','--env','KONG_DATABASE=off','--env','KONG_PROXY_LISTEN=off','--env','KONG_ADMIN_LISTEN=127.0.0.1:8001','--env','KONG_ADMIN_ACCESS_LOG=off','--env','KONG_ADMIN_ERROR_LOG=/dev/stderr','--env','KONG_NGINX_WORKER_PROCESSES=1']);
- run(['start',kong.id]);phase='kong-ready';const deadline=Date.now()+45000;let ready=null;while(Date.now()<deadline){ready=run(['exec',kong.id,...curl,'--output','/dev/null','--write-out','%{http_code}','--url',checkoutKongMetadataEndpoints.services],{optional:true,timeout:4000});if(ready==='200')break;await new Promise(r=>setTimeout(r,300));}assert.equal(ready,'200','owned_kong_not_ready');
- mark('owned-kong-isolation-and-exact-version',()=>{owned(kong);assert.equal(run(['exec',kong.id,'kong','version']),'2.8.1');});
- phase='owned-config-setup';
  const fixture={_format_version:'2.1',_transform:true,services:[{name:'rest-v1',url:'http://127.0.0.1:9999/',plugins:[{name:'request-transformer',config:{add:{headers:['X-Owned-Private:'+canary]}}}],routes:[{name:'rest-v1',paths:['/rest/v1/'],strip_path:true,plugins:[{name:'key-auth',config:{key_names:['apikey'],hide_credentials:false}}]}]},{name:'auth-v1',url:'http://127.0.0.1:9998/',routes:[{name:'auth-v1',paths:['/auth/v1/'],strip_path:true}]}],plugins:[{name:'cors',config:{origins:['https://example.test'],headers:[canary]}}],consumers:[{username:'owned-fixture',keyauth_credentials:[{key:canary}]}]};
- // Fixture mutation is confined to the exact newly-created labelled container.
- owned(kong);assert.equal(run(['exec','-i',kong.id,...curl,'--request','POST','--header','Content-Type: application/json','--data-binary','@-','--output','/dev/null','--write-out','%{http_code}','--url','http://127.0.0.1:8001/config'],{input:JSON.stringify(fixture)}),'201');
+ phase='kong-image';run(['pull','kong:2.8.1'],{timeout:120000});const kongImage=run(['image','inspect','--format','{{.Id}}','kong:2.8.1']);assert.match(kongImage,/^sha256:[a-f0-9]{64}$/);
+ phase='kong-create';const kong=create(kongImage,['--name','faolla-projection-kong-'+nonce.slice(0,8),'--user','0:0','--tmpfs','/tmp:rw,nosuid,nodev,size=134217728','--env','KONG_PREFIX=/tmp/faolla-kong-prefix','--env','KONG_DATABASE=off','--env','KONG_DECLARATIVE_CONFIG_STRING='+JSON.stringify(fixture),'--env','KONG_PROXY_LISTEN=off','--env','KONG_ADMIN_LISTEN=127.0.0.1:8001','--env','KONG_ADMIN_ACCESS_LOG=off','--env','KONG_ADMIN_ERROR_LOG=/dev/stderr','--env','KONG_NGINX_WORKER_PROCESSES=1']);
+ run(['start',kong.id]);phase='kong-ready';const deadline=Date.now()+45000;let ready=null;while(Date.now()<deadline){ready=run(['exec',kong.id,luaBinary,'-e',checkoutKongHttpSourceProjection('services')],{optional:true,timeout:7000});if(ready!==null&&validateCheckoutKongProjection(ready,'services').items.length===2)break;await new Promise(r=>setTimeout(r,300));}assert.notEqual(ready,null,'owned_kong_not_ready');
+ mark('owned-kong-isolation-and-exact-version',()=>{owned(kong);assert.equal(run(['exec',kong.id,'kong','version']),'2.8.1');});
+ observations.sourceRuntime={curlAvailable:run(['exec',kong.id,'sh','-c','command -v curl || exit 3'],{optional:true})!==null,transport:'bundled-luajit-linux-loopback',newToolsInstalled:false};
  function projection(kind,scope){
-  const lua=checkoutKongSourceProjection(kind,scope),url=checkoutKongMetadataEndpoints[kind];
+  const lua=checkoutKongHttpSourceProjection(kind,scope);
   // Only generated code/observed public UUIDs in argv; no raw response in stdout.
-  const pipe="curl --disable --silent --show-error --fail --max-time 3 --connect-timeout 1 --noproxy '*' --request GET --max-filesize 262144 --write-out '\\n%{http_code}' --url \"$1\" | /usr/local/openresty/luajit/bin/luajit -e \"$2\"";
-  owned(kong);const raw=run(['exec',kong.id,'sh','-c',pipe,'source-local-projection',url,lua]);assert.ok(!raw.includes(canary),'owned_private_value_exported');return validateCheckoutKongProjection(raw,kind);
+  owned(kong);const raw=run(['exec',kong.id,luaBinary,'-e',lua]);assert.ok(!raw.includes(canary),'owned_private_value_exported');return validateCheckoutKongProjection(raw,kind);
  }
  phase='source-projection';const services=projection('services'),routes=projection('routes'),scope={serviceIds:services.items.map(v=>v.id),routeIds:routes.items.map(v=>v.id)},plugins=projection('plugins',scope);
  mark('actual-related-services-and-routes-source-local-projection',()=>{assert.equal(services.items.length,2);assert.equal(routes.items.length,2);assert.ok(routes.items.every(r=>scope.serviceIds.includes(r.serviceId)));});
  mark('actual-global-service-and-route-plugin-bindings',()=>{assert.equal(plugins.items.length,3);assert.deepEqual(plugins.items.map(v=>v.name).sort(),['cors','key-auth','request-transformer']);assert.equal(plugins.items.find(v=>v.name==='cors').scope,'global');assert.equal(plugins.items.find(v=>v.name==='key-auth').scope,'route');assert.equal(plugins.items.find(v=>v.name==='request-transformer').scope,'service');});
  mark('private-canary-never-exported-and-snapshot-metadata-stable',()=>{assert.ok(!JSON.stringify([services,routes,plugins]).includes(canary));assert.deepEqual(projection('services'),services);assert.deepEqual(projection('routes'),routes);assert.deepEqual(projection('plugins',scope),plugins);});
  // Run malformed input through the SAME source-side interpreter, without HTTP.
- phase='source-refusals';for(const body of [{data:[],next:'/arbitrary-next'}, {data:[{id:'bad',name:'key-auth',enabled:true,service:null,route:null,consumer:null}],next:null}]){const s=checkoutKongSourceProjection('plugins',scope);const out=run(['exec','-i',kong.id,'/usr/local/openresty/luajit/bin/luajit','-e',s],{input:JSON.stringify(body)+'\n200',optional:true});assert.equal(out,null);}
+ phase='source-refusals';for(const body of [{data:[],next:'/arbitrary-next'}, {data:[{id:'bad',name:'key-auth',enabled:true,service:null,route:null,consumer:null}],next:null}]){const s=checkoutKongSourceProjection('plugins',scope);const out=run(['exec','-i',kong.id,luaBinary,'-e',s],{input:JSON.stringify(body)+'\n200',optional:true});assert.equal(out,null);}
  mark('source-pagination-and-invalid-binding-refuse-without-follow-or-export',()=>{assert.ok(lastDiagnostic);});
  observations.kong={version:'2.8.1',imageId:kongImage,services:services.items.length,routes:routes.items.length,bindings:plugins.items,sourceResponseProcessed:true,fullResponseExported:false,pluginConfigExported:false,consumerValuesExported:false,credentialValuesExported:false,privateCanaryNotExported:true,metadataRepeatedStable:true,productionImageEquivalenceVerified:false};
  phase='node-image';run(['pull','node:20.20.1-bookworm-slim'],{timeout:120000});const nodeImage=run(['image','inspect','--format','{{.Id}}','node:20.20.1-bookworm-slim']);assert.match(nodeImage,/^sha256:[a-f0-9]{64}$/);

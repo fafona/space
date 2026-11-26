@@ -74,3 +74,51 @@ export function validateCheckoutKongProjection(raw,kind){
  }
  need(new Set(v.items.map(x=>x.id)).size===v.items.length);return v;
 }
+
+// Uses only Kong's bundled LuaJIT and Linux sockets. Fixed IPv4 loopback port,
+// HTTP/1.0 close, GET-only, no redirects/proxy/DNS, 3s deadline, bounded response.
+// This remains generated code, NOT permission to execute a production request.
+export function checkoutKongHttpSourceProjection(kind,scope){
+ const projected=checkoutKongSourceProjection(kind,scope),needle='local raw=io.read(262145)';
+ if(projected.split(needle).length!==2)throw Error('kong_projection_source_changed');
+ const uri='/'+kind+'?size=100';
+ const transport=`local ffi=require('ffi')
+ffi.cdef[[
+ struct source_sockaddr { unsigned short family; unsigned short port; unsigned int address; char zero[8]; };
+ struct source_timeval { long seconds; long microseconds; };
+ struct source_timespec { long seconds; long nanoseconds; };
+ int socket(int,int,int); int connect(int,const void*,unsigned int); int close(int);
+ int setsockopt(int,int,int,const void*,unsigned int); unsigned short htons(unsigned short); unsigned int inet_addr(const char*);
+ long send(int,const void*,unsigned long,int); long recv(int,void*,unsigned long,int); int clock_gettime(int,struct source_timespec*);
+]]
+local function source_http_get()
+ local fd=ffi.C.socket(2,1,0);if fd<0 then error('source_socket_unavailable',0) end
+ local function need(v)if not v then error('source_http_refused',0)end end
+ local function now()local t=ffi.new('struct source_timespec');need(ffi.C.clock_gettime(1,t)==0);return tonumber(t.seconds)+tonumber(t.nanoseconds)/1000000000 end
+ local deadline=now()+3
+ local function timeout()
+  local left=deadline-now();need(left>0);local sec=math.floor(left);local tv=ffi.new('struct source_timeval',{sec,math.floor((left-sec)*1000000)})
+  need(ffi.C.setsockopt(fd,1,20,tv,ffi.sizeof(tv))==0 and ffi.C.setsockopt(fd,1,21,tv,ffi.sizeof(tv))==0)
+ end
+ local function exchange()
+  local address=ffi.new('struct source_sockaddr');address.family=2;address.port=ffi.C.htons(8001);address.address=ffi.C.inet_addr('127.0.0.1');timeout();need(ffi.C.connect(fd,address,ffi.sizeof(address))==0)
+  local request=${JSON.stringify('GET '+uri+' HTTP/1.0\r\nHost: 127.0.0.1:8001\r\nAccept: application/json\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n')}
+  local buffer=ffi.new('char[?]',#request);ffi.copy(buffer,request);local sent=0
+  while sent<#request do timeout();local n=tonumber(ffi.C.send(fd,buffer+sent,#request-sent,16384));need(n>0);sent=sent+n end
+  local pieces,total={},0;local chunk=ffi.new('char[4096]')
+  while true do timeout();local n=tonumber(ffi.C.recv(fd,chunk,4096,0));need(n>=0);if n==0 then break end;total=total+n;need(total<=278528);pieces[#pieces+1]=ffi.string(chunk,n) end
+  local raw=table.concat(pieces);local split=raw:find('\\r\\n\\r\\n',1,true);need(split and split<=16384)
+  local headers,body=raw:sub(1,split-1),raw:sub(split+4);need(headers:match('^HTTP/1%.[01] 200[ \\r]') and #body<=262140)
+  local seen={};for line in headers:gmatch('[^\\r\\n]+') do
+   if not line:match('^HTTP/') then local key,value=line:match('^([A-Za-z0-9%-]+):%s*(.-)%s*$');need(key);key=key:lower();need(not seen[key]);seen[key]=value end
+  end
+  need(not seen['transfer-encoding'] and (not seen['content-encoding'] or seen['content-encoding']=='identity'))
+  if seen['content-length'] then need(seen['content-length']:match('^[0-9]+$') and tonumber(seen['content-length'])==#body) end
+  need(seen['content-type'] and seen['content-type']:lower():find('application/json',1,true)==1)
+  return body..'\\n200'
+ end
+ local ok,result=pcall(exchange);ffi.C.close(fd);if not ok then error('source_http_refused',0) end;return result
+end
+`;
+ return transport+projected.replace(needle,'local raw=source_http_get()');
+}
