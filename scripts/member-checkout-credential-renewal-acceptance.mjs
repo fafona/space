@@ -68,6 +68,7 @@ try{
  const killDeadline=performance.now()+3000;while(children.some(v=>v.exit===null)&&performance.now()<killDeadline)await wait(25);
  report.processes=children.map(v=>({role:v.role,requested:v.requested,forced:v.forced,...v.exit}));
  report.workerFailures=events.filter(v=>v.kind==='worker-failed');
+ report.startupDiagnostic=children.map(v=>({role:v.role,errorCodes:[...new Set(v.logs.match(/\b(?:EACCES|EPERM|ENOENT|ERR_MODULE_NOT_FOUND|ERR_REQUIRE_ESM|ERR_ASSERTION|ERR_UNKNOWN_FILE_EXTENSION)\b/g)??[])],component: v.logs.includes('/esbuild/')?'esbuild':v.logs.includes('/tsx/')?'tsx':null}));
  report.cleanupPassed=children.length===3&&children.every(v=>v.exit?.code===0&&v.exit?.signal===null&&!v.forced)&&children.filter(v=>v.role!=='outsider').every(v=>v.requested&&events.some(e=>e.role===v.role&&e.kind==='stopped'));
  if(!report.cleanupPassed){report.passed=false;process.exitCode=1;}
  for(const entry of children)await writeFile(path.join(evidence,entry.role+'.private.log'),entry.logs,{flag:'wx',mode:0o600});

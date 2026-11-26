@@ -14,15 +14,15 @@ const identity=setup.role==='writer'?{uid:setup.writerUid,gid:setup.writerGid}:s
 process.setgroups([]);process.setgid(identity.gid);process.setuid(identity.uid);
 assert.equal(process.getuid(),identity.uid);assert.equal(process.geteuid(),identity.uid);assert.equal(process.getgid(),identity.gid);assert.deepEqual(process.getgroups(),[identity.gid]);
 process.umask(0o027);
-const {register}=await import('tsx/esm/api'),unregister=register({tsconfig:false});
-const imported=await import('./merchant-checkout-credential-file.ts');
-const {publishCredentialFile,createCredentialFileReader}=imported.default??imported;
 const p={directory:path.join(setup.root,'delivery'),ownerUid:setup.writerUid,ownerGid:setup.writerGid,access:'group',algorithm:'HS256',issuer:'owned-renewal',audience:'authenticated'};
-const send=v=>process.send?.(v);let stop=false,controller,failed=false,stage='identity-ready';
+const send=v=>process.send?.(v);let stop=false,controller,failed=false,stage='identity-ready',unregister;
 process.on('message',v=>{if(v==='fail-issuer'&&setup.role==='writer'){failed=true;send({kind:'issuer-failure-enabled'});}if(v==='stop')stop=true;});
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const denied=async fn=>{let passed=false;try{const handle=await fn();await handle?.close?.();}catch(e){assert.ok(['EACCES','EPERM'].includes(e.code));passed=true;}assert.equal(passed,true);};
 try{
+ stage='loader-registration';const {register}=await import('tsx/esm/api');unregister=register({tsconfig:false});
+ stage='component-import';const imported=await import('./merchant-checkout-credential-file.ts');
+ const {publishCredentialFile,createCredentialFileReader}=imported.default??imported;
  if(setup.role==='writer'){
   stage='writer-key';
   const key=randomBytes(48);await writeFile(path.join(setup.root,'signer','key.private'),key,{flag:'wx',mode:0o600});
@@ -51,4 +51,4 @@ try{
   stage='outsider-access';
   await denied(()=>readFile(path.join(p.directory,'runtime.json')));assert.throws(()=>createCredentialFileReader(p));send({kind:'outsider-denied',uid:identity.uid,gid:identity.gid});
  }
-}catch{send({kind:'worker-failed',stage});process.exitCode=1;}finally{await controller?.stop();await unregister();process.disconnect();}
+}catch(error){send({kind:'worker-failed',stage,code:/^[A-Z0-9_]{1,40}$/.test(error?.code??'')?error.code:null,syscall:['open','mkdir','read','write','connect','stat','lstat','access'].includes(error?.syscall)?error.syscall:null});process.exitCode=1;}finally{await controller?.stop();await unregister?.();process.disconnect();}
