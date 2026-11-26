@@ -53,8 +53,8 @@ export function createIsolatedRenewalSupervisor(input,dependencies){
   pending=(async()=>{
    try{await controller.tick();last=controllerState(controller.snapshot());if(!stopRequested&&(last.failures>0||last.stopped))fault(last.reason??'CONTROLLER_REFUSED');}
    catch{fault('CONTROLLER_REFUSED');}
-   if(stopRequested)await requestStop();return snapshot();
-  })().finally(()=>{pending=null;});
+   if(stopRequested)await requestStop();
+  })().finally(()=>{pending=null;}).then(snapshot);
   return pending;
  }
  function wait(){return new Promise(resolve=>{let timer;const done=()=>{clearTimeout(timer);shutdown.signal.removeEventListener('abort',done);resolve();};timer=setTimeout(done,renewal.pollMs);shutdown.signal.addEventListener('abort',done,{once:true});if(shutdown.signal.aborted)done();});}
