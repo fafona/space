@@ -32,7 +32,8 @@ test('diagnostic is independent, loopback PG and owned Unix HTTP only; existing 
   assert.ok(s.indexOf('assertExpiryDiagnosticCi()')<s.indexOf("requirePg('pg')"));
   for(const marker of ['PGRST_SERVER_UNIX_SOCKET:socketPath',"host:'127.0.0.1'",'expiryClockOracleClaims(exp)',"PGRST_DB_TX_END:'rollback'",'originalGateChanged:false','productionAuthorized:false','deploymentReady:false','originalFailureClockCaptured:false'])assert.ok(s.includes(marker),marker);
   assert.doesNotMatch(s,/process\.env\.(?:SUPABASE|DATABASE|PG|STRIPE)\w*\s*=|Date\.now\s*=|globalThis\.fetch\s*=|kill\('SIGKILL'\)/);
-  const old=await readFile('scripts/member-checkout-group-next-acceptance.mjs','utf8');
+  const archive=JSON.parse(await readFile('scripts/fixtures/member-checkout-group-next-c4-source.json','utf8'));
+  const old=archive.sources.find(s=>s.file==='scripts/member-checkout-group-next-acceptance.mjs').body;
   assert.ok(old.includes('v.expiresAt+31000'));assert.ok(old.includes('assert.equal(await catalog(v.jwt),401)'));
 });
 test('dedicated branch workflow has no application build, deploy authority, secrets, or old workflow changes',async()=>{

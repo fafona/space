@@ -7,7 +7,9 @@ import {checkout047InstallationBundleSummary} from './member-checkout-047-instal
 import {checkout047PreinstallReviewSummary,inspectCheckout047Preinstall} from './member-checkout-047-preinstall-review.mjs';
 import {loadCredentialCandidateSources} from './member-checkout-credential-candidate.mjs';
 import {loadCredentialRenewalRevision} from './member-checkout-credential-renewal-revision.mjs';
-import {loadGroupNextRevision} from './member-checkout-group-next-revision.mjs';
+// This v1 draft refers only to the already reviewed historical c4 acceptance.
+// New current tests must acquire their own proof; never refresh this old pin.
+import {loadArchivedGroupNextRevision as loadGroupNextRevision} from './member-checkout-group-next-archive.mjs';
 
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const canonical=value=>JSON.stringify(value,(_,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,v[k]])):v);

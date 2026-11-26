@@ -4,7 +4,7 @@ import {createCheckout047InstallationBundle} from '../member-checkout-047-instal
 import {readReviewedMigrationInventory} from '../member-checkout-installation-review.mjs';
 import {loadCheckout047PreinstallContract,observeCheckout047Preinstall,createCheckout047PreinstallReview} from '../member-checkout-047-preinstall-review.mjs';
 import {loadCredentialCandidateSources} from '../member-checkout-credential-candidate.mjs';
-import {loadGroupNextRevision} from '../member-checkout-group-next-revision.mjs';
+import {loadArchivedGroupNextRevision as loadGroupNextRevision} from '../member-checkout-group-next-archive.mjs';
 const sha=v=>createHash('sha256').update(v).digest('hex'),canonical=v=>JSON.stringify(v,(_,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,x[k]])):x);
 export const bundle=await createCheckout047InstallationBundle(),contract=await loadCheckout047PreinstallContract(bundle),inventory=await readReviewedMigrationInventory(),{revision:candidate}=await loadCredentialCandidateSources(),group=await loadGroupNextRevision();
 export const excluded='scripts/supabase-migrations/202609280060_customer_membership_profile_projection.sql';

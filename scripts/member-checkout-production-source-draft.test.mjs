@@ -58,3 +58,12 @@ test('all six classified refusals use fixed Error instances, not runtime-depende
  for(const label of labels)assert.equal(text.split("new Error('checkout_source_draft_"+label+"')").length-1,1);
  assert.throws(()=>assert.equal('same-prefix-'.repeat(1000)+'A','same-prefix-'.repeat(1000)+'B',new Error('fixed-reason')),e=>e.message==='fixed-reason');
 });
+
+test('historical v1 draft cannot silently substitute the new expiry-observation test revision for c4 acceptance',async()=>{
+ const {loadGroupNextRevision}=await import('./member-checkout-group-next-revision.mjs'),current=await loadGroupNextRevision();
+ assert.notEqual(current.sha256,group.sha256);assert.equal(group.sha256,'a476794f63fec4151027e416b410d0bb94b971f08edc1fa0882654eae0f774f2');
+ assert.equal(draft.material.acceptance.groupRevisionSha256,group.sha256);assert.equal(draft.material.sources.combinedRevisionSha256,group.sha256);
+ const changed=changeWire(input,'acceptanceReviewWire','acceptanceReviewSha256',v=>v.reports[14].sourceRevision=current.sha256);
+ await assert.rejects(createCheckoutProductionSourceDraft(changed),refuses('INVALID'));
+ const source=await readFile('scripts/member-checkout-production-source-draft.mjs','utf8');assert.match(source,/loadArchivedGroupNextRevision as loadGroupNextRevision/);
+});

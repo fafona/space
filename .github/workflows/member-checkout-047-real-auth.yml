@@ -431,7 +431,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           npx --no-install playwright install --with-deps chromium
       - name: Validate Combined Topology Contracts
-        run: node --test scripts/member-checkout-group-next.test.mjs
+        run: node --test scripts/member-checkout-group-next.test.mjs scripts/member-checkout-expiry-observation.test.mjs
       - name: Rehearse Automatic Renewal In Different UID Actual Next
         env:
           FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '1'
