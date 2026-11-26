@@ -8,10 +8,13 @@
 
 本地另新增完整登记结果核对组件 `member-checkout-full-registry-result.mjs`：与旧六条 CI seal 分离，绑定原 214 条登记、独立来源清单、原操作和安装后 catalog；提交不明时仅判断原操作。新增 18 项及保留 57 项本地检查均通过，包括 PGlite 实际事务中成对登记的提交／回滚，失败／跳过 0；原应用及旧组件前后摘要一致。本组件不执行 38 步 DDL、不证明安装后权限，也不提供正式持久存储或生产安装能力。
 
+本轮已新增完整登记文件适配器，本地 32 项相关测试＋58 项保留回归均通过；Node 20 来源测试 13 项通过。新 Linux 作业也已完成实际文件／子进程中断验收，其余完整 CI 与离线报告复核结果见实施记录。这里只完成 owned 接入，不代表正式目录、主机备份或完整迁移安装就绪。
+
 ## 1. 当前已完成与本轮发现
 
 - 非 Stripe 结算、积分／券、原单恢复、取消、状态展示及独立 047 适配已经完成多轮隔离验收。
-- 最新代码验收提交为 `c4fcd8a1bc367b60a49b6d67d7a1f7a09af1f4da`，两个独立工作流的 15 个作业、489 项／组检查全部通过并下载复核。原 451 项完整保留，新增共同拓扑 38 组，以及 9 项组合契约／39 项 Node 测试（38 子项＋父项），失败 0／跳过 0。真实 Next UID 65534 与 issuer UID 1001、同组 1001，在同一应用进程完成自动续发、三代真实旧 token 到期、故障安全拒绝与恢复，commit／扣分始终各一次。原应用基线／既有安装来源不变，仍使用准确绑定的 2974 文件候选，不是正式来源晋升。旧组件及同 UID 报告保持原边界，不替它们回填字段。详情见[实施记录](member-booking-checkout-20261122.md)。
+- 上一份完整成功代码验收提交为 `c4fcd8a1bc367b60a49b6d67d7a1f7a09af1f4da`，两个独立工作流的 15 个作业、489 项／组检查全部通过并下载复核。原 451 项完整保留，新增共同拓扑 38 组，以及 9 项组合契约／39 项 Node 测试（38 子项＋父项），失败 0／跳过 0。真实 Next UID 65534 与 issuer UID 1001、同组 1001，在同一应用进程完成自动续发、三代真实旧 token 到期、故障安全拒绝与恢复，commit／扣分始终各一次。原应用基线／既有安装来源不变，仍使用准确绑定的 2974 文件候选，不是正式来源晋升。旧组件及同 UID 报告保持原边界，不替它们回填字段。详情见[实施记录](member-booking-checkout-20261122.md)。
+- 本轮 `5f74ea7eabc4a069d9dec033aa8399b0b1ac76bb` 的三个工作流共 16 个作业，**15 通过、1 失败**。新完整登记文件作业的 58 项契约与 8 项演练测试（7 子项＋父项）均通过；失败在未修改的旧不同 UID 自动续期演练：前两代旧 token 在到期后约 43／37 秒返回 401，第三代在原 exp＋31 秒边界检查返回 200。原源码／断言／等待值未改，不直接重试或标记全量成功；正式安装与部署继续禁止。全部进程与数据库连接已按原路径正常清理，失败证据已下载保留。
 - 保存的正式快照中，26 个函数／3 个守卫匹配固定来源；两张旧收银表的已采结构与两份独立 PG 15.8 来源 profile 逐项一致。正式 214 条登记与 CI 6 条登记严格区分；未登记的无关旧文件不补执行。
 - 现有 journal 明确只接受 Linux TEMP，安装来源和 seal 也明确只接受六条 CI 基线／合成登记号，不能直接搬到生产或只把数组改成 214 条。
 - 新确认的运行缺口：`merchantCheckoutRuntime.server.ts` 只从进程环境读取短期凭据。它可以观察同进程对环境对象的替换，但没有外部续期交付入口。现有真实网关 CI 验证了替换令牌、过期和撤销，不等于已验证运行中的 Next.js 自动收到新令牌。
@@ -190,7 +193,19 @@ root supervisor、Next、issuer 正常退出 0，未强杀，Next IPC-close 已�
 
 18 项新增检查包含 PGlite 实际事务：第一条登记后失败、两条登记后回滚、COMMIT 已成功但随后抛错、只核对已提交原结果，以及缺原 prepared 字节拒绝。PGlite 只实际验证 registry 事务；catalog、连接 PID／只读上下文采用明确的 owned 测试投影。它不是原生 PG 15.8 的完整 38 步安装演练、真实新连接证明、持久文件／进程中断验收或正式数据库兼容证明。`installedPrivilegesValidated／persistentEvidenceValidated／productionAuthorized／deploymentReady` 均 false，saved-production-evidence 也被拒绝用于生成此测试结果。
 
-下一步将完整登记协议接入独立持久凭证及原生安装／恢复演练，并继续原 93 函数／24 表／28 守卫和全部实际授权检查；没有据此宣称正式 installer 已完成。正式版本、有效网关／签发配置、实际存储／备份和明确安装／试点许可仍按原边界处理，不刷新旧 pin、不重复生产采样。
+完整登记协议已通过下述适配器接入 owned 持久凭证。下一步仍需原生 PG 15.8 完整基线的 38 步安装／恢复演练，继续原 93 函数／24 表／28 守卫和全部实际授权检查；不能把旧六条原生安装演练与新文件演练相加，宣称完整登记 installer 已完成。正式版本、有效网关／签发配置、实际存储／备份和明确安装／试点许可仍按原边界处理，不刷新旧 pin、不重复生产采样。
+
+### 完整登记的独立文件适配与中断重开
+
+`member-checkout-full-registry-evidence.mjs` 复用原 Linux FD／inode 私有存储，不修改原六条适配器或底层存储。初始文件绑定完整 source-draft 摘要、214 条原登记、目标、安装前 metadata 和独立 operation；prepared 文件必须来自品牌化结果或按独立摘要验证的原字节。重开只从受信文件／locator 读取原摘要，不从数据库登记构造原证据；确认前再次读取完整链，已确认的缓存 context 也不能绕过后来丢失的文件。
+
+未提交原状态不追加确认、不重放 DDL；已提交原结果只追加一次不可覆盖的确认，后续新进程精确重开。先前确认后数据库回到旧状态、单条／冲突登记、结构漂移、缺文件／独立 locator 或错误权限一律拒绝，不修权限、不重造凭证。适配器本身零 SQL、无连接器，saved-production-evidence 仍不能生成 owned 安装结果。
+
+独立 Linux 作业使用真实 0700／0600 文件、目录同步、两个 SIGKILL 及新 worker 重开，登记提交使用 PGlite；数据库 catalog／连接身份为明确测试投影。因此真实文件生命周期已验收，但 `nativePostgresInstallationValidated／wholeInstallerInterrupted／realDatabaseConnectionIdentityValidated／persistentProductionStorageValidated／hostBackupRestoreValidated／powerLossValidated` 仍 false。实际对象、原生安装事务、权限及完整后台拓扑必须再共同验证。
+
+首轮新 CI 暴露 Node 20 长字符串 AssertionError 可能丢失自定义标题；两版本本地复现后，六项拒绝仅改用固定 Error 对象，原比较与断言全部保留。准备器新 LF 摘要 `c7645fc294ddd73c5bbe9e05e2e3c09f84fa1ddfe5227a2fa9643c7e856e1a5c`，离线新清单摘要 `c9c917422118a8e47a012fd34892ce4e7157eeedc19dcd5e1f1e6f235c588df6`。旧 `71202a1d…／30e2a1eb…` 原文、清单及失败记录完整保留；新旧 material 精确比较仅 `sources.builderSourceSha256` 不同，不替换旧 pin 或批准状态。
+
+当前先独立诊断旧到期边界，不改原验证值或应用。公开固定版本源码显示 [JWT 检查使用整秒、30 秒偏差及严格大于比较](https://raw.githubusercontent.com/PostgREST/postgrest/v14.5/src/PostgREST/Auth/Jwt.hs)，[验证时钟经 mkAutoUpdate 缓存读取](https://raw.githubusercontent.com/PostgREST/postgrest/v14.5/src/PostgREST/AppState.hs)。一个明确假设缓存落后 1 秒的本地算术模型可在 exp＋31.25 秒产生同样的 200／401 差异；**这只是候选解释，失败进程实际判定时钟未被采集，不能断言本次根因或放宽网关期限**。后续仅做独立隔离复现，再决定必要修正；不重复正式采样、不修改旧来源或已有构建，不启用 Stripe。
 
 ## 6. D：无维护上线与试点
 
