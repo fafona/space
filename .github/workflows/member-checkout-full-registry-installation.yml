@@ -1,0 +1,68 @@
+name: Isolated Full Registry Native Installation
+
+on:
+  push:
+    branches:
+      - acceptance/member-checkout-real-auth-20261125
+
+permissions:
+  contents: read
+
+jobs:
+  full-registry-installation:
+    name: Full Registry PG15.8 Installation (${{ matrix.ack-mode }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        ack-mode: [normal, commit-unknown]
+    services:
+      postgres:
+        image: postgres:15.8
+        env:
+          POSTGRES_DB: faolla_member_checkout_auth_test
+          POSTGRES_USER: checkout_ci_admin
+          POSTGRES_PASSWORD: disposable-checkout-ci-only
+        ports:
+          - 127.0.0.1:56463:5432
+        options: >-
+          --health-cmd "pg_isready -U checkout_ci_admin -d faolla_member_checkout_auth_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.20.1
+          cache: npm
+      - name: Install Locked Test Dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prepare Owned Native Database Client
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_REF" = refs/heads/acceptance/member-checkout-real-auth-20261125
+          tools="$RUNNER_TEMP/faolla-full-native-tools"
+          mkdir "$tools"
+          npm install --prefix "$tools/pg-client" --ignore-scripts --no-audit --no-fund --save-exact pg@8.23.1
+      - name: Validate New And Retained Contracts
+        run: node --test scripts/member-checkout-full-registry-installation.test.mjs scripts/member-checkout-full-registry-result.test.mjs scripts/member-checkout-full-registry-evidence.test.mjs scripts/member-checkout-047-installation.test.mjs scripts/member-checkout-047-preinstall-review.test.mjs
+      - name: Rehearse Native Installation And Interrupted Durable Recovery
+        env:
+          FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '1'
+          FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: current-auth
+          FAOLLA_CHECKOUT_FULL_REGISTRY_INSTALLATION_ACCEPTANCE: '1'
+          FAOLLA_CHECKOUT_FULL_REGISTRY_INSTALLATION_MODE: ${{ matrix.ack-mode }}
+        run: node --import tsx --test scripts/member-checkout-full-registry-installation-acceptance.mjs
+      - name: Preserve Sanitized Native Evidence Only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: member-checkout-full-registry-native-${{ matrix.ack-mode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/faolla-full-native-evidence/report.json
+          if-no-files-found: warn
+          retention-days: 14
