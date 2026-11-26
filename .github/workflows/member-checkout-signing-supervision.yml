@@ -1,0 +1,40 @@
+name: Owned Checkout Signing Supervision
+
+on:
+  push:
+    branches:
+      - acceptance/member-checkout-signing-supervision-20261126
+
+permissions:
+  contents: read
+
+jobs:
+  signing-supervision:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.13.1
+      - name: Existing locked test dependencies in disposable CI only
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Supervision and retained controller/protocol regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --import tsx --test --test-reporter=tap scripts/member-checkout-credential-renewal.test.mjs scripts/member-checkout-isolated-delivery.test.mjs scripts/member-checkout-isolated-domain-ownership.test.mjs scripts/member-checkout-isolated-delivery.interop.test.mjs scripts/member-checkout-isolated-supervisor.test.mjs | tee "$RUNNER_TEMP/checkout-supervision.tap"
+      - name: Own loopback TLS and ephemeral credential-file lifecycle only
+        run: node --import tsx scripts/member-checkout-isolated-supervision-owned.mjs
+      - name: Keep sanitized evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkout-signing-supervision-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/checkout-supervision.tap
+            ${{ runner.temp }}/checkout-supervision-owned.json
+          if-no-files-found: warn
+          retention-days: 14
