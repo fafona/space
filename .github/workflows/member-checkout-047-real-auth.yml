@@ -339,3 +339,43 @@ jobs:
           path: ${{ runner.temp }}/faolla-credential-next-evidence/report.json
           if-no-files-found: warn
           retention-days: 14
+
+  credential-renewal-boundary:
+    name: Credential Renewal And Read-only UID Boundary (isolated Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.20.1
+          cache: npm
+      - name: Install Locked Test Dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate Renewal Contracts Without Privilege
+        run: node --import tsx --test scripts/member-checkout-credential-renewal.test.mjs
+      - name: Verify Separate Owned Writer And Read-only Reader Identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_REPOSITORY" = fafona/space
+          test "$GITHUB_REF" = refs/heads/acceptance/member-checkout-real-auth-20261125
+          test "$(id -u)" -ne 0
+          sudo -n /usr/bin/env -i PATH="$PATH" GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted \
+            GITHUB_REPOSITORY=fafona/space GITHUB_EVENT_NAME=push GITHUB_REF="$GITHUB_REF" GITHUB_SHA="$GITHUB_SHA" \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" RUNNER_TEMP="$RUNNER_TEMP" \
+            FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE=1 FAOLLA_CHECKOUT_AUTH_TEST_PROFILE=current-auth \
+            FAOLLA_CHECKOUT_CREDENTIAL_RENEWAL_ACCEPTANCE=1 FAOLLA_OWNED_WRITER_UID="$(id -u)" FAOLLA_OWNED_WRITER_GID="$(id -g)" \
+            "$(command -v node)" scripts/member-checkout-credential-renewal-acceptance.mjs
+      - name: Preserve Sanitized Renewal Boundary Evidence Only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: member-checkout-credential-renewal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/faolla-credential-renewal-evidence/report.json
+          if-no-files-found: warn
+          retention-days: 14
