@@ -2667,3 +2667,12 @@ git diff --check
 - 拟用结算根目录及三子目录、指定 issuer unit 文件、指定 PITR 演练凭证均不存在；这只描述指定位置，不推断全机没有其它服务／备份。八个 PID 登记文件名存在，但实际进程元数据全部未确认，公网活动目标未绑定，不报告应用 UID／GID 或“八个存活版本”。结算路径备份覆盖与实际恢复仍未知；原服务、数据、权限、开关均未改。
 - 原始报告 SHA `1a24e068811a8cb43ab4f11e43c879edbe0005c8a1316258229613d09e071950`；独立离线 review SHA `9e6b10b209875e1a7dc91a793c3013626a9764072861c106760b32cbfeb4ac2b`，发送源 SHA `bdb2ff44163a6ddcbfad5384ac486fb6e4f1fa3d80f42546995c26de950d2c72`。报告、attempt、实际发送源、本地 TAP 和复核位于 `output/checkout-runtime-facts-20261126-8d13b6/`，不加入 Git；旧 gateway 报告、新 v2 原字节及 CI review 均复核未变。20 项是私有采集器本地检查，不是 hosted CI 或新增应用场景，原 524／53 的证据来源保留。
 - 这完成一次安全但不完整的元数据采集，不代表正式 installer／签发／存储备份／试点准备完成。仍有有效网关绑定、有效 JWT 配置、实际应用身份、签发身份生命周期和独立备份恢复五组未知；先本地明确可靠投影及准确准备方案。单次读取许可已消耗，不自动重连，不根据未知默认配置、授权或安装；未部署，不启用 Stripe／邮件。
+
+## 第九十六阶段：运行准备方案与真实元数据格式兼容验收（2026-11-26，未上线）
+
+- 离线复核旧采集器，复现合法 `next-server (v1` Name 被字符白名单拒绝、合法 Kong 多地址／TLS／reuseport／backlog 行被单监听正则拒绝；诊断 SHA `8e59fd6c5069da6fa70d05961629c5a9b6f9457ea2788edadf6f69a896c037a7`。旧采集器／发送源、07:58 正式报告、review 及所有 unknown 均保留；没有新正式读取，因此不能断言这两项就是当时线上拒绝的确切原因。
+- 新增独立纯投影组件 `member-checkout-runtime-metadata.mjs`：Name 只散列用于一致性，不当作 executable／权限身份；PID／start-time、Name、CWD 前后绑定，允许 CPU 计数变化但拒绝 PID 重用。UID／GID 四值和附加组有界验证，root 如实保留；监听解析区分明文／TLS／proxy-protocol／off／未知，输出永远不授予网络、安装或 signer 隔离能力。组件无 host IO、连接器、命令、密钥读取或生产入口。
+- 新 owned CI 仅独立分支运行，实际创建 Next-style 标题的 Linux child 和无网络／无宿主挂载／无公开端口／只读根文件系统的临时 Kong 2.8.1。首次 `79057d16…`／运行 `45786689234` 的 22 项单测通过、3 项 owned 检查通过后整体失败；诊断版 `f92ca1c5…`／`45787085421` 保留双方日志，确认容器 `libyaml-0.so.2` 加载失败。临时 tmpfs 覆盖 `/usr/local/kong` 安装库；失败前清理均成功，不改记成功。
+- 修正提交 `bb6e73edb780bbc189ea7a3feeb640222b1d833e` 将 owned 工作 prefix 放入 `/tmp/faolla-kong-prefix`，不挂载覆盖安装目录，并实测原 libyaml 文件存在。独立 CI `45787507433` 的 **24 项检查和 6 项 owned 场景全部成功**：实际 UID／GID／Name 与 stat 一致、owned CWD 不当作正式路径、容器隔离、安装库不遮挡、真实生成监听格式及旧正则拒绝复现；child／容器退出清理均通过。没有调用 Admin API 或读插件配置；Kong 镜像与正式环境是否等价仍 false，不能冒称完整正式拓扑。
+- 三轮的报告、TAP、准确运行身份和完整日志已下载并复核；独立 review SHA `77477e16b062a33a86904de5d0dfaf284f28dbbb263cadb049f414f240a6a76a`，私有证据在 `output/checkout-runtime-plan-owned-20261126/`。与前一阶段比较只有四个独立新增文件，原应用、依赖、SQL、协议和旧工作流未改；v2 原 wire、原 CI review 及正式只读证据 SHA 均复核不变。原 524 应用／53 来源 CI 不重新累计，本地 24 项和本轮 CI 另记。
+- 新[正式运行准备清单](member-checkout-runtime-preparation-20261126.md) 列明五个运行缺口、角色／目录／issuer 提案、生命周期、备份边界和执行顺序。实际公网活动进程与插件绑定的可靠源端投影仍待完成；不因为解析成功就把 unknown 改 observed。数字 UID、钥匙／算法、版本、目录创建、角色／授权、备份写入、安装、商户试点和发布均未批准；本轮正式连接／数据修改／权限变更／签发／安装／部署 0，不启用 Stripe／邮件。

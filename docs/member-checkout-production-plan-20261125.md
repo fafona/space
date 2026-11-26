@@ -286,6 +286,14 @@ root supervisor、Next、issuer 正常退出 0，未强杀，Next IPC-close 已�
 - 原始报告 SHA `1a24e068811a8cb43ab4f11e43c879edbe0005c8a1316258229613d09e071950`，独立离线 review SHA `9e6b10b209875e1a7dc91a793c3013626a9764072861c106760b32cbfeb4ac2b`，实际发送源 SHA `bdb2ff44163a6ddcbfad5384ac486fb6e4f1fa3d80f42546995c26de950d2c72`。证据在 `output/checkout-runtime-facts-20261126-8d13b6/`，不加入 Git；旧报告、v2 来源清单和原 524 应用／53 来源 CI 结果均未改变，没有新一次应用 CI，不累计测试数冒充功能进度。
 - 五组正式缺口仍在：有效网关绑定、有效签发配置、实际应用身份、指定签发服务生命周期、结算路径备份／恢复。下一步先在本地明确这些元数据的可靠投影与准确准备方案，不能靠重跑结构采样、猜测默认身份／钥匙、创建目录或继续正式读取来补齐。本次只读许可已结束，未获新的读取、签发、授权、安装或部署能力，Stripe／邮件仍关闭。
 
+### 运行准备清单与元数据格式兼容已完成（本地／owned，未新增正式采样）
+
+[正式运行准备清单](member-checkout-runtime-preparation-20261126.md) 收敛为五个缺口、准确交付标准和七部分执行方案，明确角色／目录／签发／备份／试点边界；不提供可直接执行的线上命令，不自行选择 UID、钥匙、迁移版本或商户。root 应用不能仅靠 0700 文件权限宣称 signer 隔离；原 inode 保留的文件恢复不能冒充换机／全目录丢失恢复。
+
+旧采集器在本地可复现两种格式拒绝：合法 Linux `next-server (v1` 名称和带 TLS／reuseport／backlog 的多监听行。新的纯投影组件接受这些合法元数据，但继续拒绝 PID 重用、Name／CWD 漂移、错误 UID／GID、重复字段、未知地址、TLS-only／proxy-protocol 的明文探测和任何 authority 晋升；不含 IO／命令或凭据入口。真实 Linux／Kong 2.8.1 owned 验收提交 `bb6e73ed…`、CI `45787507433` 的 24 项检查及 6 项 owned 场景全部通过，清理成功；前两份 owned 失败及库挂载诊断保留。原应用／SQL／旧工作流、v2 草稿和正式只读原稿均未变，未重新跑或增加原 524 应用场景。独立 review SHA `77477e16b062a33a86904de5d0dfaf284f28dbbb263cadb049f414f240a6a76a`，证据在 `output/checkout-runtime-plan-owned-20261126/`。
+
+这证明后续工具可兼容两种实际格式，不证明上次线上未知的确切原因，也未完成公网活动进程绑定或实际插件绑定的源端投影。下一步先补这些缺失的可靠只读方法，再提出一次准确字段范围的新读取请求；不先重连试错，不读取完整配置回本机脱敏，不因为测试成功就推进正式安装。
+
 ## 最初方案核对记录（保留，后续结果见上文与实施记录）
 
 - 代码定位：`src/lib/merchantCheckoutRuntime.server.ts`、其 12 项测试、`scripts/member-checkout-runtime-lifecycle-cases.mjs`、`scripts/member-checkout-047-installation-journal.mjs` 及独立来源／seal 模块。
