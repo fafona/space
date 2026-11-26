@@ -23,7 +23,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --test --test-reporter=tap scripts/member-checkout-isolated-delivery.test.mjs | tee "$RUNNER_TEMP/checkout-isolated-domain.tap"
+          node --test --test-reporter=tap scripts/member-checkout-isolated-delivery.test.mjs scripts/member-checkout-isolated-domain-ownership.test.mjs | tee "$RUNNER_TEMP/checkout-isolated-domain.tap"
       - name: Own internal TLS domains only
         run: node scripts/member-checkout-isolated-domain-owned.mjs
       - name: Keep sanitized evidence only
