@@ -6,6 +6,8 @@
 
 本地新增独立正式来源准备清单，已用保存证据生成并重验，准确绑定 214 条完整登记、38 个新来源步骤及独立 2974 文件应用候选；新 12 项与保留 45 项本地检查均通过。它不含可执行 SQL、正式版本或任何安装／授权能力，不是正式 installer；原应用 15 作业／489 项验收只作为引用，本次没有重跑或冒称更新了 hosted 应用 CI。
 
+本地另新增完整登记结果核对组件 `member-checkout-full-registry-result.mjs`：与旧六条 CI seal 分离，绑定原 214 条登记、独立来源清单、原操作和安装后 catalog；提交不明时仅判断原操作。新增 18 项及保留 57 项本地检查均通过，包括 PGlite 实际事务中成对登记的提交／回滚，失败／跳过 0；原应用及旧组件前后摘要一致。本组件不执行 38 步 DDL、不证明安装后权限，也不提供正式持久存储或生产安装能力。
+
 ## 1. 当前已完成与本轮发现
 
 - 非 Stripe 结算、积分／券、原单恢复、取消、状态展示及独立 047 适配已经完成多轮隔离验收。
@@ -179,6 +181,16 @@ root supervisor、Next、issuer 正常退出 0，未强杀，Next IPC-close 已�
 清单摘要为 `30e2a1ebea505ee4cc4afac126ca8773ec0e8d8e460fe7737abe36b1b5424ffc`，保存于 `output/checkout-production-source-draft-20261126-f2b8c1/`，不加入 Git。它只含来源摘要／去敏投影，不含 SQL 正文或私有 metadata／连接配置；所有 authority false、正式 source／seal 版本 null、SQL／商户／开关集合为空，九项待完成条件保留。来源摘要是完整性绑定，不携带生产真实性或批准，缺失正式事实继续未知。源容器关联也不能替代新安装窗口的目标／完整基线核对。
 
 新增 12 项与保留 45 项本地测试通过，失败／跳过 0；实际保存证据生成与 canonical 重验、原应用前后指纹不变也通过。本轮正式连接、SQL 派发、网络请求、安装／授权／预留／签发／试点／部署均 0；没有更改或重跑原 15 作业／489 项应用 CI。正式来源审批、installer、完整有效网关／签发、实际存储／独立备份及无维护发布／兼容回滚仍需后续工作，不把来源清单误称为可以直接上线的包。
+
+### 完整登记的结果核对组件（owned 本地演练，不是正式 installer）
+
+`member-checkout-full-registry-result.mjs` 只接受经过现有工厂验证、标注 `owned-synthetic-evidence` 的来源清单和品牌化 observation。准备时要求完整原 214 条 registry、来源／目标／catalog 不变；安装事务投影必须可写、可重复读或可串行化，registry 尚未变化且有 catalog 变化。原 preinstall 查询与 seal 查询分别绑定摘要，不混用两个查询的身份。
+
+新结果采用独立的测试登记对 `999999990049／999999990050`，明确不预留生产版本、不替换旧 `047／048` CI 登记。核对必须由外部持有原 prepared 字节、摘要和 operation ID，使用另一条只读可重复读连接：准确 216 条登记及原安装后 catalog 才返回 `committed-original`；原完整 214 条及原全部 metadata 均不变才返回 `not-committed-original`。两种结果都禁止自动重放 DDL、修补登记或补造丢失证据；单条／冲突／额外登记、来源／目标／ACL／结构漂移均拒绝。
+
+18 项新增检查包含 PGlite 实际事务：第一条登记后失败、两条登记后回滚、COMMIT 已成功但随后抛错、只核对已提交原结果，以及缺原 prepared 字节拒绝。PGlite 只实际验证 registry 事务；catalog、连接 PID／只读上下文采用明确的 owned 测试投影。它不是原生 PG 15.8 的完整 38 步安装演练、真实新连接证明、持久文件／进程中断验收或正式数据库兼容证明。`installedPrivilegesValidated／persistentEvidenceValidated／productionAuthorized／deploymentReady` 均 false，saved-production-evidence 也被拒绝用于生成此测试结果。
+
+下一步将完整登记协议接入独立持久凭证及原生安装／恢复演练，并继续原 93 函数／24 表／28 守卫和全部实际授权检查；没有据此宣称正式 installer 已完成。正式版本、有效网关／签发配置、实际存储／备份和明确安装／试点许可仍按原边界处理，不刷新旧 pin、不重复生产采样。
 
 ## 6. D：无维护上线与试点
 
