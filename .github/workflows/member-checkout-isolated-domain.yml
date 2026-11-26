@@ -1,0 +1,38 @@
+name: Owned Independent Checkout Signing Domain
+
+on:
+  push:
+    branches:
+      - acceptance/member-checkout-isolated-domain-20261126
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-domain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.13.1
+      - name: Prototype contract checks only
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test --test-reporter=tap scripts/member-checkout-isolated-delivery.test.mjs | tee "$RUNNER_TEMP/checkout-isolated-domain.tap"
+      - name: Own internal TLS domains only
+        run: node scripts/member-checkout-isolated-domain-owned.mjs
+      - name: Keep sanitized evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkout-isolated-domain-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/checkout-isolated-domain.tap
+            ${{ runner.temp }}/checkout-isolated-domain-owned.json
+          if-no-files-found: warn
+          retention-days: 14
