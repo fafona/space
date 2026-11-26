@@ -187,7 +187,8 @@ test('owned native PG15.8 full-registry atomic installation and durable interrup
    assert.deepEqual(await business(),baselineBusiness);assert.equal((await readonly()).data.core.registry.count,216);
   });
   const {createOwnedCheckoutData}=await import('./fixtures/member-checkout-real-auth-database.mjs');
-  const submission=(await import('../src/lib/merchantCheckoutSubmission.server.ts')).default,points=(await import('../src/lib/merchantCheckoutSubmissionPlan.server.ts')).default;
+  const {nativeCheckoutFinancialExports}=await import('./member-checkout-full-registry-installation-imports.mjs');
+  const {submission,points}=nativeCheckoutFinancialExports(await import('../src/lib/merchantCheckoutSubmission.server.ts'),await import('../src/lib/merchantCheckoutSubmissionPlan.server.ts'));
   const runtimeCall=async(name,args)=>{const db=await open();try{await db.query('BEGIN');await db.query('SET LOCAL SESSION AUTHORIZATION faolla_checkout_runtime');const result=(await db.query('SELECT public.faolla_checkout_runtime_v1($1,$2) result',[name,args])).rows[0].result;await db.query('COMMIT');return result;}catch(error){await db.query('ROLLBACK').catch(()=>{});throw error;}finally{await close(db);}};
   const financial=await createOwnedCheckoutData(observer,runtimeCall),f=await financial.seed(randomUUID()),rpc=async(name,args)=>{try{return {data:await runtimeCall(name,args),error:null};}catch(error){return {data:null,error:{message:error.message}};}};
   const initial={...f.selection,method:'points',nonce:randomUUID(),confirmationHash:'0'.repeat(64),customer:f.customer},identity=points.checkoutSubmissionIdentity(initial,f.principal);

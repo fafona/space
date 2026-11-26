@@ -3,6 +3,7 @@ import test from 'node:test';
 import {readFile} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
 import {assertFullRegistryInstallationCi,nativeInstallationModes,assertFullRegistryInstallationRequest,readFullRegistryInstallationInput} from './member-checkout-full-registry-installation-support.mjs';
+import {nativeCheckoutFinancialExports} from './member-checkout-full-registry-installation-imports.mjs';
 const env={GITHUB_ACTIONS:'true',RUNNER_ENVIRONMENT:'github-hosted',GITHUB_REPOSITORY:'fafona/space',GITHUB_EVENT_NAME:'push',GITHUB_REF:'refs/heads/acceptance/member-checkout-real-auth-20261125',GITHUB_SHA:'1'.repeat(40),RUNNER_TEMP:'/tmp/owned-ci-only',FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE:'1',FAOLLA_CHECKOUT_AUTH_TEST_PROFILE:'current-auth',FAOLLA_CHECKOUT_FULL_REGISTRY_INSTALLATION_ACCEPTANCE:'1',FAOLLA_CHECKOUT_FULL_REGISTRY_INSTALLATION_MODE:'normal'};
 const source=name=>readFile(new URL('./'+name,import.meta.url),'utf8');
 
@@ -86,4 +87,14 @@ test('separate matrix retains all old workflows, publishes only sanitized report
  assert.match(workflow,/faolla-full-native-evidence\/report.json/);assert.match(workflow,/contents: read/);assert.match(workflow,/persist-credentials: false/);
  assert.doesNotMatch(workflow,/secrets\.|contents: write|workflow_dispatch:|workflow_run:|ssh |scp |output\//);
  for(const file of ['.github/workflows/member-checkout-real-auth.yml','.github/workflows/member-checkout-047-real-auth.yml','.github/workflows/member-checkout-full-registry-evidence.yml'])assert.doesNotMatch(await readFile(file,'utf8'),/FULL_REGISTRY_INSTALLATION_ACCEPTANCE|full-registry-installation-acceptance/);
+});
+
+test('test-driver financial imports accept exact ESM/CJS exports on the actual Node runtime and refuse missing or conflicting functions',()=>{
+ const f=()=>{},other=()=>{},s={submitMemberCheckout:f},p=Object.fromEntries(['checkoutSubmissionIdentity','parseCheckoutSubmissionSnapshot','quoteCheckoutSubmissionSnapshot'].map(k=>[k,f]));
+ for(const [submission,points] of [[s,p],[{default:s},{default:p}],[{...s,default:s},{...p,default:p}]]){
+  const result=nativeCheckoutFinancialExports(submission,points);assert.equal(result.submission.submitMemberCheckout,f);assert.equal(result.points.checkoutSubmissionIdentity,f);assert.equal(Object.isFrozen(result),true);
+ }
+ for(const [submission,points] of [[{},p],[s,{}],[{...s,default:{submitMemberCheckout:other}},p],[{submitMemberCheckout:'not-a-function'},p]])assert.throws(()=>nativeCheckoutFinancialExports(submission,points));
+ const code="const {nativeCheckoutFinancialExports}=await import('./scripts/member-checkout-full-registry-installation-imports.mjs');const value=nativeCheckoutFinancialExports(await import('./src/lib/merchantCheckoutSubmission.server.ts'),await import('./src/lib/merchantCheckoutSubmissionPlan.server.ts'));if(typeof value.submission.submitMemberCheckout!=='function'||typeof value.points.checkoutSubmissionIdentity!=='function')process.exit(1);";
+ const result=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',code],{cwd:process.cwd(),env:{},encoding:'utf8',timeout:15000});assert.ifError(result.error);assert.equal(result.status,0);assert.equal(result.stdout,'');assert.equal(result.stderr,'');
 });
