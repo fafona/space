@@ -1,0 +1,41 @@
+name: Isolated Full Registry Evidence
+
+on:
+  push:
+    branches:
+      - acceptance/member-checkout-real-auth-20261125
+
+permissions:
+  contents: read
+
+jobs:
+  full-registry-files:
+    name: Full Registry Native Files and Embedded SQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.20.1
+          cache: npm
+      - name: Install Locked Test Dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate Independent Evidence and Retained Contracts
+        run: node --test scripts/member-checkout-full-registry-evidence.test.mjs scripts/member-checkout-full-registry-evidence-ci.test.mjs scripts/member-checkout-full-registry-result.test.mjs scripts/member-checkout-production-source-draft.test.mjs scripts/member-checkout-evidence-storage.test.mjs scripts/member-checkout-047-evidence.test.mjs
+      - name: Rehearse Actual Private Files and Worker Interruption
+        env:
+          FAOLLA_CHECKOUT_REAL_AUTH_ACCEPTANCE: '1'
+          FAOLLA_CHECKOUT_AUTH_TEST_PROFILE: current-auth
+          FAOLLA_CHECKOUT_FULL_REGISTRY_EVIDENCE_ACCEPTANCE: '1'
+        run: node --test scripts/member-checkout-full-registry-evidence-acceptance.mjs
+      - name: Preserve Sanitized Evidence Only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: member-checkout-full-registry-files-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/faolla-full-registry-file-evidence/report.json
+          if-no-files-found: warn
+          retention-days: 14

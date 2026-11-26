@@ -43,6 +43,22 @@ function receipts(prepared){
 function registryRows(rows){return rows.map(({version,name})=>({version,nameSha256:sha(name)}));}
 const safe=fn=>{try{return fn();}catch{throw Error('checkout_full_registry_result_refused');}};
 
+// Additive read-only APIs for the independent persistence adapter. These do
+// not turn a source draft or a self-hash into installation authority.
+export function checkoutFullRegistryBaselineBinding({sourceDraft,bundle,before}){
+ return safe(()=>freeze({...baseline(sourceDraft,bundle,before),productionAuthorized:false,deploymentReady:false}));
+}
+function verifyPrepared({sourceDraft,bundle,before,preparedWire,expectedSha256,operationId}){
+ const binding=baseline(sourceDraft,bundle,before);hash(expectedSha256);uuid(operationId);
+ assert.equal(typeof preparedWire,'string');assert.ok(Buffer.byteLength(preparedWire)>0&&Buffer.byteLength(preparedWire)<=65536);
+ const v=JSON.parse(preparedWire);assert.deepEqual(Object.keys(v).sort(),['material','sha256']);
+ assert.equal(canonical(v),preparedWire);assert.equal(v.sha256,expectedSha256);assert.equal(sha(canonical(v.material)),expectedSha256);
+ assert.deepEqual(v.material,material(binding,operationId,v.material.afterCatalogSha256,v.material.preparedBackendPid));
+ assert.notEqual(v.material.afterCatalogSha256,before.catalogSha256);
+ const result=freeze({material:v.material,digest:expectedSha256,wire:preparedWire});preparedResults.add(result);return result;
+}
+export function verifyCheckoutFullRegistryPrepared(input){return safe(()=>verifyPrepared(input));}
+
 /** The caller must persist and independently retain this exact wire/digest
  * BEFORE committing both receipts. This component does not provide that store,
  * execute the 38 migrations or attest their installed privileges. */
@@ -66,12 +82,8 @@ export function checkoutFullRegistryOwnedReceipts(prepared){
  * Even 'not-committed-original' never authorizes automatic installation replay. */
 export function reconcileCheckoutFullRegistryResult({sourceDraft,bundle,before,current,preparedWire,expectedSha256,operationId}){
  return safe(()=>{
-  const binding=baseline(sourceDraft,bundle,before);hash(expectedSha256);uuid(operationId);
-  assert.equal(typeof preparedWire,'string');assert.ok(Buffer.byteLength(preparedWire)>0&&Buffer.byteLength(preparedWire)<=65536);
-  const v=JSON.parse(preparedWire);assert.deepEqual(Object.keys(v).sort(),['material','sha256']);
-  assert.equal(canonical(v),preparedWire);assert.equal(v.sha256,expectedSha256);assert.equal(sha(canonical(v.material)),expectedSha256);
-  assert.deepEqual(v.material,material(binding,operationId,v.material.afterCatalogSha256,v.material.preparedBackendPid));
-  assert.notEqual(v.material.afterCatalogSha256,before.catalogSha256);
+  const binding=baseline(sourceDraft,bundle,before),verified=verifyPrepared({sourceDraft,bundle,before,preparedWire,expectedSha256,operationId});
+  const v={material:verified.material};
   assertCheckout047InstallationTarget(before,current);assert.equal(current.querySha256,before.querySha256);
   const context=current.data.core.context;assert.equal(context.readOnly,true);assert.equal(context.isolation,'repeatable read');
   assert.notEqual(context.backendPid,before.data.core.context.backendPid);assert.notEqual(context.backendPid,v.material.preparedBackendPid);
