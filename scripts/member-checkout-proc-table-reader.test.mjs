@@ -9,7 +9,7 @@ function fixture({pathChange,fdChange,typeChange,wire='header\n',failRead=false}
   lstatSync(file){calls.push(['lstat',file]);const s=stat();paths++;if(paths===2)pathChange?.(s);return s;},
   openSync(file,flags){calls.push(['open',file,flags]);assert.equal(flags&nativeFs.constants.O_WRONLY,0);opened=true;return 4;},
   fstatSync(fd){assert.equal(fd,4);const s=stat();fds++;if(fds===2)fdChange?.(s);return s;},
-  fstatfsSync(fd){assert.equal(fd,4);types++;return {type:typeChange?.(types)??0x9fa0n};},
+  statfsSync(path){assert.equal(path,'/proc/self/fd/4');types++;return {type:typeChange?.(types)??0x9fa0n};},
   readSync(fd,b,o,len){assert.equal(fd,4);if(failRead)throw Error('read_failed');const s=Buffer.isBuffer(wire)?wire:Buffer.from(wire),n=Math.min(len,s.length-position);s.copy(b,o,position,position+n);position+=n;return n;},
   closeSync(fd){assert.equal(fd,4);closed++;}
  };
@@ -28,3 +28,4 @@ test('byte bound is exactly one MiB plus refusal sentinel',()=>{const f=fixture(
 test('read and strict UTF-8 errors do not leak descriptor',()=>{for(const options of [{failRead:true},{wire:Buffer.from([0xff,0xff])}]){const f=fixture(options);assert.throws(()=>f.read());assert.equal(f.state().closed,1);}});
 test('64-bit inode remains exact rather than rounded',()=>{const f=fixture(),ls=f.fs.lstatSync,st=f.fs.fstatSync;f.fs.lstatSync=p=>({...ls(p),ino:18446744073709551610n});f.fs.fstatSync=p=>({...st(p),ino:18446744073709551610n});assert.equal(f.read().identity.ino,'18446744073709551610');});
 test('module contains no process connector, environment, configuration or write operation',()=>{const s=nativeFs.readFileSync(new URL('./member-checkout-proc-table-reader.mjs',import.meta.url),'utf8');for(const denied of ['node:fs','node:child_process','node:http','process.env','fetch(','writeFile','mkdir','rmSync','chmod','chown'])assert.ok(!s.includes(denied),denied);});
+test('filesystem verification uses an existing Node API and only its own numeric descriptor link',()=>{assert.equal(typeof nativeFs.statfsSync,'function');const s=nativeFs.readFileSync(new URL('./member-checkout-proc-table-reader.mjs',import.meta.url),'utf8');assert.ok(s.includes("fs.statfsSync('/proc/self/fd/'+fd,{bigint:true})"));assert.ok(!s.includes('fs.fstatfsSync('));});

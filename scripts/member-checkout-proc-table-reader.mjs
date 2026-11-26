@@ -13,7 +13,9 @@ export function readCheckoutProcNetworkTable(fs,file,onStage=()=>{}){
   if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1n||s.uid!==0n||s.gid!==0n||s.size!==0n||(s.mode&0o170000n)!==0o100000n||(s.mode&0o7777n)!==0o444n)reject('proc_table_metadata_refused');
   return identity(s);
  }
- function procfs(fd){const s=fs.fstatfsSync(fd,{bigint:true});if(s.type!==0x9fa0n)reject('proc_table_filesystem_refused');}
+ // Node exposes statfsSync(path), not fstatfsSync(fd). Linux's own numeric
+ // descriptor link resolves to this still-open object, not a fresh table open.
+ function procfs(fd){if(!Number.isSafeInteger(fd)||fd<0)reject('proc_table_metadata_refused');const s=fs.statfsSync('/proc/self/fd/'+fd,{bigint:true});if(s.type!==0x9fa0n)reject('proc_table_filesystem_refused');}
  onStage('before_metadata');const pathBefore=shape(fs.lstatSync(file,{bigint:true}));
  onStage('open_readonly');const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
  try{
