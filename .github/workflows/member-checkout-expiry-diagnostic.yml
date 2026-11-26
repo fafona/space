@@ -1,0 +1,64 @@
+name: Isolated Checkout Expiry Diagnosis
+
+on:
+  push:
+    branches:
+      - diagnostic/member-checkout-expiry-boundary-20261126
+
+permissions:
+  contents: read
+
+jobs:
+  expiry-clock:
+    name: Real PostgREST 14.5 Clock Boundary (diagnosis only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:15.8
+        env:
+          POSTGRES_DB: faolla_checkout_expiry_boundary_test
+          POSTGRES_USER: expiry_ci_admin
+          POSTGRES_PASSWORD: disposable-expiry-ci-only
+        ports:
+          - 127.0.0.1:56464:5432
+        options: >-
+          --health-cmd "pg_isready -U expiry_ci_admin -d faolla_checkout_expiry_boundary_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.20.1
+      - name: Validate Independent Diagnostic Contracts
+        run: node --test scripts/member-checkout-expiry-diagnostic.test.mjs
+      - name: Prepare Exact Disposable Diagnostic Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_REPOSITORY" = fafona/space
+          test "$GITHUB_REF" = refs/heads/diagnostic/member-checkout-expiry-boundary-20261126
+          tools="$RUNNER_TEMP/faolla-expiry-diagnostic-tools"
+          mkdir "$tools"
+          cd "$tools"
+          curl --fail --location --retry 2 --max-time 120 -o postgrest.tar.xz https://github.com/PostgREST/postgrest/releases/download/v14.5/postgrest-v14.5-linux-static-x86-64.tar.xz
+          printf '%s  postgrest.tar.xz\n' ab5cc7e974d4940447991804588cfb8b3f7b2c57b691f0905df04d51ede69470 | sha256sum --check --strict
+          mkdir postgrest-bin
+          tar -xJf postgrest.tar.xz -C postgrest-bin
+          npm install --prefix "$tools/pg-client" --ignore-scripts --no-audit --no-fund --save-exact pg@8.23.1
+      - name: Measure Unmodified Gateway With Signed Clock Oracles
+        env:
+          FAOLLA_CHECKOUT_EXPIRY_DIAGNOSTIC: '1'
+        run: node --test scripts/member-checkout-expiry-diagnostic-acceptance.mjs
+      - name: Preserve Sanitized Clock Evidence Only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: member-checkout-expiry-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/faolla-expiry-boundary-evidence/report.json
+          if-no-files-found: warn
+          retention-days: 14
