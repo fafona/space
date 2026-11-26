@@ -300,6 +300,14 @@ root supervisor、Next、issuer 正常退出 0，未强杀，Next IPC-close 已�
 
 新方法**会在源端内存中临时解析插件响应**，只是不导出／落盘完整响应或配置；不能沿用先前“不读完整插件配置”的许可，需另行明确授权。拟议新窗口仅含已知 Kong 来源／有效监听／Auth 与 REST 元数据、上述字段白名单绑定，以及活动发布记录所指进程／UID／GID／exe 元数据／监听 socket；先本地测试采集器，不查数据库或客户记录，不读完整环境／JWT／密码／签名钥匙，不修改配置／权限／数据，不安装／部署。方法验收不是正式采样，旧 unknown、v2 草稿及原 524 应用／53 来源 CI 不变；公网入口、签发提供者与备份恢复仍未就绪。详细边界见[运行准备清单](member-checkout-runtime-preparation-20261126.md)。
 
+### 09:39 UTC 限定只读核对：网关绑定已确认，应用身份未确认
+
+新单次批准 `call_82a428f29ee34fb8ac324639c7d13bdf` 已执行完毕：68 项本地检查通过后唯一 SSH，退出 0／stderr 0。源端完整响应临时处理已明确获准，但只导出名称／启用状态／绑定 ID；相关服务 5、路由 5、启用插件绑定 9，Kong 身份／镜像／挂载及前后投影一致。REST 与受保护 Auth 的 acl／key-auth／cors 绑定被观察到；配置／consumer／凭据值未导出，不推断 JWT 有效算法、钥匙一致性或结算调用权限。
+
+应用分支在 `active_process_before` 被 `metadata_file_changed` 拒绝，实际身份仍未知。现有记录未保存具体文件和变化字段名，不能据此归因于内核时间字段或线上应用；下一步只补该采集诊断并测试，再另行申请仅活动应用的一次只读核对，不重复读取已确认网关。禁止自动重连、放宽文件检查或以猜测的 UID／GID 准备正式权限。
+
+私有报告 SHA `5c8cb6750f7f55936950085effdb82cfb0d9311ba936042517ff9f5e584feab5`／review SHA `6440c4c3bfc58bd15a373f3a71f4c71ea55c67bd70ff7cc026f9306a41dfa312`，证据位于 `output/checkout-missing-runtime-approved-20261126-c8274f/`；旧证据不变，本次许可已消耗。数据库／客户记录／完整环境／密钥读取、远程写入／授权／安装／部署均无操作；Stripe／邮件保持关闭。签发来源、准确应用身份、目录／服务及独立备份恢复尚未就绪，原应用／SQL／524 场景及来源 53 项 CI 不变。
+
 ## 最初方案核对记录（保留，后续结果见上文与实施记录）
 
 - 代码定位：`src/lib/merchantCheckoutRuntime.server.ts`、其 12 项测试、`scripts/member-checkout-runtime-lifecycle-cases.mjs`、`scripts/member-checkout-047-installation-journal.mjs` 及独立来源／seal 模块。
