@@ -1,8 +1,8 @@
 {
   "schemaVersion": 5,
   "kind": "reviewed-application-code-only-v1",
-  "baseline": "87d85a859ff69261a0a2bd1d9923d8715935293a",
-  "purpose": "business-card-qr-center-size-slider",
+  "baseline": "98ce90e63c84e0da7747d0a14d2f5fc9d7f5f980",
+  "purpose": "mobile-page-translation-fix",
   "database": "unchanged",
   "dependencies": "unchanged",
   "environment": "inherit-protected",
@@ -10,103 +10,47 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
-      "file": "scripts/business-card-qr-image-browser-acceptance.mjs",
+      "file": "scripts/locale-switch-browser-acceptance.mjs",
       "role": "verification",
       "before": [
         "100644",
-        "0a451417524e0e8af8dfc98635db03b2865802f9"
+        "c3a301ec7b82cc514908e4ff9e5f0796c5d56049"
       ],
       "after": [
         "100644",
-        "0f6e3afb8a6ae6ffba11f48baaf0f908b9db5599"
+        "ea9ce85e7be0d8e1698aee1033ca3a77cfb5c1ce"
       ]
     },
     {
-      "file": "src/components/admin/BusinessCardQrEditorControls.tsx",
+      "file": "src/components/ClientDomTranslator.tsx",
       "role": "application",
       "before": [
         "100644",
-        "b968457930fa5d6097312e05b0d9dc58019496cc"
+        "d6572e001f772e75df872d29f628316c8c0f695e"
       ],
       "after": [
         "100644",
-        "f021b3f67a02ba6d7ba74dcdc5a624e21dbdbc4d"
+        "c096aa1877a5cd07f06da430fe903263c98cbaa4"
       ]
     },
     {
-      "file": "src/components/admin/BusinessCardQrImageControls.tsx",
+      "file": "src/components/LanguageTranslationFeedback.tsx",
       "role": "application",
       "before": [
         "100644",
-        "7b1e10daf75530b2a9e89ca219b11df49d86eba5"
+        "2f83e6dabb3ac504d03f683181da6d482513faca"
       ],
       "after": [
         "100644",
-        "e1ff2f8d26ab430d78a28e9ba39f5d76678e2305"
-      ]
-    },
-    {
-      "file": "src/lib/merchantBusinessCardQr.ts",
-      "role": "application",
-      "before": [
-        "100644",
-        "7d08793511841379b461b2caa561c652e74da4e1"
-      ],
-      "after": [
-        "100644",
-        "a0619989ab45f0c9eb9f5d294f15ea5cc7ace976"
-      ]
-    },
-    {
-      "file": "src/lib/merchantBusinessCardQrCenterSize.test.ts",
-      "role": "verification",
-      "before": null,
-      "after": [
-        "100644",
-        "fc62d847a1012e7c4c49c8dfb1d0689d86d99871"
-      ]
-    },
-    {
-      "file": "src/lib/merchantBusinessCardQrCenterSize.ts",
-      "role": "application",
-      "before": null,
-      "after": [
-        "100644",
-        "a800450052600435bb56a63d3e083f05305248e3"
-      ]
-    },
-    {
-      "file": "src/lib/merchantBusinessCardQrDecorations.ts",
-      "role": "application",
-      "before": [
-        "100644",
-        "44b88d0455edd6ea04c87baeacb34ce7149cced9"
-      ],
-      "after": [
-        "100644",
-        "f634a592f1db6d9104368cdcb70e08843c57569f"
-      ]
-    },
-    {
-      "file": "src/lib/merchantBusinessCardQrSettings.ts",
-      "role": "application",
-      "before": [
-        "100644",
-        "ae1f2a3d9a6c52a7070f495d2adb67703da96fcc"
-      ],
-      "after": [
-        "100644",
-        "259fe44568f1347da218c26cb9a813e526cdec77"
+        "7c39afd412bf325deaf216f5d3c626d4a317f001"
       ]
     }
   ],
   "focusedTests": [
-    "src/lib/merchantBusinessCardQrCenterSize.test.ts",
-    "src/lib/merchantBusinessCardQrImage.test.ts",
-    "src/lib/merchantBusinessCardQrSettings.test.ts",
-    "src/lib/merchantBusinessCardQrExport.test.ts",
-    "src/lib/merchantBusinessCardQrPreview.test.ts",
-    "src/lib/merchantBusinessCardQr.test.ts"
+    "src/lib/domTranslations.performance.test.ts",
+    "src/lib/domTranslations.brand.test.ts",
+    "src/lib/domTranslationStatus.test.ts",
+    "src/lib/i18n.test.ts"
   ],
   "baseSchemaVersion": 1,
   "templateSchema": {
