@@ -240,14 +240,17 @@ export default function ClientDomTranslator() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const applyVersionRef = useRef(0);
-  const mutationGuardRef = useRef<TranslatorMutationGuard | null>(null);
   const previousLocaleRef = useRef<string>("zh-CN");
   const previousRouteKeyRef = useRef<string | null>(null);
 
-  if (!mutationGuardRef.current) {
+  useLayoutEffect(() => {
+    if (typeof document === "undefined") return;
+
+    // Mutation markers belong to this observer only; a disconnected observer
+    // must not leave markers that hide a later locale's React updates.
     const translatedTextNodes = new WeakSet<MerchantTextNode>();
     const translatedAttrNodes = new WeakMap<MerchantElement, Set<string>>();
-    mutationGuardRef.current = {
+    const mutationGuard: TranslatorMutationGuard = {
       markTextMutation: (node) => {
         translatedTextNodes.add(node);
       },
@@ -270,10 +273,14 @@ export default function ClientDomTranslator() {
         return true;
       },
     };
-  }
 
-  useLayoutEffect(() => {
-    if (typeof document === "undefined") return;
+    const consumeTranslationMutation = (mutation: MutationRecord) => {
+      if (mutation.type === "characterData") {
+        return mutationGuard.consumeTextMutation(mutation.target as MerchantTextNode);
+      }
+      return mutation.type === "attributes" && mutation.target instanceof Element &&
+        mutationGuard.consumeAttrMutation(mutation.target as MerchantElement, mutation.attributeName);
+    };
 
     const normalizedLocale = normalizeDomLocale(locale);
     const isZhCn = normalizedLocale.toLowerCase() === "zh-cn";
@@ -298,7 +305,6 @@ export default function ClientDomTranslator() {
     const progressRoots = new Set<Node>();
     let progressFrame: number | null = null;
     const requests = new AbortController();
-    const mutationGuard = mutationGuardRef.current;
     const currentVersion = applyVersionRef.current + 1;
     applyVersionRef.current = currentVersion;
     const translationReporter = createDomTranslationReporter(normalizedLocale);
@@ -309,7 +315,7 @@ export default function ClientDomTranslator() {
       try {
         for (const root of roots) {
           if (root.isConnected || root === document.body) {
-            traverseAndApply(root, normalizedLocale, new Set<string>(), false, mutationGuard ?? undefined, sourceRecoveryLocale);
+            traverseAndApply(root, normalizedLocale, new Set<string>(), false, mutationGuard, sourceRecoveryLocale);
           }
         }
       } finally { applying = false; }
@@ -341,7 +347,7 @@ export default function ClientDomTranslator() {
               normalizedLocale,
               missing,
               false,
-              mutationGuard ?? undefined,
+              mutationGuard,
               sourceRecoveryLocale,
             );
           }
@@ -406,8 +412,6 @@ export default function ClientDomTranslator() {
       queueApply(document.body, false);
     });
 
-    void runApply([document.body], shouldBlockFirstPaint);
-
     const observer = new MutationObserver((mutations) => {
       if (disposed || applying) return;
 
@@ -422,16 +426,7 @@ export default function ClientDomTranslator() {
           const changed = [...mutation.addedNodes, ...mutation.removedNodes];
           if (changed.length && changed.every(ignored)) return;
         }
-        if (mutation.type === "characterData" && mutationGuard?.consumeTextMutation(mutation.target as MerchantTextNode)) {
-          return;
-        }
-        if (
-          mutation.type === "attributes" &&
-          mutation.target instanceof Element &&
-          mutationGuard?.consumeAttrMutation(mutation.target as MerchantElement, mutation.attributeName)
-        ) {
-          return;
-        }
+        if (consumeTranslationMutation(mutation)) return;
         refreshMutationSource(mutation);
         if (mutation.type === "attributes") {
           queueApply(mutation.target, false);
@@ -456,14 +451,24 @@ export default function ClientDomTranslator() {
       attributeFilter: [...TRANSLATABLE_ATTRS],
     });
 
+    // Observe the first synchronous cache/glossary writes too, so their guard
+    // entries are consumed before React updates a reused responsive DOM node.
+    void runApply([document.body], shouldBlockFirstPaint);
+
     return () => {
       disposed = true;
+      // React may update text/attributes in the same commit that changes the
+      // locale or route. Preserve those sources before disconnect drops the
+      // undelivered records and the next effect translates the reused nodes.
+      observer.takeRecords().forEach((mutation) => {
+        if (!consumeTranslationMutation(mutation)) refreshMutationSource(mutation);
+      });
+      observer.disconnect();
       unsubscribeRetry();
       translationReporter.dispose();
       requests.abort();
       if (progressFrame !== null) window.cancelAnimationFrame(progressFrame);
       progressRoots.clear();
-      observer.disconnect();
     };
   }, [locale, pathname, searchParams]);
 

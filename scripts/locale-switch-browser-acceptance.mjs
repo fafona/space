@@ -8,7 +8,7 @@ import fs from 'node:fs';
 const source=['欢迎来体验数字运动','和朋友一起开启快乐挑战','预约场地前请查看到访说明'];
 const spanish=['Ven a descubrir el deporte digital','Comparte un nuevo reto con tus amigos','Consulta las instrucciones antes de reservar'];
 const chinese=['欢迎来体验数字运动','和朋友一起开启快乐挑战','预约场地前请查看到访说明'];
-const entry=`import React from 'react';import{createRoot}from'react-dom/client';
+const entry=`import React from 'react';import{createRoot}from'react-dom/client';import{flushSync}from'react-dom';
 import{I18nProvider,useI18n}from'./src/components/I18nProvider';import Translator from'./src/components/ClientDomTranslator';
 import Switcher from'./src/components/GlobalLanguageSwitcher';
 import LoadingProgressScreen from'./src/components/LoadingProgressScreen';
@@ -16,13 +16,15 @@ import{isDomTranslationCached,reverseTranslateDomText}from'./src/lib/domTranslat
 const query=new URLSearchParams(location.search);
 const original=query.get('source')==='es'?${JSON.stringify(spanish)}:${JSON.stringify(source)};
 if(query.has('many'))original.push(...Array.from({length:15},(_,i)=>'更多数字活动介绍 '+i));
-function Website(){const{setLocale,locale}=useI18n();return <main data-public-merchant-site={query.has('backend')?undefined:'99990001'} style={{minHeight:2000}}>
+function Website(){const{setLocale,locale}=useI18n();const[mobileContent,setMobileContent]=React.useState(false);
+if(query.has('responsive')){const text=query.has('shared')?(mobileContent?'商户信息':'会话'):(mobileContent?'Ver juegos':'Reserva tu visita');return <main data-public-merchant-site="99990001"><button data-no-translate="1" data-update-layout onClick={()=>setMobileContent(value=>!value)}>Change layout content</button><button data-no-translate="1" data-update-language onClick={()=>{setMobileContent(true);setLocale('ko-KR');}}>Change language and content</button><button data-no-translate="1" data-rapid-languages onClick={()=>{flushSync(()=>setLocale('en-GB'));flushSync(()=>setLocale('es-ES'));}}>Change languages in one event</button><p data-responsive-text title={text}>{text}</p><input data-responsive-placeholder placeholder={text} defaultValue="PRIVATE RESPONSIVE DRAFT"/></main>;}
+return <main data-public-merchant-site={query.has('backend')?undefined:'99990001'} style={{minHeight:2000}}>
 <div data-no-translate="1"><button onClick={()=>setLocale('es-ES')}>Spanish</button><button onClick={()=>setLocale('zh-CN')}>Chinese</button><button onClick={()=>setLocale('en-GB')}>English</button></div>
 {original.map((text,index)=><p key={index} data-line={index} title={index===0?original[0]:undefined}>{text}</p>)}
 <input data-customer-draft aria-label="Customer draft" placeholder={original[1]} defaultValue="PRIVATE CUSTOMER DRAFT"/>
 <input data-input-label type="button" value={original[2]} readOnly/><div data-no-translate="1">PRIVATE MESSAGE CONTENT</div>
 {query.has('brand')?<section><h1 data-brand-title title="Faolla">Faolla</h1><p data-brand-cases>FAOLLA faolla FaOlLa</p><p data-brand-mixed title={original[0]+' Faolla'}>{original[0]+' Faolla'}</p><input type="button" data-brand-input value="FAOLLA" readOnly/><LoadingProgressScreen locale={locale}/></section>:null}
-</main>};createRoot(document.getElementById('root')).render(<I18nProvider><Website/><Switcher/><Translator/></I18nProvider>);`;
+</main>};createRoot(document.getElementById('root')).render(<I18nProvider initialLocale={query.has('shared')?'zh-CN':query.has('responsive')?'en-GB':undefined}><Website/><Switcher/><Translator/></I18nProvider>);`;
 const navigation=`export const usePathname=()=>location.pathname;export const useSearchParams=()=>new URLSearchParams(location.search);`;
 const script=(await build({stdin:{contents:entry,loader:'tsx',resolveDir:process.cwd()},bundle:true,platform:'browser',format:'iife',write:false,jsx:'automatic',
  plugins:[{name:'navigation-fixture',setup(b){b.onResolve({filter:/^next\/navigation$/},()=>({path:'navigation',namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:navigation,loader:'js'}));}}],
@@ -30,8 +32,12 @@ const script=(await build({stdin:{contents:entry,loader:'tsx',resolveDir:process
 const pendingCss=fs.readFileSync('src/app/globals.css','utf8').match(/html\[data-i18n-pending="1"\] body\s*\{[^}]+\}/)?.[0];
 assert.ok(pendingCss,'use the actual pending first-paint rule');
 function deferred(){let resolve;const promise=new Promise(r=>{resolve=r;});return{promise,resolve};}
-async function fixture(browser,width,{originalSpanish=false,holdSlow=false,holdSpanish=false,many=false,brand=false,failChinese=false,backend=false}={}){
- const context=await browser.newContext({viewport:{width,height:800},serviceWorkers:'block'}),page=await context.newPage();
+async function fixture(browser,width,{originalSpanish=false,holdSlow=false,holdSpanish=false,many=false,brand=false,failChinese=false,backend=false,mobile=false,responsive=false,responsiveShared=false}={}){
+ const context=await browser.newContext({viewport:{width,height:800},isMobile:mobile,hasTouch:mobile,serviceWorkers:'block'}),page=await context.newPage();
+ if(responsive)await context.addInitScript(()=>{
+  localStorage.setItem('merchant-space:dom-i18n-cache:v4:en-GB',JSON.stringify({'Reserva tu visita':'Book your visit','Ver juegos':'See games'}));
+  localStorage.setItem('merchant-space:dom-i18n-cache:v4:ko-KR',JSON.stringify({'Reserva tu visita':'방문 예약','Ver juegos':'게임 보기'}));
+ });
  if(brand)await context.addInitScript(()=>{for(const locale of ['zh-CN','es-ES'])localStorage.setItem('merchant-space:dom-i18n-cache:v4:'+locale,JSON.stringify({Faolla:'积极的',FAOLLA:'积极的','欢迎来体验数字运动 Faolla':'错误的缓存积极的'}));});
  const slow=deferred(),fast=deferred(),spanishStarted=deferred(),spanishAborted=deferred(),requests=[],errors=[],aborted=[];let rejectChinese=failChinese;
  page.on('pageerror',e=>errors.push(e.message));
@@ -51,13 +57,65 @@ async function fixture(browser,width,{originalSpanish=false,holdSlow=false,holdS
    try{await route.fulfill({json:[[[translated,text]]]});}catch(error){if(!/closed|handled|cancel|abort/i.test(String(error)))throw error;}
    if(index===0)fast.resolve();return;
   }
-  if(request.isNavigationRequest())return route.fulfill({contentType:'text/html',body:'<!doctype html><html'+(backend?' data-i18n-pending="1"':'')+'><meta charset="utf-8"><style>'+pendingCss+'</style><div id="root"></div><script>'+script.replaceAll('</script>','<\\/script>')+'</script></html>'});
+  if(request.isNavigationRequest())return route.fulfill({contentType:'text/html',body:'<!doctype html><html'+(backend?' data-i18n-pending="1"':'')+'><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>'+pendingCss+'</style><div id="root"></div><script>'+script.replaceAll('</script>','<\\/script>')+'</script></html>'});
   throw Error('unexpected synthetic request '+url.hostname);
  });
- await page.goto('https://synthetic.faolla.com/?uiLocale='+(originalSpanish?'es-ES&source=es':backend?'es-ES&backend=1':'zh-CN')+(many?'&many=1':'')+(brand?'&brand=1':''));
- await page.locator('[data-line="0"]').waitFor({state:backend?'attached':'visible'});
+ await page.goto('https://synthetic.faolla.com/?uiLocale='+(responsiveShared?'zh-CN&responsive=1&shared=1':responsive?'en-GB&responsive=1':originalSpanish?'es-ES&source=es':backend?'es-ES&backend=1':'zh-CN')+(many?'&many=1':'')+(brand?'&brand=1':''));
+ await page.locator(responsive?'[data-responsive-text]':'[data-line="0"]').waitFor({state:backend?'attached':'visible'});
  return{context,page,requests,slow,fast,spanishStarted,spanishAborted,errors,allowChinese(){rejectChinese=false;},async close(){slow.resolve();await context.close();assert.deepEqual(errors,[]);}};
 }
+
+for(const afterLanguageSwitch of [false,true])test('responsive React text and attribute updates remain translated '+(afterLanguageSwitch?'after choosing another language':'after a warm first paint'),{timeout:30000},async()=>{
+ const browser=await chromium.launch({headless:true});try{for(const{width,mobile}of[{width:390,mobile:false},{width:1440,mobile:false},{width:390,mobile:true}]){
+  const f=await fixture(browser,width,{responsive:true,mobile});try{
+   await f.page.waitForFunction(()=>document.querySelector('[data-responsive-text]').textContent==='Book your visit');
+   const activate=async locator=>mobile?locator.tap():locator.click();
+   if(afterLanguageSwitch){
+    await activate(f.page.locator('.faolla-mobile-language-button'));
+    await activate(f.page.getByRole('button').filter({has:f.page.locator('img[src="/flags/kr.svg"]')}));
+    await f.page.waitForFunction(()=>document.querySelector('[data-responsive-text]').textContent==='방문 예약');
+   }
+   const expectedOriginal=afterLanguageSwitch?'방문 예약':'Book your visit',expectedMobile=afterLanguageSwitch?'게임 보기':'See games';
+   await f.page.evaluate(()=>{window.__responsiveTextNode=document.querySelector('[data-responsive-text]').firstChild;});
+   const trigger=f.page.locator('[data-update-layout]');await activate(trigger);
+   await f.page.waitForFunction(expected=>document.querySelector('[data-responsive-text]').textContent===expected,expectedMobile,{timeout:1500});
+   assert.equal(await f.page.locator('[data-responsive-text]').getAttribute('title'),expectedMobile);
+   assert.equal(await f.page.locator('[data-responsive-placeholder]').getAttribute('placeholder'),expectedMobile);
+   assert.equal(await f.page.evaluate(()=>window.__responsiveTextNode===document.querySelector('[data-responsive-text]').firstChild),true,'React must reuse the text node across the layout update');
+   await activate(trigger);
+   await f.page.waitForFunction(expected=>document.querySelector('[data-responsive-text]').textContent===expected,expectedOriginal);
+   assert.equal(await f.page.locator('[data-responsive-placeholder]').getAttribute('placeholder'),expectedOriginal);
+   assert.equal(await f.page.locator('[data-responsive-placeholder]').inputValue(),'PRIVATE RESPONSIVE DRAFT');
+   assert.deepEqual(f.requests,[],'warm responsive content must not depend on a later network repaint');
+  }finally{await f.close();}
+ }}finally{await browser.close();}
+});
+
+test('a React content update in the same commit as a language change keeps the new authored text and attributes',{timeout:30000},async()=>{
+ const browser=await chromium.launch({headless:true});try{for(const{width,mobile}of[{width:390,mobile:false},{width:1440,mobile:false},{width:390,mobile:true}]){
+  const f=await fixture(browser,width,{responsive:true,mobile});try{
+   await f.page.waitForFunction(()=>document.querySelector('[data-responsive-text]').textContent==='Book your visit');
+   const trigger=f.page.locator('[data-update-language]');if(mobile)await trigger.tap();else await trigger.click();
+   await f.page.waitForFunction(()=>document.querySelector('[data-responsive-text]').textContent==='게임 보기',undefined,{timeout:1500});
+   assert.equal(await f.page.locator('[data-responsive-text]').getAttribute('title'),'게임 보기');
+   assert.equal(await f.page.locator('[data-responsive-placeholder]').getAttribute('placeholder'),'게임 보기');
+   assert.equal(await f.page.locator('[data-responsive-placeholder]').inputValue(),'PRIVATE RESPONSIVE DRAFT');
+   assert.deepEqual(f.requests,[]);
+  }finally{await f.close();}
+ }}finally{await browser.close();}
+});
+
+test('same-event locale changes with identical translations leave later mobile updates observable',{timeout:30000},async()=>{
+ const browser=await chromium.launch({headless:true}),f=await fixture(browser,390,{responsive:true,responsiveShared:true,mobile:true});try{
+  await f.page.locator('[data-rapid-languages]').tap();
+  await f.page.waitForFunction(()=>document.documentElement.lang==='es-ES'&&document.querySelector('[data-responsive-text]').textContent==='Chat');
+  await f.page.locator('[data-update-layout]').tap();
+  await f.page.waitForFunction(()=>document.querySelector('[data-responsive-text]').textContent==='Perfil',undefined,{timeout:1500});
+  assert.equal(await f.page.locator('[data-responsive-text]').getAttribute('title'),'Perfil');
+  assert.equal(await f.page.locator('[data-responsive-placeholder]').getAttribute('placeholder'),'Perfil');
+  assert.deepEqual(f.requests,[]);
+ }finally{await f.close();await browser.close();}
+});
 
 test('backend first paint never waits for external translation before allowing interaction',{timeout:30000},async()=>{
  const browser=await chromium.launch({headless:true});try{for(const width of [390,1440]){
@@ -87,16 +145,35 @@ test('local flags, incomplete translation feedback and explicit retry stay synch
  }}finally{await browser.close();}
 });
 
-test('slow translation reports pending without blocking interaction; changing language cancels the abandoned status',{timeout:30000},async()=>{
+test('slow translation stays silent without blocking interaction; changing language cancels the abandoned status',{timeout:30000},async()=>{
  const browser=await chromium.launch({headless:true}),f=await fixture(browser,390,{many:true,holdSpanish:true});try{
   await f.page.getByRole('button',{name:'Spanish',exact:true}).click();await f.spanishStarted.promise;
-  await f.page.locator('[data-translation-feedback="pending"]').waitFor();
+  assert.equal(await f.page.locator('[data-translation-feedback]').count(),0,'pending translation must not display a status bubble');
   assert.match(await f.page.locator('.faolla-mobile-language-button img').getAttribute('src'),/^\/flags\/es\.svg$/);
   await f.page.locator('[data-customer-draft]').fill('PRIVATE EDITED DRAFT');
   await f.page.getByRole('button',{name:'English',exact:true}).click();
   await f.page.waitForFunction(()=>!document.querySelector('[data-translation-feedback]'));
   assert.match(await f.page.locator('.faolla-mobile-language-button img').getAttribute('src'),/^\/flags\/gb\.svg$/);
   assert.equal(await f.page.locator('[data-customer-draft]').inputValue(),'PRIVATE EDITED DRAFT');
+ }finally{await f.close();await browser.close();}
+});
+
+test('touch language menu translates the mobile page and allows another language while requests are pending',{timeout:30000},async()=>{
+ const browser=await chromium.launch({headless:true}),f=await fixture(browser,390,{mobile:true,many:true,holdSpanish:true});try{
+  await f.page.locator('.faolla-mobile-language-button').tap();
+  await f.page.getByRole('button',{name:/^Español/}).tap();await f.spanishStarted.promise;
+  assert.match(await f.page.locator('.faolla-mobile-language-button img').getAttribute('src'),/^\/flags\/es\.svg$/);
+  assert.equal(await f.page.locator('[data-translation-feedback]').count(),0);
+  await f.page.locator('.faolla-mobile-language-button').tap();
+  await f.page.getByRole('button',{name:/^English/}).filter({has:f.page.locator('img[src="/flags/gb.svg"]')}).tap();
+  await f.page.waitForFunction(()=>document.querySelector('[data-line="0"]').textContent==='English 0');
+  assert.match(await f.page.locator('.faolla-mobile-language-button img').getAttribute('src'),/^\/flags\/gb\.svg$/);
+  f.slow.resolve();
+  await f.page.locator('.faolla-mobile-language-button').tap();
+  await f.page.getByRole('button',{name:/^Español/}).tap();
+  await f.page.waitForFunction(text=>document.querySelector('[data-line="0"]').textContent===text,spanish[0]);
+  assert.equal(await f.page.locator('[data-customer-draft]').inputValue(),'PRIVATE CUSTOMER DRAFT');
+  assert.equal(await f.page.locator('[data-translation-feedback]').count(),0);
  }finally{await f.close();await browser.close();}
 });
 
