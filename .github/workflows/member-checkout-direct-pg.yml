@@ -1,0 +1,65 @@
+name: Isolated Direct PostgreSQL Checkout Transport
+
+on:
+  push:
+    branches:
+      - acceptance/member-checkout-direct-pg-20261127
+
+permissions:
+  contents: read
+
+jobs:
+  direct-pg:
+    name: Restricted LOGIN and Original Checkout SQL (PG15.8)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15.8
+        env:
+          POSTGRES_DB: faolla_member_checkout_auth_test
+          POSTGRES_USER: checkout_ci_admin
+          POSTGRES_PASSWORD: disposable-direct-pg-ci-only
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+        ports:
+          - 127.0.0.1:56463:5432
+        options: >-
+          --health-cmd "pg_isready -U checkout_ci_admin -d faolla_member_checkout_auth_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.20.1
+          cache: npm
+      - name: Install Locked Existing Application Test Dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prepare Isolated Test Driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_REF" = refs/heads/acceptance/member-checkout-direct-pg-20261127
+          tools="$RUNNER_TEMP/checkout-direct-pg-tools"
+          mkdir "$tools"
+          npm install --prefix "$tools" --ignore-scripts --no-audit --no-fund --save-exact pg@8.23.1
+      - name: Validate Isolated Transport and Retained Application Contracts
+        run: >-
+          node --import tsx --test
+          scripts/member-checkout-direct-pg-probe.test.mjs
+          src/lib/merchantCheckoutRuntime.server.test.ts
+          src/lib/merchantCheckoutSubmission.server.test.ts
+          src/app/api/member-checkout/submit/route.test.ts
+      - name: Validate Real Password Login, ACLs, Financial Commit and Original Recovery
+        run: node --import tsx --test scripts/member-checkout-direct-pg-native.mjs
+      - name: Preserve Sanitized Isolated Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkout-direct-pg-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/checkout-direct-pg-evidence/report.json
+          if-no-files-found: warn
+          retention-days: 14
