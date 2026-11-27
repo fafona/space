@@ -10,6 +10,30 @@
   "backgroundTasks": "retain-certified-worker",
   "changes": [
     {
+      "file": ".github/workflows/ci.yml",
+      "role": "verification",
+      "before": [
+        "100644",
+        "beb80c41ebaf80b8de8591da3acc398d1c6f539e"
+      ],
+      "after": [
+        "100644",
+        "27491a4d7bd5c7a2b24cc4a208e272862d33c47e"
+      ]
+    },
+    {
+      "file": "scripts/ci-workflow-contract.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "afb95f87b6db1a26466c19037305ef4f1195c3f1"
+      ],
+      "after": [
+        "100644",
+        "56c46e78d3b6892dbe79f9b97ccf3c122a48a5be"
+      ]
+    },
+    {
       "file": "scripts/locale-switch-browser-acceptance.mjs",
       "role": "verification",
       "before": [
@@ -19,6 +43,30 @@
       "after": [
         "100644",
         "ea9ce85e7be0d8e1698aee1033ca3a77cfb5c1ce"
+      ]
+    },
+    {
+      "file": "scripts/production-maintenance-ingress-acceptance.mjs",
+      "role": "release-tool",
+      "before": [
+        "100644",
+        "3b20dbf048f636663f029491ee2215cefdb08985"
+      ],
+      "after": [
+        "100644",
+        "9f59f21a9f44d78bff3cb0e3cedf1c714e6cf02c"
+      ]
+    },
+    {
+      "file": "scripts/production-maintenance-ingress-acceptance.test.mjs",
+      "role": "verification",
+      "before": [
+        "100644",
+        "ec38c31875a08bd302b8b363fa04399f8e2b2e34"
+      ],
+      "after": [
+        "100644",
+        "4609c5f238410b35fa0e71ee257c065a06a14154"
       ]
     },
     {
