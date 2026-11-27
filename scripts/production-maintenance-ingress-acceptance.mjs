@@ -121,7 +121,7 @@ export function readIngressAcceptanceBridgeState(readText = (path) => readFileSy
   // Keep Linux 6.x and explicitly trial only the observed Ubuntu 24.04 CI
   // kernels. Do not admit arbitrary 7.x or EL8 hosts.
   if ((!/^6\.[0-9]+\.[0-9]+(?:[-+.][A-Za-z0-9._+-]+)?$/.test(kernelRelease) &&
-      !["7.0.0-1017-azure", "7.0.0-1014-aws", "7.0.0-1018-aws"].includes(kernelRelease)) || kernelRelease.length > 128) fail();
+      !["7.0.0-1017-azure", "7.0.0-1014-aws", "7.0.0-1018-aws", "7.0.0-1020-azure"].includes(kernelRelease)) || kernelRelease.length > 128) fail();
   const bridge4 = readText("/proc/sys/net/bridge/bridge-nf-call-iptables").trim();
   const bridge6 = readText("/proc/sys/net/bridge/bridge-nf-call-ip6tables").trim();
   if (![bridge4, bridge6].every((value) => value === "0" || value === "1")) fail();
