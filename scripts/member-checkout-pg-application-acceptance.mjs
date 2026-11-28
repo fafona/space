@@ -27,6 +27,7 @@ import {applicationFingerprint} from './member-checkout-compatibility-check.mjs'
 import {createPgRuntimeCore} from './fixtures/merchant-checkout-pg-core.ts';
 import {pgRuntimeConfiguration,pgLoginRole} from './fixtures/merchant-checkout-pg-entry.ts';
 import {checkoutPgLogin,readCheckoutPgPrivilegeReview} from './member-checkout-pg-privilege-review.mjs';
+import {checkoutPgCutoverCases} from './member-checkout-pg-cutover-cases.mjs';
 import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
 import configuration from '../src/lib/merchantCheckoutConfiguration.ts';
 
@@ -36,7 +37,7 @@ const guard=()=>{
  assert.equal(process.env.GITHUB_REPOSITORY,'fafona/space');assert.equal(process.env.GITHUB_REF,'refs/heads/acceptance/member-checkout-pg-app-20261128');assert.ok(process.getuid()>0);
  for(const key of Object.keys(process.env))if(/SUPABASE|STRIPE|SMTP|DATABASE_URL|^PGHOST$|^PGPORT$|^PGPASSWORD$|^PGDATABASE$|^PGUSER$|^FAOLLA_CHECKOUT_RUNTIME_JWT$/.test(key))assert.ok(!process.env[key],'configured_backend_refused');
 };
-test('separate production PG candidate: real login, owner permission, strict TLS and original points/coupon booking',{timeout:720000},async t=>{
+test('separate production PG candidate: real login, strict TLS and isolated dual-version rollback',{timeout:1020000},async t=>{
  guard();const tools=path.join(process.env.RUNNER_TEMP,'faolla-pg-app-tools');await verifyOwnedTools(tools,'current-auth');
  const evidence=path.join(process.env.RUNNER_TEMP,'faolla-pg-app-evidence');fs.mkdirSync(evidence,{mode:0o700});
  const report={version:1,scope:'isolated-pg-application-not-production',commit:process.env.GITHUB_SHA,phase:'database',checks:[],paths:[],stopped:[],passed:false,cleanupPassed:false,failure:null,
@@ -148,6 +149,7 @@ test('separate production PG candidate: real login, owner permission, strict TLS
   });
   const appEnv={NODE_ENV:'production',NODE_OPTIONS:`--max-old-space-size=${pgApplicationOldSpaceMiB}`,NEXT_TELEMETRY_DISABLED:'1',FAOLLA_CHECKOUT_NEXT_LOCAL:'1',FAOLLA_CANONICAL_PORTAL_ORIGIN:'https://portal.checkout-auth.test',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.checkout-auth.test',
    SUPABASE_INTERNAL_URL:gatewayOrigin,NEXT_PUBLIC_SUPABASE_URL:gatewayOrigin,NEXT_PUBLIC_SUPABASE_ANON_KEY:anonJwt,SUPABASE_SERVICE_ROLE_KEY:serviceJwt,FAOLLA_CHECKOUT_TRANSPORT:'postgres',...pgEnvironment,
+   MERCHANT_MEMBER_CHECKOUT_HISTORY_READ_SITES:financial.site,MERCHANT_MEMBER_CHECKOUT_ORIGINAL_SERVICE_SITES:financial.site,
    FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_BOOKING_AUTOMATION_WORKER_ENABLED:'false',MERCHANT_BOOKING_STORAGE_MODE:'atomic-v2',...ownedPgApplicationPilotEnvironment(financial.site)};
   const next=start('next',process.execPath,[path.join(process.cwd(),'scripts/fixtures/member-checkout-rollback-local-server.mjs'),fixture.app],appEnv,fixture.app);next.on('message',m=>nextEvents.push(m));
   const deadline=Date.now()+60000;while(!nextEvents.some(e=>e.type==='listening')&&Date.now()<deadline){assert.equal(next.exitCode,null);await delay(50);}const listening=nextEvents.find(e=>e.type==='listening');assert.ok(listening);
@@ -163,8 +165,10 @@ test('separate production PG candidate: real login, owner permission, strict TLS
   const nonce=randomUUID(),initial={...f.selection,method:'points',nonce,confirmationHash:'0'.repeat(64),customer:f.customer},identity=points.checkoutSubmissionIdentity(initial,f.principal);
   const snap=await runtimeCall('faolla_member_checkout_submission_snapshot_v2',{p_site_id:financial.site,p_operation_key:identity.operationKey,p_principal_key:identity.principalKey,p_request_hash:identity.requestHash,p_offer_id:f.offer.id});
   const q=await points.quoteCheckoutSubmissionSnapshot(points.parseCheckoutSubmissionSnapshot(snap.snapshot,identity),identity,f.principal),body={...initial,confirmationHash:q.confirmationHash},scope={'x-checkout-account-scope':f.principal.accountId};
+  let original;
   await check('actual Next submit uses restricted PG TLS, debits selected coupon/points once and replays the original',async()=>{
    const response=await call(route,body,scope);assert.equal(response.status,200,JSON.stringify(response));assert.equal(response.value.result.totalPoints,80);assert.equal(response.value.replayed,false);
+   original=response.value.result;
    const state=await financial.state();assert.equal((await call(route,body,scope)).value.replayed,true);assert.deepEqual(await financial.state(),state);assert.equal((await financial.page('__merchant_memberships__:'+financial.site)).blocks[0].pointBalance,920);
    assert.equal(report.paths.some(p=>p.includes('/rpc/faolla_checkout_runtime_v1')),false);
   });
@@ -187,6 +191,15 @@ test('separate production PG candidate: real login, owner permission, strict TLS
    try{const r=await call(route,body,scope);assert.equal(r.status,503);}finally{await db.query(`GRANT EXECUTE ON FUNCTION public.faolla_checkout_runtime_v1(text,jsonb) TO ${pgLoginRole}`);}
    assert.deepEqual(await financial.state(),state);assert.equal((await call(route,body,scope)).value.replayed,true);assert.equal(report.paths.some(p=>p.includes('/rpc/faolla_checkout_runtime_v1')),false);
   });
+  await checkoutPgCutoverCases(check,{db,financial,f,body,scope,original,fixture,port:listening.port,appEnv,context,callCandidate:call,report,signal:t.signal,
+   async signInOther(){
+    const accountId='59009999',otherEmail='other-'+randomUUID()+'@example.invalid',otherMetadata={account_type:'personal',account_id:accountId};
+    const other=await authCall('/admin/users',{email:otherEmail,password,email_confirm:true,app_metadata:otherMetadata,user_metadata:otherMetadata});assert.equal(other.status,200);
+    assert.notEqual(other.value.id,userId);assert.equal((await login(otherEmail,password)).status,200);return accountId;
+   },
+   async restoreOriginalSignIn(){assert.equal((await login()).status,200);},
+  });
+  assert.equal(report.paths.some(p=>p.includes('/rpc/faolla_checkout_runtime_v1')),false);
   const configRoute='/api/merchant-checkout/configuration?siteId='+financial.site;
   await check('owned pages fixture has the metadata columns used by the unchanged published-site reader',async()=>{
    const result=await db.query('SELECT slug,updated_at,created_at FROM public.pages WHERE merchant_id=$1',[financial.site]);
@@ -224,8 +237,8 @@ test('separate production PG candidate: real login, owner permission, strict TLS
   for(const server of servers.reverse()){server.closeAllConnections?.();if(server.listening)await new Promise(resolve=>server.close(resolve));}
   for(const c of clients)await c.end().catch(()=>{});for(const log of logs)await new Promise(resolve=>log.end(resolve));
   report.nextShutdown=nextEvents.find(e=>e.type==='stopped')??null;
-  report.cleanupPassed=report.stopped.length===children.length&&report.stopped.every(r=>!r.forced&&(r.code===0&&r.signal===null||r.requested!=='IPC-close'&&r.code===null&&r.signal===r.requested))&&(!children.some(c=>c.name==='next')||report.nextShutdown?.forbiddenFetches===0);
-  report.passed=report.passed&&report.stopped.length===3&&report.cleanupPassed&&report.checks.every(c=>c.passed)&&report.failure===null;
+  report.cleanupPassed=report.stopped.length===children.length&&report.stopped.every(r=>!r.forced&&(r.code===0&&r.signal===null||r.requested!=='IPC-close'&&r.code===null&&r.signal===r.requested))&&(!children.some(c=>c.name==='next')||report.nextShutdown?.forbiddenFetches===0)&&(report.cutover===undefined||report.cutover.cleanupPassed);
+  report.passed=report.passed&&report.stopped.length===3&&report.cutover?.passed===true&&report.cleanupPassed&&report.checks.every(c=>c.passed)&&report.failure===null;
   fs.writeFileSync(path.join(evidence,'report.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx',mode:0o600});
   if(!report.cleanupPassed)assert.fail('pg_candidate_owned_cleanup_failed');
  }

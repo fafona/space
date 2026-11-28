@@ -12,7 +12,7 @@ jobs:
   application:
     name: Real Auth and Next with Restricted PG TLS
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:15.8
@@ -29,6 +29,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          persist-credentials: false
+      - name: Check Out the Pinned Rollback Application
+        uses: actions/checkout@v5
+        with:
+          ref: 98ce90e63c84e0da7747d0a14d2f5fc9d7f5f980
+          path: .owned-checkout-base
           persist-credentials: false
       - uses: actions/setup-node@v5
         with:
@@ -64,8 +70,12 @@ jobs:
           scripts/member-checkout-pg-application.test.ts
           scripts/member-checkout-pg-privilege-review.test.mjs
           scripts/member-checkout-direct-pg-probe.test.mjs
+          scripts/member-checkout-pg-cutover-proxy.test.mjs
           src/lib/merchantCheckoutRuntime.server.test.ts
           src/lib/merchantCheckoutSubmission.server.test.ts
+          src/lib/merchantCheckoutHistoryInventory.test.ts
+          src/lib/merchantCheckoutHistoryRecovery.test.ts
+          src/lib/merchantCheckoutPendingIntent.test.ts
           src/app/api/member-checkout/submit/route.test.ts
       - name: Real Identity and Restricted TLS Application Acceptance
         env:
