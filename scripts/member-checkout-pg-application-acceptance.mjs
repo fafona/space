@@ -94,7 +94,10 @@ test('separate production PG candidate: real login, owner permission, strict TLS
    await db.query("ALTER SYSTEM SET ssl_cert_file='/tmp/pg-cert.pem'");await db.query("ALTER SYSTEM SET ssl_key_file='/tmp/pg-key.pem'");await db.query("ALTER SYSTEM SET ssl='on'");await db.query('SELECT pg_reload_conf()');await delay(300);
    const env={FAOLLA_CHECKOUT_PG_HOST:'127.0.0.1',FAOLLA_CHECKOUT_PG_PORT:String(databasePort),FAOLLA_CHECKOUT_PG_DATABASE:database,FAOLLA_CHECKOUT_PG_USER:pgLoginRole,FAOLLA_CHECKOUT_PG_PASSWORD:pgPassword,FAOLLA_CHECKOUT_PG_TLS:'verify-full',FAOLLA_CHECKOUT_PG_CA_PEM:ca};
    const configured=pgRuntimeConfiguration(env,12000);assert.ok(configured);report.pgEnvironment=Object.keys(env).sort();
-   const good=await open(configured.config);assert.equal((await good.query('SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()')).rows[0].ssl,true);await good.end();clients.delete(good);
+   const good=await open(configured.config);
+   const identity=(await good.query("SELECT current_user::text actor,session_user::text login,current_database() db,current_setting('server_version_num') version,ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()")).rows[0];
+   assert.deepEqual(identity,{actor:pgLoginRole,login:pgLoginRole,db:database,version:'150008',ssl:true});
+   report.restrictedTlsIdentityVerified=true;await good.end();clients.delete(good);
    for(const ssl of [{...configured.config.ssl,ca:undefined},{...configured.config.ssl,servername:'wrong.checkout.test'}]){
     const bad=new Client({...configured.config,ssl});bad.on('error',()=>{});clients.add(bad);await assert.rejects(bad.connect());await bad.end();clients.delete(bad);
    }

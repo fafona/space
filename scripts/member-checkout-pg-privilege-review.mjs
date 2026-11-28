@@ -5,27 +5,34 @@ import { runtimeEntry, executorRole, runtimeRole } from './member-checkout-runti
 export const checkoutPgLogin = 'faolla_checkout_runtime_login';
 const deniedCounts = ['membership_edges', 'owned_objects', 'role_settings', 'schema_create', 'table_grants', 'sequence_grants',
   'other_callable_routines', 'unexpected_entry_grants', 'widening_default_grants'];
-const reviewBooleans = ['role_ok', 'database_ok', 'public_schema_ok', 'private_schema_ok', 'entry_ok'];
+const reviewBooleans = ['role_ok', 'retained_roles_ok', 'database_ok', 'public_schema_ok', 'private_schema_ok', 'entry_ok'];
 const contextCounts = ['inaccessible_routine_grants', 'invoker_trigger_grants', 'other_database_connect'];
 
 // Keep the output aggregate-only. Do not fetch role verifiers, connection
 // configuration, SQL bodies, grant targets or application data. Deliberately
 // count latent table / sequence grants even in schemas without current USAGE.
 export const checkoutPgPrivilegeSql = `WITH
- login AS (SELECT * FROM pg_catalog.pg_roles WHERE rolname=$1),
+ roles AS (SELECT oid,rolname,rolcanlogin,rolsuper,rolinherit,rolcreaterole,rolcreatedb,rolreplication,rolbypassrls,rolconnlimit
+   FROM pg_catalog.pg_roles WHERE rolname IN ($1,$3,$4)),
+ login AS (SELECT * FROM roles WHERE rolname=$1),
  namespaces AS (SELECT oid,nspname FROM pg_catalog.pg_namespace
    WHERE nspname NOT IN ('pg_catalog','information_schema','pg_toast') AND nspname !~ '^pg_(temp|toast_temp)_[0-9]+$'),
  relations AS MATERIALIZED (SELECT c.oid,c.relkind FROM pg_catalog.pg_class c JOIN namespaces n ON c.relnamespace=n.oid
    WHERE c.relkind IN ('r','p','v','m','f')),
  sequences AS MATERIALIZED (SELECT c.oid FROM pg_catalog.pg_class c JOIN namespaces n ON c.relnamespace=n.oid WHERE c.relkind='S'),
  db AS (SELECT oid,datacl FROM pg_catalog.pg_database WHERE datname=pg_catalog.current_database()),
- entry AS (SELECT p.* FROM pg_catalog.pg_proc p WHERE p.oid=pg_catalog.to_regprocedure($2)),
+ entry AS (SELECT p.oid,p.prosecdef,p.proconfig,p.proowner,p.proacl FROM pg_catalog.pg_proc p WHERE p.oid=pg_catalog.to_regprocedure($2)),
+ entry_grants AS (SELECT a.grantee,a.is_grantable FROM entry e
+   CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(e.proacl,pg_catalog.acldefault('f',e.proowner))) a WHERE a.grantee<>e.proowner),
  routines AS (SELECT p.oid,n.oid namespace,NOT p.prosecdef AND p.prorettype IN
     ('pg_catalog.trigger'::pg_catalog.regtype,'pg_catalog.event_trigger'::pg_catalog.regtype) invoker_trigger
    FROM pg_catalog.pg_proc p JOIN namespaces n ON p.pronamespace=n.oid WHERE p.oid IS DISTINCT FROM pg_catalog.to_regprocedure($2))
  SELECT coalesce((SELECT rolcanlogin AND NOT (rolsuper OR rolinherit OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)
    AND rolconnlimit=$5 FROM login),false) role_ok,
- coalesce(pg_catalog.has_database_privilege(l.oid,d.oid,'CONNECT') AND NOT pg_catalog.has_database_privilege(l.oid,d.oid,'CREATE,CONNECT WITH GRANT OPTION')
+ (SELECT count(*)=2 AND coalesce(bool_and(NOT (rolcanlogin OR rolsuper OR rolinherit OR rolcreaterole OR rolcreatedb OR rolreplication)
+   AND rolbypassrls=(rolname=$3) AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE roles.oid IN (m.member,m.roleid))),false)
+   FROM roles WHERE rolname IN ($3,$4)) retained_roles_ok,
+ coalesce(pg_catalog.has_database_privilege(l.oid,d.oid,'CONNECT') AND NOT pg_catalog.has_database_privilege(l.oid,d.oid,'CREATE,CONNECT WITH GRANT OPTION,TEMPORARY WITH GRANT OPTION')
    AND EXISTS(SELECT 1 FROM pg_catalog.aclexplode(d.datacl) a WHERE a.grantee=l.oid AND a.privilege_type='CONNECT'),false) database_ok,
  coalesce((SELECT pg_catalog.has_schema_privilege(l.oid,n.oid,'USAGE') AND NOT pg_catalog.has_schema_privilege(l.oid,n.oid,'USAGE WITH GRANT OPTION')
    AND EXISTS(SELECT 1 FROM pg_catalog.aclexplode(n.nspacl) a WHERE a.grantee=l.oid AND a.privilege_type='USAGE')
@@ -33,7 +40,8 @@ export const checkoutPgPrivilegeSql = `WITH
  coalesce((SELECT NOT pg_catalog.has_schema_privilege(l.oid,n.oid,'USAGE,CREATE') FROM namespaces n WHERE n.nspname='faolla_checkout_design'),false) private_schema_ok,
  coalesce((SELECT e.prosecdef AND e.proconfig=ARRAY['search_path=pg_catalog, pg_temp'] AND pg_catalog.pg_get_userbyid(e.proowner)=$3
    AND pg_catalog.has_function_privilege(l.oid,e.oid,'EXECUTE') AND NOT pg_catalog.has_function_privilege(l.oid,e.oid,'EXECUTE WITH GRANT OPTION')
-   AND pg_catalog.has_function_privilege($4::name,e.oid,'EXECUTE') FROM entry e),false) entry_ok,
+   AND (SELECT count(DISTINCT a.grantee)=2 FROM entry_grants a WHERE NOT a.is_grantable AND a.grantee IN (l.oid,(SELECT oid FROM roles WHERE rolname=$4)))
+   FROM entry e),false) entry_ok,
  coalesce(pg_catalog.has_database_privilege(l.oid,d.oid,'TEMPORARY'),false) temporary_allowed,
  (SELECT count(*)::int FROM pg_catalog.pg_auth_members m WHERE l.oid IN (m.roleid,m.member)) membership_edges,
  (SELECT count(*)::int FROM pg_catalog.pg_shdepend s WHERE s.refclassid='pg_catalog.pg_authid'::pg_catalog.regclass AND s.refobjid=l.oid AND s.deptype='o') owned_objects,
@@ -48,10 +56,12 @@ export const checkoutPgPrivilegeSql = `WITH
    AND NOT pg_catalog.has_schema_privilege(l.oid,r.namespace,'USAGE')) inaccessible_routine_grants,
  (SELECT count(*)::int FROM routines r WHERE r.invoker_trigger AND pg_catalog.has_function_privilege(l.oid,r.oid,'EXECUTE')
    AND pg_catalog.has_schema_privilege(l.oid,r.namespace,'USAGE')) invoker_trigger_grants,
- (SELECT count(*)::int FROM entry e CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(e.proacl,pg_catalog.acldefault('f',e.proowner))) a
-   WHERE a.grantee<>e.proowner AND (a.grantee NOT IN (l.oid,(SELECT oid FROM pg_catalog.pg_roles WHERE rolname=$4)) OR a.is_grantable)) unexpected_entry_grants,
+ (SELECT count(*)::int FROM entry_grants a WHERE NOT EXISTS(SELECT 1 FROM roles WHERE oid=a.grantee AND rolname IN ($1,$4))
+   OR a.is_grantable) unexpected_entry_grants,
  (SELECT count(*)::int FROM pg_catalog.pg_default_acl acl CROSS JOIN LATERAL pg_catalog.aclexplode(acl.defaclacl) a
-   WHERE a.grantee IN (0,l.oid) AND acl.defaclobjtype IN ('r','S','f','n')) widening_default_grants,
+   WHERE acl.defaclobjtype IN ('r','S','f','n') AND (a.grantee=l.oid OR a.grantee=0 AND (acl.defaclnamespace<>0 OR NOT EXISTS (
+     SELECT 1 FROM pg_catalog.aclexplode(pg_catalog.acldefault(acl.defaclobjtype,acl.defaclrole)) b
+     WHERE b.grantee=0 AND b.privilege_type=a.privilege_type AND b.is_grantable=a.is_grantable)))) widening_default_grants,
  (SELECT count(*)::int FROM pg_catalog.pg_database b WHERE b.datallowconn AND b.oid<>d.oid
    AND pg_catalog.has_database_privilege(l.oid,b.oid,'CONNECT')) other_database_connect
  FROM db d LEFT JOIN login l ON true`;

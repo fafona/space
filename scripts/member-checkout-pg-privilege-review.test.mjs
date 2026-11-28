@@ -20,7 +20,7 @@ test('effective grants and fixed entry contract in an owned PostgreSQL-WASM cata
     const name = (await db.query('SELECT current_database() name')).rows[0].name;
     assert.match(name, /^[a-z_]+$/);
     await db.exec(`CREATE ROLE ${login} LOGIN NOINHERIT CONNECTION LIMIT 6;
-      CREATE ROLE ${executorRole} NOLOGIN; CREATE ROLE ${runtimeRole} NOLOGIN;
+      CREATE ROLE ${executorRole} NOLOGIN NOINHERIT BYPASSRLS; CREATE ROLE ${runtimeRole} NOLOGIN NOINHERIT;
       CREATE SCHEMA faolla_checkout_design;
       CREATE TABLE faolla_checkout_design.audit_test (id integer);
       CREATE TABLE public.audit_test (id integer);
@@ -66,15 +66,20 @@ test('effective grants and fixed entry contract in an owned PostgreSQL-WASM cata
       `GRANT EXECUTE ON FUNCTION ${entry} TO PUBLIC; GRANT EXECUTE ON FUNCTION ${entry} TO ${login} WITH GRANT OPTION`, ['entry_ok','unexpected_entry_grants']);
     await check('retained original credential path must keep its own EXECUTE',
       `REVOKE EXECUTE ON FUNCTION ${entry} FROM ${runtimeRole}`, ['entry_ok']);
+    await check('retained role attributes must remain restricted', `ALTER ROLE ${executorRole} LOGIN`, ['retained_roles_ok']);
     await check('PUBLIC does not substitute for an explicit CONNECT and USAGE',
       `REVOKE CONNECT ON DATABASE ${name} FROM ${login}; REVOKE USAGE ON SCHEMA public FROM ${login}`, ['database_ok','public_schema_ok']);
     await check('role attributes, membership in either direction, and overrides must match',
       `ALTER ROLE ${login} CONNECTION LIMIT 7; GRANT ${runtimeRole} TO ${login}; GRANT ${login} TO ${executorRole}; ALTER ROLE ${login} SET statement_timeout='10s'`,
-      ['role_ok','membership_edges','role_settings']);
+      ['role_ok','retained_roles_ok','membership_edges','role_settings']);
+    await check('ordinary TEMP is different from delegation',
+      `GRANT TEMPORARY ON DATABASE ${name} TO ${login} WITH GRANT OPTION`, ['database_ok']);
     await check('owned schema objects are detected',
       `CREATE SCHEMA audit_owner AUTHORIZATION ${login}`, ['owned_objects','schema_create']);
     await check('future explicit PUBLIC grant is not mistaken for harmless defaults',
       'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO PUBLIC', ['widening_default_grants']);
+    await check('global default change for another role does not count built-in PUBLIC EXECUTE as newly widened',
+      `ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO ${runtimeRole}`, []);
     assert.equal((await get()).passed, true);
   } finally { await db.close(); }
 });
