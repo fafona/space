@@ -9,7 +9,8 @@ const env = () => ({ FAOLLA_CHECKOUT_TRANSPORT: "postgres", FAOLLA_CHECKOUT_PG_H
   FAOLLA_CHECKOUT_PG_USER: "faolla_checkout_runtime_login", FAOLLA_CHECKOUT_PG_PASSWORD: "synthetic-local-only-password-32-chars", FAOLLA_CHECKOUT_PG_TLS: "disabled-loopback" });
 
 test("owned application fixture supplies every original nested pilot gate without enabling another site", async () => {
-  const { ownedPgApplicationPilotEnvironment } = await import("./member-checkout-pg-application-candidate.mjs");
+  const { ownedPgApplicationPilotEnvironment, pgApplicationOldSpaceMiB } = await import("./member-checkout-pg-application-candidate.mjs");
+  assert.equal(pgApplicationOldSpaceMiB, 3072);
   const site = "10909994", pilots = ownedPgApplicationPilotEnvironment(site);
   assert.equal(isMemberCheckoutIntentPilotEnabled(site, pilots), true);
   assert.equal(isMemberCheckoutIntentPilotEnabled("10909995", pilots), false);

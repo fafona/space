@@ -8,6 +8,7 @@ import {applicationFingerprint} from './member-checkout-compatibility-check.mjs'
 const sha=v=>createHash('sha256').update(v).digest('hex'),lf=v=>v.replaceAll('\r\n','\n');
 const base={algorithm:'sha256-lf-path-content-v1',files:2971,sha256:'7aaecb5c7bf82f5e43c21c408dbb4fd9b12404525abe49cadcb00d57a0a72f26'};
 const entry='src/lib/merchantCheckoutRuntime.server.ts';
+export const pgApplicationOldSpaceMiB=3072;
 const replace=(text,before,after)=>{assert.equal(text.split(before).length,2,'pg_candidate_marker_changed');return text.replace(before,after);};
 // Only the owned synthetic site is enabled, with every existing nested gate.
 // This is test configuration, never an application or production default.

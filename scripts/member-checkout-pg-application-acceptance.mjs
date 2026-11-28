@@ -21,7 +21,7 @@ import {prepareOwnedNextFixture} from './member-checkout-next-session-cases.mjs'
 import {loadInstallationPlan} from './member-checkout-installation-plan.mjs';
 import {loadCheckout047Revision} from './member-checkout-047-revision.mjs';
 import {createOwnedCheckoutData} from './fixtures/member-checkout-real-auth-database.mjs';
-import {materializePgApplicationCandidate,ownedPgApplicationPilotEnvironment} from './member-checkout-pg-application-candidate.mjs';
+import {materializePgApplicationCandidate,ownedPgApplicationPilotEnvironment,pgApplicationOldSpaceMiB} from './member-checkout-pg-application-candidate.mjs';
 import {buildOwnedPgApplication} from './member-checkout-pg-application-build.mjs';
 import {applicationFingerprint} from './member-checkout-compatibility-check.mjs';
 import {createPgRuntimeCore} from './fixtures/merchant-checkout-pg-core.ts';
@@ -133,7 +133,7 @@ test('separate production PG candidate: real login, owner permission, strict TLS
     env:{PATH:process.env.PATH,HOME:evidence,TMPDIR:tmpdir(),NODE_ENV:'test'}});
    fs.writeFileSync(path.join(evidence,'retained-env.private.tap'),r.stdout+r.stderr,{flag:'wx'});assert.match(r.stdout,/# tests 12\b/);assert.match(r.stdout,/# fail 0\b/);assert.match(r.stdout,/# skipped 0\b/);
   });
-  const appEnv={NODE_ENV:'production',NODE_OPTIONS:'--max-old-space-size=3072',NEXT_TELEMETRY_DISABLED:'1',FAOLLA_CHECKOUT_NEXT_LOCAL:'1',FAOLLA_CANONICAL_PORTAL_ORIGIN:'https://portal.checkout-auth.test',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.checkout-auth.test',
+  const appEnv={NODE_ENV:'production',NODE_OPTIONS:`--max-old-space-size=${pgApplicationOldSpaceMiB}`,NEXT_TELEMETRY_DISABLED:'1',FAOLLA_CHECKOUT_NEXT_LOCAL:'1',FAOLLA_CANONICAL_PORTAL_ORIGIN:'https://portal.checkout-auth.test',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.checkout-auth.test',
    SUPABASE_INTERNAL_URL:gatewayOrigin,NEXT_PUBLIC_SUPABASE_URL:gatewayOrigin,NEXT_PUBLIC_SUPABASE_ANON_KEY:anonJwt,SUPABASE_SERVICE_ROLE_KEY:serviceJwt,FAOLLA_CHECKOUT_TRANSPORT:'postgres',...pgEnvironment,
    FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_BOOKING_AUTOMATION_WORKER_ENABLED:'false',MERCHANT_BOOKING_STORAGE_MODE:'atomic-v2',...ownedPgApplicationPilotEnvironment(financial.site)};
   const next=start('next',process.execPath,[path.join(process.cwd(),'scripts/fixtures/member-checkout-rollback-local-server.mjs'),fixture.app],appEnv,fixture.app);next.on('message',m=>nextEvents.push(m));
@@ -192,7 +192,12 @@ test('separate production PG candidate: real login, owner permission, strict TLS
    assert.equal((await context.cookies(origin)).filter(c=>c.name.startsWith('__Host-faolla-merchant-')).length,0);
   });
   await check('candidate typechecks and source fingerprints stay bound; original app remains untouched',async()=>{
-   const log=path.join(evidence,'typecheck.private.log');try{const r=await exec(process.execPath,[path.join(fixture.app,'node_modules/typescript/bin/tsc'),'--noEmit','--incremental','false'],{cwd:fixture.app,timeout:120000,maxBuffer:4*1024*1024});fs.writeFileSync(log,r.stdout+r.stderr,{flag:'wx'});}catch(e){fs.writeFileSync(log,(e.stdout??'')+(e.stderr??''),{flag:'wx'});throw Error('candidate_typecheck_failed');}
+   // Match the already successful build's 3072 MiB budget. Node 20's implicit
+   // heap depends on host RAM; a separate 2048 MiB reproduction OOMs even with
+   // the frozen app. No production limit or TypeScript check is removed.
+   const inheritedHeap=await exec(process.execPath,['-p',"require('node:v8').getHeapStatistics().heap_size_limit"],{timeout:5000});
+   report.typecheck={inheritedHeapBytes:Number(inheritedHeap.stdout.trim()),configuredOldSpaceMiB:pgApplicationOldSpaceMiB};assert.ok(Number.isSafeInteger(report.typecheck.inheritedHeapBytes)&&report.typecheck.inheritedHeapBytes>0);
+   const log=path.join(evidence,'typecheck.private.log');try{const r=await exec(process.execPath,[`--max-old-space-size=${pgApplicationOldSpaceMiB}`,path.join(fixture.app,'node_modules/typescript/bin/tsc'),'--noEmit','--incremental','false'],{cwd:fixture.app,timeout:120000,maxBuffer:4*1024*1024});fs.writeFileSync(log,r.stdout+r.stderr,{flag:'wx'});report.typecheck.passed=true;}catch(e){const out=(e.stdout??'')+(e.stderr??'');fs.writeFileSync(log,out,{flag:'wx'});report.typecheck.failure={code:typeof e.code==='number'?e.code:null,signal:e.signal??null,heapOutOfMemory:/heap out of memory/i.test(out),typeScriptCodes:[...new Set(out.match(/error TS[0-9]+/g)??[])]};throw Error('candidate_typecheck_failed');}
    assert.deepEqual(await applicationFingerprint(fixture.app),candidate.material.application);assert.deepEqual(await applicationFingerprint(),candidate.material.baseApplication);
    let files=0;const scan=directory=>{for(const item of fs.readdirSync(directory,{withFileTypes:true})){const file=path.join(directory,item.name);if(item.isDirectory())scan(file);else if(/\.(?:js|json|map)$/.test(file)){const bytes=fs.readFileSync(file);assert.equal(bytes.includes(Buffer.from('FAOLLA_CHECKOUT_PG_PASSWORD')),false);assert.equal(bytes.includes(Buffer.from(pgPassword)),false);files++;}}};scan(path.join(fixture.app,'.next/static'));assert.ok(files>0);report.clientFilesScanned=files;
   });report.passed=true;

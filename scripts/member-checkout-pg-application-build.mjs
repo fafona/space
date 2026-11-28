@@ -10,7 +10,7 @@ import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import http from 'node:http';
 import {applicationFingerprint} from './member-checkout-compatibility-check.mjs';
-import {loadPgApplicationCandidate} from './member-checkout-pg-application-candidate.mjs';
+import {loadPgApplicationCandidate,pgApplicationOldSpaceMiB} from './member-checkout-pg-application-candidate.mjs';
 
 export async function buildOwnedPgApplication(fixture,signal,evidence){
  assert.equal(process.platform,'linux');assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.RUNNER_ENVIRONMENT,'github-hosted');
@@ -24,7 +24,7 @@ export async function buildOwnedPgApplication(fixture,signal,evidence){
  let backendRequests=0;const backend=http.createServer((_req,res)=>{backendRequests++;res.writeHead(503,{'content-type':'application/json'});res.end('{"error":"owned_build_has_no_backend"}');});
  await new Promise((resolve,reject)=>{backend.once('error',reject);backend.listen(0,'127.0.0.1',resolve);});const origin=`http://127.0.0.1:${backend.address().port}`;
  const environment={PATH:process.env.PATH,HOME:fixture.evidence,TMPDIR:fixture.evidence,TEMP:fixture.evidence,TMP:fixture.evidence,NODE_ENV:'production',
-  NODE_OPTIONS:'--max-old-space-size=3072 --import='+pathToFileURL(path.join(process.cwd(),'scripts/fixtures/member-checkout-build-network.mjs')).href,
+  NODE_OPTIONS:`--max-old-space-size=${pgApplicationOldSpaceMiB} --import=`+pathToFileURL(path.join(process.cwd(),'scripts/fixtures/member-checkout-build-network.mjs')).href,
   NEXT_TELEMETRY_DISABLED:'1',FAOLLA_BUILD_SINGLE_WORKER:'1',FAOLLA_CHECKOUT_BUILD_LOCAL:'1',FAOLLA_CHECKOUT_BUILD_EVIDENCE_DIR:fixture.evidence,FAOLLA_CHECKOUT_BUILD_ORIGIN:origin,
   NEXT_PUBLIC_SUPABASE_URL:origin,SUPABASE_INTERNAL_URL:origin,NEXT_PUBLIC_SUPABASE_ANON_KEY:'isolated-build-public-placeholder',FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_BOOKING_AUTOMATION_WORKER_ENABLED:'false'};
  const stages=[['environment',['scripts/check-env.mjs','--strict']],['deployment-config',['--import','tsx','scripts/check-v1-deploy-config.ts']],['pinned-wasm',['scripts/prepare-next-wasm.mjs']],
