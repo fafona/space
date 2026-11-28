@@ -51,12 +51,13 @@ export async function loadPgApplicationCandidate(){
   originalBusinessSqlChanged:false,productionAuthorized:false,deploymentReady:false};
  return {overlay,patch,revision:{material,sha256:sha(JSON.stringify(material))}};
 }
-export async function materializePgApplicationCandidate(fixture,driverDirectory){
+export async function materializePgApplicationCandidate(fixture,driverDirectory,{productionBuild=false}={}){
  assert.equal(process.platform,'linux');assert.equal(process.env.GITHUB_ACTIONS,'true');assert.equal(process.env.RUNNER_ENVIRONMENT,'github-hosted');
  assert.equal(process.env.GITHUB_REF,'refs/heads/acceptance/member-checkout-pg-app-20261128');
  const {overlay,patch,revision}=await loadPgApplicationCandidate();
  assert.equal(await realpath(fixture.root),await realpath(process.cwd()));assert.equal(await realpath(fixture.app),fixture.app);assert.equal(path.basename(fixture.app),'app');assert.equal(path.dirname(fixture.app),fixture.evidence);
- const relative=path.relative(await realpath(tmpdir()),fixture.evidence);assert.ok(relative&&!relative.startsWith('..')&&!path.isAbsolute(relative)&&path.basename(fixture.evidence).startsWith('faolla-checkout-next-'));
+ assert.equal(typeof productionBuild,'boolean');
+ const relative=path.relative(await realpath(tmpdir()),fixture.evidence);assert.ok(relative&&!relative.startsWith('..')&&!path.isAbsolute(relative)&&path.basename(fixture.evidence).startsWith(productionBuild?'faolla-checkout-build-':'faolla-checkout-next-'));
  assert.equal((await lstat(fixture.evidence)).uid,process.getuid());assert.deepEqual(await applicationFingerprint(fixture.app),base);
  for(const [name,text]of Object.entries(overlay))await writeFile(path.join(fixture.app,name),text,{flag:[entry,'package.json','package-lock.json'].includes(name)?'w':'wx',mode:0o600});
  // Only the 14 integrity-pinned driver dependencies are copied; none of the

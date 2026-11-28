@@ -22,6 +22,7 @@ import {loadInstallationPlan} from './member-checkout-installation-plan.mjs';
 import {loadCheckout047Revision} from './member-checkout-047-revision.mjs';
 import {createOwnedCheckoutData} from './fixtures/member-checkout-real-auth-database.mjs';
 import {materializePgApplicationCandidate,ownedPgApplicationPilotEnvironment} from './member-checkout-pg-application-candidate.mjs';
+import {buildOwnedPgApplication} from './member-checkout-pg-application-build.mjs';
 import {applicationFingerprint} from './member-checkout-compatibility-check.mjs';
 import {createPgRuntimeCore} from './fixtures/merchant-checkout-pg-core.ts';
 import {pgRuntimeConfiguration,pgLoginRole} from './fixtures/merchant-checkout-pg-entry.ts';
@@ -34,7 +35,7 @@ const guard=()=>{
  assert.equal(process.env.GITHUB_REPOSITORY,'fafona/space');assert.equal(process.env.GITHUB_REF,'refs/heads/acceptance/member-checkout-pg-app-20261128');assert.ok(process.getuid()>0);
  for(const key of Object.keys(process.env))if(/SUPABASE|STRIPE|SMTP|DATABASE_URL|^PGHOST$|^PGPORT$|^PGPASSWORD$|^PGDATABASE$|^PGUSER$|^FAOLLA_CHECKOUT_RUNTIME_JWT$/.test(key))assert.ok(!process.env[key],'configured_backend_refused');
 };
-test('separate PG candidate: real login, owner permission, strict TLS and original points/coupon booking',{timeout:360000},async t=>{
+test('separate production PG candidate: real login, owner permission, strict TLS and original points/coupon booking',{timeout:720000},async t=>{
  guard();const tools=path.join(process.env.RUNNER_TEMP,'faolla-pg-app-tools');await verifyOwnedTools(tools,'current-auth');
  const evidence=path.join(process.env.RUNNER_TEMP,'faolla-pg-app-evidence');fs.mkdirSync(evidence,{mode:0o700});
  const report={version:1,scope:'isolated-pg-application-not-production',commit:process.env.GITHUB_SHA,phase:'database',checks:[],paths:[],stopped:[],passed:false,cleanupPassed:false,failure:null,
@@ -64,7 +65,7 @@ test('separate PG candidate: real login, owner permission, strict TLS and origin
   assert.equal((await one("SELECT count(*)::int n FROM pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema')")).n,0);
   const plan=await loadInstallationPlan(),revision=await loadCheckout047Revision();
   await db.query(`CREATE ROLE anon NOLOGIN;CREATE ROLE authenticated NOLOGIN;CREATE ROLE service_role NOLOGIN BYPASSRLS;
-   CREATE TABLE public.pages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),merchant_id text,slug text,blocks jsonb,updated_at timestamptz DEFAULT clock_timestamp());
+   CREATE TABLE public.pages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),merchant_id text,slug text,blocks jsonb,created_at timestamptz DEFAULT clock_timestamp(),updated_at timestamptz DEFAULT clock_timestamp());
    CREATE TABLE public.faolla_schema_migrations(version bigint PRIMARY KEY,name text NOT NULL);
    GRANT USAGE ON SCHEMA public TO anon,authenticated,service_role;GRANT SELECT,INSERT,UPDATE,DELETE ON public.pages TO service_role;
    CREATE FUNCTION public.set_pages_updated_at() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN NEW.updated_at=now();RETURN NEW;END;$$;
@@ -121,7 +122,9 @@ test('separate PG candidate: real login, owner permission, strict TLS and origin
   assert.equal((await authCall('/admin/users/'+userId,{app_metadata:metadata,user_metadata:metadata},serviceJwt,'PUT')).status,200);
   await check('real Auth refuses unverified email before application checkout',async()=>{assert.equal((await authCall('/token?grant_type=password',{email,password},anonJwt)).status,400);});
   assert.equal((await authCall('/admin/users/'+userId,{email_confirm:true},serviceJwt,'PUT')).status,200);
-  process.env.FAOLLA_CHECKOUT_NEXT_ACCEPTANCE='1';fixture=await prepareOwnedNextFixture();const candidate=await materializePgApplicationCandidate(fixture,path.join(tools,'pg-client'));report.candidate=candidate;
+  process.env.FAOLLA_CHECKOUT_NEXT_ACCEPTANCE='1';fixture=await prepareOwnedNextFixture({productionBuild:true});
+  const candidate=await materializePgApplicationCandidate(fixture,path.join(tools,'pg-client'),{productionBuild:true});report.candidate=candidate;
+  report.build={};await check('exact PG candidate completes the five original production build stages without credentials or backend IO',()=>buildOwnedPgApplication(fixture,t.signal,report.build));
   // Lock replay in a NEW empty directory, never npm-ci against shared junctions.
   const lockTest=path.join(evidence,'lock-replay');fs.mkdirSync(lockTest,{mode:0o700});for(const file of ['package.json','package-lock.json'])fs.copyFileSync(path.join(fixture.app,file),path.join(lockTest,file),fs.constants.COPYFILE_EXCL);
   await check('candidate production dependency lock replays without scripts or source mutation',async()=>{await exec('npm',['ci','--prefix',lockTest,'--ignore-scripts','--no-audit','--no-fund'],{timeout:90000,maxBuffer:2*1024*1024});assert.equal(JSON.parse(fs.readFileSync(path.join(lockTest,'node_modules/pg/package.json'),'utf8')).version,'8.23.1');});
@@ -130,10 +133,10 @@ test('separate PG candidate: real login, owner permission, strict TLS and origin
     env:{PATH:process.env.PATH,HOME:evidence,TMPDIR:tmpdir(),NODE_ENV:'test'}});
    fs.writeFileSync(path.join(evidence,'retained-env.private.tap'),r.stdout+r.stderr,{flag:'wx'});assert.match(r.stdout,/# tests 12\b/);assert.match(r.stdout,/# fail 0\b/);assert.match(r.stdout,/# skipped 0\b/);
   });
-  const appEnv={NODE_ENV:'development',NODE_OPTIONS:'--max-old-space-size=3072',NEXT_TELEMETRY_DISABLED:'1',FAOLLA_CHECKOUT_NEXT_LOCAL:'1',FAOLLA_CANONICAL_PORTAL_ORIGIN:'https://portal.checkout-auth.test',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.checkout-auth.test',
+  const appEnv={NODE_ENV:'production',NODE_OPTIONS:'--max-old-space-size=3072',NEXT_TELEMETRY_DISABLED:'1',FAOLLA_CHECKOUT_NEXT_LOCAL:'1',FAOLLA_CANONICAL_PORTAL_ORIGIN:'https://portal.checkout-auth.test',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.checkout-auth.test',
    SUPABASE_INTERNAL_URL:gatewayOrigin,NEXT_PUBLIC_SUPABASE_URL:gatewayOrigin,NEXT_PUBLIC_SUPABASE_ANON_KEY:anonJwt,SUPABASE_SERVICE_ROLE_KEY:serviceJwt,FAOLLA_CHECKOUT_TRANSPORT:'postgres',...pgEnvironment,
    FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_BOOKING_AUTOMATION_WORKER_ENABLED:'false',MERCHANT_BOOKING_STORAGE_MODE:'atomic-v2',...ownedPgApplicationPilotEnvironment(financial.site)};
-  const next=start('next',process.execPath,[path.join(process.cwd(),'scripts/fixtures/member-checkout-next-local-server.mjs'),fixture.app],appEnv,fixture.app);next.on('message',m=>nextEvents.push(m));
+  const next=start('next',process.execPath,[path.join(process.cwd(),'scripts/fixtures/member-checkout-rollback-local-server.mjs'),fixture.app],appEnv,fixture.app);next.on('message',m=>nextEvents.push(m));
   const deadline=Date.now()+60000;while(!nextEvents.some(e=>e.type==='listening')&&Date.now()<deadline){assert.equal(next.exitCode,null);await delay(50);}const listening=nextEvents.find(e=>e.type==='listening');assert.ok(listening);
   const origin='https://portal.checkout-auth.test:'+listening.port,route='/api/member-checkout/single/points/submit';
   browser=await chromium.launch({headless:true,args:['--host-resolver-rules=MAP portal.checkout-auth.test 127.0.0.1','--no-proxy-server']});
@@ -172,6 +175,10 @@ test('separate PG candidate: real login, owner permission, strict TLS and origin
    assert.deepEqual(await financial.state(),state);assert.equal((await call(route,body,scope)).value.replayed,true);assert.equal(report.paths.some(p=>p.includes('/rpc/faolla_checkout_runtime_v1')),false);
   });
   const configRoute='/api/merchant-checkout/configuration?siteId='+financial.site;
+  await check('owned pages fixture has the metadata columns used by the unchanged published-site reader',async()=>{
+   const result=await db.query('SELECT slug,updated_at,created_at FROM public.pages WHERE merchant_id=$1',[financial.site]);
+   assert.ok(result.rows.length>0);assert.ok(result.rows.every(row=>row.created_at instanceof Date));
+  });
   await check('non-owner real login cannot read or alter the merchant checkout configuration',async()=>{const state=await financial.state();assert.equal((await call(configRoute)).status,403);assert.deepEqual(await financial.state(),state);});
   const ownerEmail='owner-'+randomUUID()+'@example.invalid',owner=await authCall('/admin/users',{email:ownerEmail,password,email_confirm:true,app_metadata:{account_type:'merchant',account_id:financial.site},user_metadata:{account_type:'merchant',account_id:financial.site}});assert.equal(owner.status,200);
   await db.query('INSERT INTO public.merchants(id,name,user_id,email) VALUES($1,$2,$3,$4)',[financial.site,'Synthetic owner',owner.value.id,ownerEmail]);
@@ -199,8 +206,8 @@ test('separate PG candidate: real login, owner permission, strict TLS and origin
   for(const server of servers.reverse()){server.closeAllConnections?.();if(server.listening)await new Promise(resolve=>server.close(resolve));}
   for(const c of clients)await c.end().catch(()=>{});for(const log of logs)await new Promise(resolve=>log.end(resolve));
   report.nextShutdown=nextEvents.find(e=>e.type==='stopped')??null;
-  report.cleanupPassed=report.stopped.length===3&&report.stopped.every(r=>!r.forced&&(r.code===0&&r.signal===null||r.requested!=='IPC-close'&&r.code===null&&r.signal===r.requested))&&report.nextShutdown?.forbiddenFetches===0;
-  report.passed=report.passed&&report.cleanupPassed&&report.checks.every(c=>c.passed)&&report.failure===null;
+  report.cleanupPassed=report.stopped.length===children.length&&report.stopped.every(r=>!r.forced&&(r.code===0&&r.signal===null||r.requested!=='IPC-close'&&r.code===null&&r.signal===r.requested))&&(!children.some(c=>c.name==='next')||report.nextShutdown?.forbiddenFetches===0);
+  report.passed=report.passed&&report.stopped.length===3&&report.cleanupPassed&&report.checks.every(c=>c.passed)&&report.failure===null;
   fs.writeFileSync(path.join(evidence,'report.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx',mode:0o600});
   if(!report.cleanupPassed)assert.fail('pg_candidate_owned_cleanup_failed');
  }
