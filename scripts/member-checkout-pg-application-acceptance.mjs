@@ -124,10 +124,19 @@ test('separate production PG candidate: real login, strict TLS and isolated dual
    } finally { await db.query('ROLLBACK'); }
   });
   const rest=start('postgrest',path.join(tools,'postgrest-bin/postgrest'),[],{PGRST_DB_URI:`postgresql://checkout_local_gateway:disposable-gateway-ci-only@127.0.0.1:${databasePort}/${database}`,PGRST_DB_SCHEMAS:'public',PGRST_DB_ANON_ROLE:'anon',PGRST_DB_POOL:'2',PGRST_DB_CHANNEL_ENABLED:'false',PGRST_JWT_SECRET:secret,PGRST_JWT_AUD:audience,PGRST_SERVER_HOST:'127.0.0.1',PGRST_SERVER_PORT:String(restPort),PGRST_LOG_LEVEL:'error'});await ready(rest,restOrigin+'/');
+  let legacyGuardCount=0;
   const gateway=http.createServer((req,res)=>{
    const url=new URL(req.url,'http://127.0.0.1'),isAuth=url.pathname.startsWith('/auth/v1/'),isRest=url.pathname.startsWith('/rest/v1/');
    if(!isAuth&&!isRest){res.writeHead(404);res.end();return;}assert.equal(req.headers.cookie,undefined);report.paths.push(req.method+' '+url.pathname);
-   const upstream=http.request({host:'127.0.0.1',port:isAuth?authPort:restPort,method:req.method,path:url.pathname.slice(8)+url.search,headers:req.headers},reply=>{res.writeHead(reply.statusCode,reply.headers);reply.pipe(res);});
+   const upstream=http.request({host:'127.0.0.1',port:isAuth?authPort:restPort,method:req.method,path:url.pathname.slice(8)+url.search,headers:req.headers},reply=>{
+    if(req.method==='POST'&&url.pathname==='/rest/v1/rpc/faolla_booking_atomic_commit_v1'&&reply.statusCode===400){
+     // Keep only an exact outcome counter for the owned synthetic legacy request, never the response.
+     let size=0;const chunks=[];
+     reply.on('data',bytes=>{size+=bytes.length;if(size<=4096)chunks.push(bytes);});
+     reply.once('end',()=>{if(size>4096)return;try{const value=JSON.parse(Buffer.concat(chunks).toString('utf8'));if(value.code==='P0001'&&value.message==='checkout_original_cancellation_required')legacyGuardCount++;}catch{}});
+    }
+    res.writeHead(reply.statusCode,reply.headers);reply.pipe(res);
+   });
    upstream.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end();});req.pipe(upstream);
   });const gatewayOrigin='http://127.0.0.1:'+await listen(gateway);
   const authCall=async(url,body,credential=serviceJwt,method='POST')=>{const r=await fetch(authOrigin+url,{method,headers:{authorization:'Bearer '+credential,'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(5000)});return {status:r.status,value:r.status===204?null:await r.json()};};
@@ -191,6 +200,9 @@ test('separate production PG candidate: real login, strict TLS and isolated dual
    try{const r=await call(route,body,scope);assert.equal(r.status,503);}finally{await db.query(`GRANT EXECUTE ON FUNCTION public.faolla_checkout_runtime_v1(text,jsonb) TO ${pgLoginRole}`);}
    assert.deepEqual(await financial.state(),state);assert.equal((await call(route,body,scope)).value.replayed,true);assert.equal(report.paths.some(p=>p.includes('/rpc/faolla_checkout_runtime_v1')),false);
   });
+  const ownerEmail='owner-'+randomUUID()+'@example.invalid',ownerMetadata={account_type:'merchant',account_id:financial.site};
+  const owner=await authCall('/admin/users',{email:ownerEmail,password,email_confirm:true,app_metadata:ownerMetadata,user_metadata:ownerMetadata});assert.equal(owner.status,200);
+  await db.query('INSERT INTO public.merchants(id,name,user_id,email) VALUES($1,$2,$3,$4)',[financial.site,'Synthetic owner',owner.value.id,ownerEmail]);
   await checkoutPgCutoverCases(check,{db,financial,f,body,scope,original,fixture,port:listening.port,appEnv,context,callCandidate:call,report,signal:t.signal,
    async signInOther(){
     const accountId='59009999',otherEmail='other-'+randomUUID()+'@example.invalid',otherMetadata={account_type:'personal',account_id:accountId};
@@ -198,6 +210,18 @@ test('separate production PG candidate: real login, strict TLS and isolated dual
     assert.notEqual(other.value.id,userId);assert.equal((await login(otherEmail,password)).status,200);return accountId;
    },
    async restoreOriginalSignIn(){assert.equal((await login()).status,200);},
+   getLegacyGuardCount:()=>legacyGuardCount,
+   async createOwnerView(proxyOrigin){
+    assert.match(proxyOrigin,/^https:\/\/portal\.checkout-auth\.test:[1-9][0-9]{0,4}$/);
+    const onlyOwner=await browser.newContext({ignoreHTTPSErrors:true,serviceWorkers:'block'});
+    try{
+     await onlyOwner.route('**/*',r=>[origin,proxyOrigin].includes(new URL(r.request().url()).origin)?r.continue():r.abort());
+     const page=await onlyOwner.newPage();assert.equal((await page.goto(origin+route,{timeout:90000})).status(),405);
+     const loggedIn=await page.evaluate(async({account,password})=>(await fetch('/api/auth/merchant-login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({account,password,preferredAccountType:'merchant'})})).status,{account:ownerEmail,password});
+     assert.equal(loggedIn,200);assert.equal((await page.goto(proxyOrigin+'/api/auth/merchant-session?reauth=1',{timeout:90000})).status(),200);
+     return {page,dispose:()=>onlyOwner.close()};
+    }catch(error){await onlyOwner.close();throw error;}
+   },
   });
   assert.equal(report.paths.some(p=>p.includes('/rpc/faolla_checkout_runtime_v1')),false);
   const configRoute='/api/merchant-checkout/configuration?siteId='+financial.site;
@@ -206,8 +230,6 @@ test('separate production PG candidate: real login, strict TLS and isolated dual
    assert.ok(result.rows.length>0);assert.ok(result.rows.every(row=>row.created_at instanceof Date));
   });
   await check('non-owner real login cannot read or alter the merchant checkout configuration',async()=>{const state=await financial.state();assert.equal((await call(configRoute)).status,403);assert.deepEqual(await financial.state(),state);});
-  const ownerEmail='owner-'+randomUUID()+'@example.invalid',owner=await authCall('/admin/users',{email:ownerEmail,password,email_confirm:true,app_metadata:{account_type:'merchant',account_id:financial.site},user_metadata:{account_type:'merchant',account_id:financial.site}});assert.equal(owner.status,200);
-  await db.query('INSERT INTO public.merchants(id,name,user_id,email) VALUES($1,$2,$3,$4)',[financial.site,'Synthetic owner',owner.value.id,ownerEmail]);
   await check('real owner login reads and saves only through the same PG candidate and loses access when ownership is removed',async()=>{
    assert.equal((await login(ownerEmail,password,'merchant')).status,200);const read=await call(configRoute);assert.equal(read.status,200,JSON.stringify(read));
    const edit={...configuration.checkoutEditFromOffer(f.offer),title:'Synthetic reviewed'};const written=await call(configRoute,{expectedVersion:read.value.snapshot.version,edit},{},'PUT');assert.equal(written.status,200,JSON.stringify(written));

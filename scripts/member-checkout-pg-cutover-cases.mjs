@@ -13,6 +13,7 @@ import {applicationFingerprint} from './member-checkout-compatibility-check.mjs'
 import {prepareOwnedNextFixture} from './member-checkout-next-session-cases.mjs';
 import {createOwnedPageChecks} from './member-checkout-page-cutover-cases.mjs';
 import {checkoutPgRetainedHistoryCases} from './member-checkout-pg-cutover-history.mjs';
+import {checkoutPgRetainedLegacyCase} from './member-checkout-pg-cutover-legacy.mjs';
 import {createPgCutoverPolicy, startOwnedPgCutoverProxy} from './member-checkout-pg-cutover-proxy.mjs';
 import {requestOwnedStop, safeError} from './member-checkout-real-auth-support.mjs';
 import {buildOwnedRollback} from './member-checkout-rollback-build.mjs';
@@ -57,7 +58,7 @@ async function verifyOwnedSource(db, financial, appEnv, version) {
   return {root, source};
 }
 
-export async function checkoutPgCutoverCases(check, {db, financial, f, body, scope, original, fixture, port, appEnv, context, callCandidate, report, signal, signInOther, restoreOriginalSignIn}) {
+export async function checkoutPgCutoverCases(check, {db, financial, f, body, scope, original, fixture, port, appEnv, context, callCandidate, report, signal, signInOther, restoreOriginalSignIn,createOwnerView,getLegacyGuardCount}) {
   const version = process.env.GITHUB_SHA, {root, source} = await verifyOwnedSource(db, financial, appEnv, version);
   const evidence = report.cutover = {scope: 'owned-dual-production-builds-no-production-access', rollbackCommit, rollbackApplication,
     candidateCommit: version, candidateApplication: report.candidate.material.application, transitions: [], cleanupPassed: false, passed: false};
@@ -148,6 +149,20 @@ export async function checkoutPgCutoverCases(check, {db, financial, f, body, sco
       await pages.retained(version,rollbackCommit); restoreIfUnchanged(before,await state());
     });
     await checkoutPgRetainedHistoryCases(check,{call,financial,f,body,scope,original,candidateVersion:version,signInOther,restoreOriginalSignIn});
+    await check('retained resume page finds the tracked original and links to exact original service',async()=>{
+      const before=await state(), resumeView=await context.newPage();views.push(resumeView);
+      await resumeView.setViewportSize({width:390,height:1000});await resumeView.bringToFront();
+      const response=await resumeView.goto(`${proxy.origin}/member-checkout/${site}/resume?uiLocale=zh-CN`,{timeout:90000,waitUntil:'domcontentloaded'});
+      assert.equal(response.status(),200);assert.equal(response.headers()['x-owned-source-version'],version);
+      const panel=resumeView.locator('[data-checkout-resume]'), item=panel.locator('article').filter({hasText:original.resourceId});
+      await panel.locator('[data-checkout-history-read]').waitFor({timeout:20000});
+      await item.getByText(original.resourceId,{exact:true}).waitFor({timeout:20000});
+      const href=await item.locator('[data-original-service-link]').getAttribute('href');assert.ok(href?.startsWith('/'));
+      const service=new URL(href,proxy.origin);assert.equal(service.origin,proxy.origin);assert.equal(service.pathname,servicePath);
+      restoreIfUnchanged(before,await state());await resumeView.close();evidence.retainedResumePagePassed=true;
+    });
+    await checkoutPgRetainedLegacyCase(check,{financial,original,rollbackVersion:rollbackCommit,createOwnerView:()=>createOwnerView(proxy.origin),getLegacyGuardCount});
+    evidence.legacyOriginalWriteBlocked=true;
     await check('retained path outage does not fall through to old app; ordinary session stays available',async()=>{
       const before=await state(),count=proxy.snapshot().candidateRequests;proxy.setRetainedUnavailable(true);
       try {assert.equal((await call(resource)).status,503);await realSession(call,rollbackCommit);assert.equal(proxy.snapshot().candidateRequests,count);}
@@ -158,7 +173,9 @@ export async function checkoutPgCutoverCases(check, {db, financial, f, body, sco
     });
     await check('lost response to actual cancelled booking is recoverable without duplicate points, coupon or stock release',async()=>{
       const coupon = async () => (await financial.page('__merchant_coupons__:'+site)).blocks.find(v=>v.id===f.selection.couponClaims[0].couponId);
+      const stock = async () => (await financial.page('__merchant_membership_settings__:'+site)).blocks.redemptionItems.find(v=>v.id==='booking-stock').stock;
       const before=await coupon();assert.equal(before.redeemEvents.length,1);
+      assert.equal(await stock(),9);
       const reviewed=await call(reviewPath,request);assert.equal(reviewed.status,200);const review=reviewed.value.review;
       const cancelBody={...request,reviewHash:review.reviewHash,expectedUpdatedAt:review.original.original.result.resource.updatedAt};
       proxy.dropNextCancellationReply();await pages.loseCancellation();assert.equal(proxy.snapshot().droppedCancellationReplies,1);
@@ -167,6 +184,7 @@ export async function checkoutPgCutoverCases(check, {db, financial, f, body, sco
       const stale=await call(cancelPath,cancelBody);assert.equal(stale.status,409);assert.equal(stale.value.error,'checkout_service_changed');restoreIfUnchanged(after,await state());
       const replay=await call(cancelPath,{...request,reviewHash:fresh.reviewHash,expectedUpdatedAt:closed.resource.updatedAt});assert.equal(replay.status,200);assert.equal(replay.value.cancellation.replayed,true);restoreIfUnchanged(after,await state());
       assert.equal((await financial.page('__merchant_memberships__:'+site)).blocks.find(v=>v.id===f.member.id).pointBalance,1000);
+      assert.equal(await stock(),10);
       const released=await coupon();assert.equal(released.redeemEvents.length,0);assert.deepEqual(released.claimEvents,before.claimEvents);
       evidence.originalEffects={pointsReturned:80,couponsReturned:1,stockReleased:1};
     });
