@@ -3,9 +3,23 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { createPgRuntimeCore, queryText, type PgClient } from "./fixtures/merchant-checkout-pg-core";
 import { pgRuntimeConfiguration, createServerMerchantCheckoutRuntimeClient } from "./fixtures/merchant-checkout-pg-entry";
+import { isMemberCheckoutIntentPilotEnabled } from "../src/lib/merchantCheckoutCartPilot.server";
 const name = "faolla_member_checkout_catalog_snapshot_v1", args = { p_site_id: "10909994" };
 const env = () => ({ FAOLLA_CHECKOUT_TRANSPORT: "postgres", FAOLLA_CHECKOUT_PG_HOST: "127.0.0.1", FAOLLA_CHECKOUT_PG_PORT: "56463", FAOLLA_CHECKOUT_PG_DATABASE: "faolla_member_checkout_auth_test",
   FAOLLA_CHECKOUT_PG_USER: "faolla_checkout_runtime_login", FAOLLA_CHECKOUT_PG_PASSWORD: "synthetic-local-only-password-32-chars", FAOLLA_CHECKOUT_PG_TLS: "disabled-loopback" });
+
+test("owned application fixture supplies every original nested pilot gate without enabling another site", async () => {
+  const { ownedPgApplicationPilotEnvironment } = await import("./member-checkout-pg-application-candidate.mjs");
+  const site = "10909994", pilots = ownedPgApplicationPilotEnvironment(site);
+  assert.equal(isMemberCheckoutIntentPilotEnabled(site, pilots), true);
+  assert.equal(isMemberCheckoutIntentPilotEnabled("10909995", pilots), false);
+  for (const key of Object.keys(pilots)) {
+    const incomplete = { ...pilots }; delete incomplete[key];
+    assert.equal(isMemberCheckoutIntentPilotEnabled(site, incomplete), false);
+  }
+  assert.throws(() => ownedPgApplicationPilotEnvironment(""));
+  assert.equal(Object.keys(pilots).some(key => /ON_SITE|STRIPE/.test(key)), false);
+});
 test("direct PG candidate requires explicit private identity and never inherits broad credential aliases", () => {
   assert.ok(pgRuntimeConfiguration(env(), 12000));
   for (const patch of [{ FAOLLA_CHECKOUT_PG_HOST: "8.8.8.8" }, { FAOLLA_CHECKOUT_PG_HOST: "db.example.invalid" }, { FAOLLA_CHECKOUT_PG_HOST: "127.0.0.1/path" }, { FAOLLA_CHECKOUT_PG_USER: "service_role" },

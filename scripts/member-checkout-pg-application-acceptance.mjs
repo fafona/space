@@ -21,7 +21,7 @@ import {prepareOwnedNextFixture} from './member-checkout-next-session-cases.mjs'
 import {loadInstallationPlan} from './member-checkout-installation-plan.mjs';
 import {loadCheckout047Revision} from './member-checkout-047-revision.mjs';
 import {createOwnedCheckoutData} from './fixtures/member-checkout-real-auth-database.mjs';
-import {materializePgApplicationCandidate} from './member-checkout-pg-application-candidate.mjs';
+import {materializePgApplicationCandidate,ownedPgApplicationPilotEnvironment} from './member-checkout-pg-application-candidate.mjs';
 import {applicationFingerprint} from './member-checkout-compatibility-check.mjs';
 import {createPgRuntimeCore} from './fixtures/merchant-checkout-pg-core.ts';
 import {pgRuntimeConfiguration,pgLoginRole} from './fixtures/merchant-checkout-pg-entry.ts';
@@ -132,7 +132,7 @@ test('separate PG candidate: real login, owner permission, strict TLS and origin
   });
   const appEnv={NODE_ENV:'development',NODE_OPTIONS:'--max-old-space-size=3072',NEXT_TELEMETRY_DISABLED:'1',FAOLLA_CHECKOUT_NEXT_LOCAL:'1',FAOLLA_CANONICAL_PORTAL_ORIGIN:'https://portal.checkout-auth.test',FAOLLA_SUPER_ADMIN_ORIGIN:'https://console.checkout-auth.test',
    SUPABASE_INTERNAL_URL:gatewayOrigin,NEXT_PUBLIC_SUPABASE_URL:gatewayOrigin,NEXT_PUBLIC_SUPABASE_ANON_KEY:anonJwt,SUPABASE_SERVICE_ROLE_KEY:serviceJwt,FAOLLA_CHECKOUT_TRANSPORT:'postgres',...pgEnvironment,
-   FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_BOOKING_AUTOMATION_WORKER_ENABLED:'false',MERCHANT_BOOKING_STORAGE_MODE:'atomic-v2',MERCHANT_MEMBER_CHECKOUT_PILOT_SITES:financial.site,MERCHANT_MEMBER_CHECKOUT_INTENT_PILOT_SITES:financial.site};
+   FAOLLA_BACKGROUND_JOBS_PAUSED:'1',MERCHANT_BOOKING_AUTOMATION_WORKER_ENABLED:'false',MERCHANT_BOOKING_STORAGE_MODE:'atomic-v2',...ownedPgApplicationPilotEnvironment(financial.site)};
   const next=start('next',process.execPath,[path.join(process.cwd(),'scripts/fixtures/member-checkout-next-local-server.mjs'),fixture.app],appEnv,fixture.app);next.on('message',m=>nextEvents.push(m));
   const deadline=Date.now()+60000;while(!nextEvents.some(e=>e.type==='listening')&&Date.now()<deadline){assert.equal(next.exitCode,null);await delay(50);}const listening=nextEvents.find(e=>e.type==='listening');assert.ok(listening);
   const origin='https://portal.checkout-auth.test:'+listening.port,route='/api/member-checkout/single/points/submit';

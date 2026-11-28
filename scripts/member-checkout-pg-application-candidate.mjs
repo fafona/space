@@ -9,6 +9,13 @@ const sha=v=>createHash('sha256').update(v).digest('hex'),lf=v=>v.replaceAll('\r
 const base={algorithm:'sha256-lf-path-content-v1',files:2971,sha256:'7aaecb5c7bf82f5e43c21c408dbb4fd9b12404525abe49cadcb00d57a0a72f26'};
 const entry='src/lib/merchantCheckoutRuntime.server.ts';
 const replace=(text,before,after)=>{assert.equal(text.split(before).length,2,'pg_candidate_marker_changed');return text.replace(before,after);};
+// Only the owned synthetic site is enabled, with every existing nested gate.
+// This is test configuration, never an application or production default.
+export function ownedPgApplicationPilotEnvironment(siteId){
+ assert.match(siteId,/^\d{8}$/);
+ return Object.fromEntries(['MERCHANT_MEMBER_CHECKOUT_PILOT_SITES','MERCHANT_MEMBER_CHECKOUT_CART_PILOT_SITES',
+  'MERCHANT_MEMBER_CHECKOUT_CART_UI_PILOT_SITES','MERCHANT_MEMBER_CHECKOUT_INTENT_PILOT_SITES'].map(key=>[key,siteId]));
+}
 export async function loadPgApplicationCandidate(){
  assert.deepEqual(await applicationFingerprint(),base,'pg_candidate_original_application_changed');
  const dependencyBytes=lf(await readFile('scripts/fixtures/member-checkout-pg-dependencies.json','utf8'));
