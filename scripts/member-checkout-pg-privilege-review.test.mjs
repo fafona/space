@@ -80,6 +80,8 @@ test('effective grants and fixed entry contract in an owned PostgreSQL-WASM cata
       'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO PUBLIC', ['widening_default_grants']);
     await check('global default change for another role does not count built-in PUBLIC EXECUTE as newly widened',
       `ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO ${runtimeRole}`, []);
+    await check('global sequence default is compared using the sequence ACL kind',
+      'ALTER DEFAULT PRIVILEGES GRANT USAGE ON SEQUENCES TO PUBLIC', ['widening_default_grants']);
     assert.equal((await get()).passed, true);
   } finally { await db.close(); }
 });

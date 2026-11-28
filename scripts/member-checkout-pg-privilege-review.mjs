@@ -60,7 +60,8 @@ export const checkoutPgPrivilegeSql = `WITH
    OR a.is_grantable) unexpected_entry_grants,
  (SELECT count(*)::int FROM pg_catalog.pg_default_acl acl CROSS JOIN LATERAL pg_catalog.aclexplode(acl.defaclacl) a
    WHERE acl.defaclobjtype IN ('r','S','f','n') AND (a.grantee=l.oid OR a.grantee=0 AND (acl.defaclnamespace<>0 OR NOT EXISTS (
-     SELECT 1 FROM pg_catalog.aclexplode(pg_catalog.acldefault(acl.defaclobjtype,acl.defaclrole)) b
+     SELECT 1 FROM pg_catalog.aclexplode(pg_catalog.acldefault(
+       CASE WHEN acl.defaclobjtype='S' THEN 's'::pg_catalog."char" ELSE acl.defaclobjtype END,acl.defaclrole)) b
      WHERE b.grantee=0 AND b.privilege_type=a.privilege_type AND b.is_grantable=a.is_grantable)))) widening_default_grants,
  (SELECT count(*)::int FROM pg_catalog.pg_database b WHERE b.datallowconn AND b.oid<>d.oid
    AND pg_catalog.has_database_privilege(l.oid,b.oid,'CONNECT')) other_database_connect
