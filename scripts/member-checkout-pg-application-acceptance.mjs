@@ -154,7 +154,12 @@ test('separate PG candidate: real login, owner permission, strict TLS and origin
   });
   await check('fresh pause, forged scope and forbidden cross-origin request refuse before any debit',async()=>{
    const state=await financial.state();assert.equal((await authCall('/admin/users/'+userId,{app_metadata:{...metadata,personal_service_paused:true}},serviceJwt,'PUT')).status,200);
-   assert.equal((await call(route,body,scope)).status,401);assert.equal((await authCall('/admin/users/'+userId,{app_metadata:metadata},serviceJwt,'PUT')).status,200);
+   assert.equal((await call(route,body,scope)).status,401);
+   // GoTrue merges app_metadata rather than replacing it. Omitting the pause
+   // field would leave this synthetic user paused for every subsequent case.
+   const resumed=await authCall('/admin/users/'+userId,{app_metadata:{...metadata,personal_service_paused:false}},serviceJwt,'PUT');
+   assert.equal(resumed.status,200);assert.equal(resumed.value.app_metadata.personal_service_paused,false);
+   const replay=await call(route,body,scope);assert.equal(replay.status,200);assert.equal(replay.value.replayed,true);
    assert.equal((await call(route,body,{'x-checkout-account-scope':'59009999'})).status,401);
    const cross=await new Promise((resolve,reject)=>{
     const request=https.request({hostname:'127.0.0.1',port:listening.port,path:route,method:'POST',ca:fs.readFileSync(path.join(fixture.evidence,'tls-cert.pem')),
