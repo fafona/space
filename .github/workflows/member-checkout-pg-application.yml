@@ -62,6 +62,7 @@ jobs:
         run: >-
           node --import tsx --test
           scripts/member-checkout-pg-application.test.ts
+          scripts/member-checkout-pg-privilege-review.test.mjs
           scripts/member-checkout-direct-pg-probe.test.mjs
           src/lib/merchantCheckoutRuntime.server.test.ts
           src/lib/merchantCheckoutSubmission.server.test.ts

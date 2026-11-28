@@ -26,6 +26,7 @@ import {buildOwnedPgApplication} from './member-checkout-pg-application-build.mj
 import {applicationFingerprint} from './member-checkout-compatibility-check.mjs';
 import {createPgRuntimeCore} from './fixtures/merchant-checkout-pg-core.ts';
 import {pgRuntimeConfiguration,pgLoginRole} from './fixtures/merchant-checkout-pg-entry.ts';
+import {checkoutPgLogin,readCheckoutPgPrivilegeReview} from './member-checkout-pg-privilege-review.mjs';
 import points from '../src/lib/merchantCheckoutSubmissionPlan.server.ts';
 import configuration from '../src/lib/merchantCheckoutConfiguration.ts';
 
@@ -109,6 +110,15 @@ test('separate production PG candidate: real login, owner permission, strict TLS
    GOTRUE_JWT_SECRET:secret,GOTRUE_JWT_AUD:audience,GOTRUE_JWT_EXP:'3600',GOTRUE_JWT_DEFAULT_GROUP_NAME:'authenticated',GOTRUE_JWT_ADMIN_ROLES:'service_role',GOTRUE_EXTERNAL_EMAIL_ENABLED:'true',GOTRUE_EXTERNAL_PHONE_ENABLED:'false',
    GOTRUE_MAILER_AUTOCONFIRM:'false',GOTRUE_DISABLE_SIGNUP:'true',GOTRUE_SMTP_HOST:'127.0.0.1',GOTRUE_SMTP_PORT:'1',GOTRUE_SMTP_ADMIN_EMAIL:'noreply@example.invalid',GOTRUE_LOG_LEVEL:'error',GOTRUE_TRACING_ENABLED:'false'});
   await ready(auth,authOrigin+'/health');assert.equal((await(await fetch(authOrigin+'/health')).json()).version,'v2.186.0');
+  await check('installed PG15.8 effective grants match the single-entry LOGIN contract',async()=>{
+   assert.equal(pgLoginRole,checkoutPgLogin);
+   await db.query('BEGIN READ ONLY');
+   try {
+    await db.query("SET LOCAL statement_timeout='5s'; SET LOCAL lock_timeout='1s'");
+    report.checkoutPgPrivileges=await readCheckoutPgPrivilegeReview(db.query.bind(db),6);
+    assert.deepEqual(report.checkoutPgPrivileges.issues,[]);
+   } finally { await db.query('ROLLBACK'); }
+  });
   const rest=start('postgrest',path.join(tools,'postgrest-bin/postgrest'),[],{PGRST_DB_URI:`postgresql://checkout_local_gateway:disposable-gateway-ci-only@127.0.0.1:${databasePort}/${database}`,PGRST_DB_SCHEMAS:'public',PGRST_DB_ANON_ROLE:'anon',PGRST_DB_POOL:'2',PGRST_DB_CHANNEL_ENABLED:'false',PGRST_JWT_SECRET:secret,PGRST_JWT_AUD:audience,PGRST_SERVER_HOST:'127.0.0.1',PGRST_SERVER_PORT:String(restPort),PGRST_LOG_LEVEL:'error'});await ready(rest,restOrigin+'/');
   const gateway=http.createServer((req,res)=>{
    const url=new URL(req.url,'http://127.0.0.1'),isAuth=url.pathname.startsWith('/auth/v1/'),isRest=url.pathname.startsWith('/rest/v1/');
