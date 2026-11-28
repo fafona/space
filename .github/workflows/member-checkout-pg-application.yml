@@ -1,0 +1,80 @@
+name: Isolated PostgreSQL Application Candidate
+
+on:
+  push:
+    branches:
+      - acceptance/member-checkout-pg-app-20261128
+
+permissions:
+  contents: read
+
+jobs:
+  application:
+    name: Real Auth and Next with Restricted PG TLS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:15.8
+        env:
+          POSTGRES_DB: faolla_member_checkout_auth_test
+          POSTGRES_USER: checkout_ci_admin
+          POSTGRES_PASSWORD: disposable-checkout-ci-only
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+        ports:
+          - 127.0.0.1:56463:5432
+        options: >-
+          --health-cmd "pg_isready -U checkout_ci_admin -d faolla_member_checkout_auth_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20.20.1
+          cache: npm
+      - name: Install Retained Locked Test Dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prepare Pinned Isolated Tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_REF" = refs/heads/acceptance/member-checkout-pg-app-20261128
+          tools="$RUNNER_TEMP/faolla-pg-app-tools"
+          mkdir "$tools"
+          curl --fail --location --retry 2 --max-time 120 -o "$tools/auth.tar.gz" https://github.com/supabase/auth/releases/download/v2.186.0/auth-v2.186.0-x86.tar.gz
+          printf '%s  %s\n' 2683b9549e922d0644621129fdabd7edb8b78c35274e133e61a3280ad9675161 "$tools/auth.tar.gz" | sha256sum --check --strict
+          curl --fail --location --retry 2 --max-time 120 -o "$tools/source.zip" https://codeload.github.com/supabase/auth/zip/effd66245bd981ba5a07aa6b7441ad37578f9b73
+          printf '%s  %s\n' ad95e1f30263cfeaec800d7ba2ecc039d2e209c14c5d6e45b5b824de9bbcbe26 "$tools/source.zip" | sha256sum --check --strict
+          curl --fail --location --retry 2 --max-time 120 -o "$tools/postgrest.tar.xz" https://github.com/PostgREST/postgrest/releases/download/v14.5/postgrest-v14.5-linux-static-x86-64.tar.xz
+          printf '%s  %s\n' ab5cc7e974d4940447991804588cfb8b3f7b2c57b691f0905df04d51ede69470 "$tools/postgrest.tar.xz" | sha256sum --check --strict
+          mkdir "$tools/auth-bin" "$tools/postgrest-bin"
+          tar -xzf "$tools/auth.tar.gz" -C "$tools/auth-bin"
+          tar -xJf "$tools/postgrest.tar.xz" -C "$tools/postgrest-bin"
+          unzip -q "$tools/source.zip" -d "$tools"
+          node scripts/member-checkout-pg-application-tools.mjs
+          npm ci --prefix "$tools/pg-client" --ignore-scripts --no-audit --no-fund
+          npx --no-install playwright install --with-deps chromium
+      - name: Candidate and Retained Authority Contracts
+        run: >-
+          node --import tsx --test
+          scripts/member-checkout-pg-application.test.ts
+          scripts/member-checkout-direct-pg-probe.test.mjs
+          src/lib/merchantCheckoutRuntime.server.test.ts
+          src/lib/merchantCheckoutSubmission.server.test.ts
+          src/app/api/member-checkout/submit/route.test.ts
+      - name: Real Identity and Restricted TLS Application Acceptance
+        env:
+          CHECKOUT_PG_TEST_CONTAINER: ${{ job.services.postgres.id }}
+        run: node --import tsx --test scripts/member-checkout-pg-application-acceptance.mjs
+      - name: Preserve Sanitized Report Only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkout-pg-app-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/faolla-pg-app-evidence/report.json
+          if-no-files-found: warn
+          retention-days: 14
